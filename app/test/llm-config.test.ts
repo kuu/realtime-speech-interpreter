@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { llmConfig, translateEngine, translateFormality, langidSettleConfig, DEFAULT_LLM_MODEL_ID } from "./config.js";
+import { llmConfig, translateEngine, translateFormality, langidSettleConfig, DEFAULT_LLM_MODEL_ID } from "../src/config.js";
 
 function quiet<T>(fn: () => T): { out: T; warns: string[] } {
   const orig = console.error;

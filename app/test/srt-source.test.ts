@@ -1,7 +1,7 @@
 // Unit tests for the SRT listener's ffmpeg arguments (node:test). Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listenerArgs } from "./srt-source.js";
+import { listenerArgs } from "../src/srt-source.js";
 
 const URL = "srt://127.0.0.1:9000?mode=listener&latency=120000&listen_timeout=3600000000";
 // The arguments before SRT_ANALYZE_MS existed (= analyzeMs 0, the revert).

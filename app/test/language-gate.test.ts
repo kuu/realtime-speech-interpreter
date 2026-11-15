@@ -1,10 +1,10 @@
 // Unit tests for the LanguageGate, the Transcribe request builder and LANGUAGE_OPTIONS parsing (node:test).
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { Segmenter, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "./segmenter.js";
-import { LanguageGate, createResultSink, type LanguageGateOptions } from "./language-gate.js";
-import { transcribeParams } from "./transcribe-params.js";
-import { parseLanguageOptions } from "./config.js";
+import { Segmenter, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "../src/segmenter.js";
+import { LanguageGate, createResultSink, type LanguageGateOptions } from "../src/language-gate.js";
+import { transcribeParams } from "../src/transcribe-params.js";
+import { parseLanguageOptions } from "../src/config.js";
 
 const DEPLOYED_CONJ = ["because", "but", "although", "though", "while", "which"];
 // Deployed segmentation values (= MERGE in segmenter.test.ts).
@@ -497,7 +497,7 @@ test("k) complete-sentence release (sentenceCompleteWords=5) commits no Japanese
 
 // ---- dynamic settle (LANGID_SETTLE_MODE=dynamic) ------------------------------------------------
 import { existsSync, readFileSync } from "node:fs";
-import type { Segmenter as SegmenterT } from "./segmenter.js";
+import type { Segmenter as SegmenterT } from "../src/segmenter.js";
 const DYN: LanguageGateOptions = {
   ...GATE, settleWords: 4, settleMode: "dynamic", settleWordsDefault: 3, settleWordsAfterJa: 5, jaMemoryMs: 20000,
 };

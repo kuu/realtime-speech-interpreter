@@ -1,8 +1,8 @@
 // Unit tests for Polly speed control (node:test). Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SpeedController, buildSsml, escapeXml, spokenChars, stepsRate, type SpeedConfig } from "./speed-control.js";
-import { parseSpeedLevels, parseSpeedThresholds, parseSpeedupSteps, type SpeedupStep } from "./config.js";
+import { SpeedController, buildSsml, escapeXml, spokenChars, stepsRate, type SpeedConfig } from "../src/speed-control.js";
+import { parseSpeedLevels, parseSpeedThresholds, parseSpeedupSteps, type SpeedupStep } from "../src/config.js";
 
 const BASE: SpeedConfig = {
   mode: "levels",

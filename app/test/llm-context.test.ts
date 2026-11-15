@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ContextBuffer } from "./llm-context.js";
+import { ContextBuffer } from "../src/llm-context.js";
 
 const e = (n: number, session = 1, srcEndWall = n * 1000) => ({ en: `e${n}`, ja: `j${n}`, session, srcEndWall });
 

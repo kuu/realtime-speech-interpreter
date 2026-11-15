@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CircuitBreaker, classifyError, LlmTimeoutError, type BreakerState } from "./llm-breaker.js";
+import { CircuitBreaker, classifyError, LlmTimeoutError, type BreakerState } from "../src/llm-breaker.js";
 
 function mk(openMs = 30000) {
   let t = 1000;

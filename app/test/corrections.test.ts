@@ -1,7 +1,7 @@
 // Unit tests for context-aware corrections (node:test). Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyCorrections } from "./corrections.js";
+import { applyCorrections } from "../src/corrections.js";
 
 const fix = (s: string) => applyCorrections(s).text;
 

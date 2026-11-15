@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LlmStats, estimateUsd, percentile } from "./llm-stats.js";
+import { LlmStats, estimateUsd, percentile } from "../src/llm-stats.js";
 
 const U = (inputTokens: number, outputTokens: number, cacheReadInputTokens: number, cacheWriteInputTokens = 0) => ({
   inputTokens,

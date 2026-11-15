@@ -11,7 +11,7 @@ import {
   PREVIOUS_EMPTY,
   SYSTEM_PROMPT_V2_TEMPLATE,
   chunkEndsSentence,
-} from "./llm-prompt.js";
+} from "../src/llm-prompt.js";
 
 const GL = "MediaLive = MediaLive\nlaunch = ローンチ\nzzz = ゼット";
 

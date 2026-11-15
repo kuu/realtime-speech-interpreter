@@ -1,7 +1,7 @@
 // Unit tests for the INPUT_FILE pacing (node:test). Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pacingDelayMs } from "./input-pacing.js";
+import { pacingDelayMs } from "../src/input-pacing.js";
 
 const BPMS = 32; // 16 kHz s16le mono = 32 bytes per ms
 const FRAME = 3200; // 100 ms

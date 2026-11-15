@@ -1,7 +1,7 @@
 // Unit tests for filler removal (node:test). Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { filterEnglish, filterJapanese, hasWords } from "./fillers.js";
+import { filterEnglish, filterJapanese, hasWords } from "../src/fillers.js";
 
 const WORDS = ["um", "uh", "er", "ah", "hmm", "mm", "erm", "uh-huh"];
 const PHRASES = ["you know", "I mean", "well", "like", "sort of", "kind of", "you see", "okay so", "so yeah"];

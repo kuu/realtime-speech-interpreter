@@ -5,7 +5,7 @@ Issues and pull requests are welcome. This is a personal, unofficial project.
 Before you open a pull request, run the checks from the repository root (no AWS credentials needed):
 
 ```bash
-(cd app && npm ci && npm run build && npm test)
+(cd app && npm ci && npm run build && npm run typecheck && npm test)
 (cd cdk && npm ci && npx tsc --noEmit && npm test)
 node dictionaries/validate.mjs
 python3 -m unittest discover -s e2e/lib -p 'test_*.py'

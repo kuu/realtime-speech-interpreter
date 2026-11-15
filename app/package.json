@@ -8,9 +8,9 @@
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.test.json",
     "token": "tsx src/tools/make-token.ts",
-    "test": "node --import tsx --test src/segmenter.test.ts src/fillers.test.ts src/language-gate.test.ts src/speed-control.test.ts src/input-pacing.test.ts src/srt-source.test.ts src/corrections.test.ts src/translate-params.test.ts src/segmenter-quality.test.ts src/llm-config.test.ts src/glossary.test.ts src/llm-prompt.test.ts src/llm-validate.test.ts src/llm-breaker.test.ts src/llm-context.test.ts src/llm-stats.test.ts src/translate-engine.test.ts src/polly-readings.test.ts",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "probe:llm": "tsx src/tools/llm-probe.ts"
   },
   "dependencies": {

@@ -1,8 +1,8 @@
 // Unit tests for the TranslateText request builder (node:test). Run: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { translateParams } from "./translate-params.js";
-import { translateFormality } from "./config.js";
+import { translateParams } from "../src/translate-params.js";
+import { translateFormality } from "../src/config.js";
 
 const base = { source: "en", target: "ja", terminologyName: "", formality: "FORMAL" as "FORMAL" | "INFORMAL" | "off" };
 

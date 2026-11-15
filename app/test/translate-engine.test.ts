@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LlmEngine, TranslateOnlyEngine, createTranslationEngine, type EngineRequest } from "./translate-engine.js";
-import { llmConfig } from "./config.js";
-import type { LlmClient, ConverseResult } from "./bedrock-llm.js";
-import type { LlmRequest } from "./llm-prompt.js";
+import { LlmEngine, TranslateOnlyEngine, createTranslationEngine, type EngineRequest } from "../src/translate-engine.js";
+import { llmConfig } from "../src/config.js";
+import type { LlmClient, ConverseResult } from "../src/bedrock-llm.js";
+import type { LlmRequest } from "../src/llm-prompt.js";
 
 const GL: [string, string][] = [
   ["MediaLive", "MediaLive"],
@@ -76,7 +76,7 @@ test("engine=translate: one Translate call with the same text, no LLM factory, r
   assert.deepEqual(calls, ["Hello there."]);
   assert.equal(llmFactory, 0);
   assert.equal(glossaryLoads, 0);
-  assert.equal(eng.summaryLine("exit"), null);
+  assert.equal(eng.summaryLine(), null);
   assert.equal(eng.startupLine(), null);
   assert.equal(eng.contextChunks, 0);
   assert.equal(eng.skipBacklogMs, 0);

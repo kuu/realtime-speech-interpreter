@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseTerminologyCsv, glossaryLines, loadDeployedGlossary } from "./glossary.js";
+import { parseTerminologyCsv, glossaryLines, loadDeployedGlossary } from "../src/glossary.js";
 
 test("parse: header, BOM, CRLF, blank lines", () => {
   const csv = "\uFEFFen,ja\r\nMediaLive,MediaLive\r\n\r\nlaunch,ローンチ\r\n";

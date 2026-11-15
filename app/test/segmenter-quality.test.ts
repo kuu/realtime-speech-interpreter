@@ -4,8 +4,8 @@ import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { LanguageGate } from "./language-gate.js";
-import { Segmenter, joinShortSentences, DEFAULT_DANGLING_WORDS, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "./segmenter.js";
+import { LanguageGate } from "../src/language-gate.js";
+import { Segmenter, joinShortSentences, DEFAULT_DANGLING_WORDS, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "../src/segmenter.js";
 
 // Deployed values (cdk/cdk.json), part B off.
 const BASE: SegmenterOptions = {

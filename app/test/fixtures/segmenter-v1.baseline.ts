@@ -1,7 +1,6 @@
-// FROZEN PRE-COMPLETE-SENTENCE COPY of segmenter.ts (MERGE_SHORT present, before
-// SENTENCE_COMPLETE_WORDS was added). Used only by the off-switch parity tests in segmenter.test.ts
-// (SENTENCE_COMPLETE_WORDS=0 must produce identical chunks and logs). It contains no tests and is not
-// listed in `npm test`; the .test.ts suffix keeps it out of dist/. Do not edit.
+// FROZEN PRE-MERGE COPY of segmenter.ts (before MERGE_SHORT was added). Used only by the
+// off-switch parity tests in segmenter.test.ts (MERGE_SHORT=off must produce identical chunks).
+// It contains no tests; it lives in test/ so it is never compiled into dist/. Do not edit.
 //
 // Segmenter: turns Amazon Transcribe streaming results (partials with stabilization
 // + finals) into translation chunks. Pure and synchronous: the clock is injected,
@@ -18,21 +17,8 @@
 // conjunctions once >= minWords; hard cap at maxWords; time rules via tick():
 // max time since chunk start (>= minWords) and pause (no transcript activity).
 // Mode "sentence" (revert switch): sentence punctuation, pause, final, eof, 40-word cap.
-//
-// Merging short sentences (mergeShort, clause mode only): a sentence end (.?!) or a final
-// that would produce a chunk with < sentenceMinWords words (fillers excluded) is not cut;
-// the text is held at the front of `pending` (the boundary token is flagged heldBoundary)
-// and joins the following text, across ResultIds. Internal periods stay in the text.
-// Held text is released by: the next boundary once the combined text has >= sentenceMinWords;
-// any comma/conjunction/max_words/max_time cut (they count from the start of pending);
-// tick(): merge_pause (no transcript activity for mergePauseMs) or merge_hold (oldest held
-// word older than mergeMaxHoldMs, safety valve); endOfStream (eof/error). While text is held,
-// the regular pause rule is replaced by merge_pause. A period followed (in the same stable
-// batch) by a lowercase word is treated as a false sentence end (no cut, no hold).
-// Held tokens are ordinary pending tokens, so they are emitted exactly once by splice.
-// With mergeShort off (or in sentence mode) every merge branch is skipped.
 
-import { log } from "./log.js";
+import { log } from "../../src/log.js";
 
 export type SegmentationMode = "clause" | "sentence";
 
@@ -43,10 +29,6 @@ export interface SegmenterOptions {
   maxMs: number; // 0 disables
   pauseMs: number; // 0 disables
   conjunctions: readonly string[];
-  mergeShort: boolean; // clause mode only
-  sentenceMinWords: number; // sentence/final cuts below this are held (merge on)
-  mergePauseMs: number; // release held text after this much transcript silence; 0 disables
-  mergeMaxHoldMs: number; // release held text once its oldest word is this old (always applies)
 }
 
 export type CutReason =
@@ -56,8 +38,6 @@ export type CutReason =
   | "max_words"
   | "max_time"
   | "pause"
-  | "merge_pause"
-  | "merge_hold"
   | "final"
   | "eof"
   | "error";
@@ -71,7 +51,6 @@ export interface Chunk {
   audioStart: number; // seconds (Transcribe stream time)
   audioEnd: number;
   committedAt: number; // wall ms
-  merged?: number; // merge on only: number of held (suppressed) boundaries inside this chunk; absent if 0
 }
 
 // Minimal structural types (compatible with @aws-sdk/client-transcribe-streaming).
@@ -81,14 +60,10 @@ export interface TxItem {
   Stable?: boolean;
   StartTime?: number;
   EndTime?: number;
-  Confidence?: number; // finals only
 }
 export interface TxResult {
   ResultId?: string;
   IsPartial?: boolean;
-  StartTime?: number;
-  EndTime?: number;
-  LanguageCode?: string; // multi-language identification only
   Alternatives?: { Transcript?: string; Items?: TxItem[] }[];
 }
 
@@ -100,8 +75,6 @@ interface Token {
   start: number;
   end: number;
   appendedAt: number;
-  heldBoundary?: boolean; // merge: a sentence/final cut was suppressed after this token
-  verified?: boolean; // merge: already counted by [verify] for its (closed) result
 }
 
 interface ResultState {
@@ -117,7 +90,7 @@ const CLAUSE_PUNCT = new Set([",", ";", ":"]);
 const FILLERS = new Set(["um", "uh", "uhm", "erm", "er", "ah", "hmm", "hm", "mm", "mhm"]);
 const SENTENCE_MODE_MAX_WORDS = 40;
 
-export function isPunctItem(it: TxItem): boolean {
+function isPunctItem(it: TxItem): boolean {
   if (it.Type) return it.Type === "punctuation";
   return /^[^\p{L}\p{N}]+$/u.test(it.Content ?? "");
 }
@@ -141,37 +114,23 @@ export function renderTokens(tokens: readonly { content: string; punct: boolean 
   return out.trim();
 }
 
-export class MergeBaselineSegmenter {
+export class BaselineSegmenter {
   private results = new Map<string, ResultState>();
   private pending: Token[] = [];
   private lastActivityAt = 0;
   private conj: Set<string>;
   // Per-result record of every token consumed into a chunk (for the [verify] check).
   private emittedByResult = new Map<string, { content: string; punct: boolean }[]>();
-  private readonly merge: boolean;
 
   constructor(
     private readonly opts: SegmenterOptions,
     private readonly onChunk: (chunk: Chunk) => void,
   ) {
     this.conj = new Set(opts.conjunctions.map((c) => c.trim().toLowerCase()).filter(Boolean));
-    this.merge = opts.mergeShort && opts.mode === "clause";
   }
 
   get pendingTokens(): number {
     return this.pending.length;
-  }
-
-  // How long the oldest held word has been waiting (0 when nothing is held).
-  holdAgeMs(now: number): number {
-    return this.merge && this.holdEnd() > 0 ? now - this.pending[0].appendedAt : 0;
-  }
-
-  // 1 + index of the last held boundary in pending, or 0 when nothing is held.
-  // Held tokens are always a prefix of pending (cuts only remove prefixes).
-  private holdEnd(): number {
-    for (let i = this.pending.length - 1; i >= 0; i--) if (this.pending[i].heldBoundary) return i + 1;
-    return 0;
   }
 
   onResult(result: TxResult, now: number): void {
@@ -218,22 +177,9 @@ export class MergeBaselineSegmenter {
       if (items.length > st.committed) this.commit(id, st, items.slice(st.committed), now);
       this.results.delete(id);
       this.runCuts(now);
-      this.finalCut(now);
+      this.flushAll("final", now);
       this.verify(id, items);
     }
-  }
-
-  // End of a final result: flush, or (merge on) hold a short remainder for the next result.
-  private finalCut(now: number): void {
-    if (
-      this.merge &&
-      this.pending.some((t) => !t.punct) &&
-      countWords(this.pending) < this.opts.sentenceMinWords
-    ) {
-      this.pending[this.pending.length - 1].heldBoundary = true;
-      return;
-    }
-    this.flushAll("final", now);
   }
 
   // Time-based rules. Call periodically (e.g. every 200 ms).
@@ -249,43 +195,9 @@ export class MergeBaselineSegmenter {
       this.flushAll("max_time", now);
       return;
     }
-    if (this.merge && this.holdEnd() > 0) {
-      // Held text: the merge rules replace the regular pause rule. The hold valve always
-      // applies (it can't be disabled), so held text can never stall output.
-      const { mergeMaxHoldMs, mergePauseMs } = this.opts;
-      if (now - this.pending[0].appendedAt >= mergeMaxHoldMs) {
-        this.flushAll("merge_hold", now);
-      } else if (mergePauseMs > 0 && now - this.lastActivityAt >= mergePauseMs) {
-        this.flushAll("merge_pause", now);
-      }
-      return;
-    }
     if (pauseMs > 0 && now - this.lastActivityAt >= pauseMs) {
       this.flushAll("pause", now);
     }
-  }
-
-  // Transcript activity that is not forwarded as a result (language gate: a source-language
-  // result still settling). Keeps the pause / merge_pause timers as if the words were seen.
-  noteActivity(now: number): void {
-    this.lastActivityAt = now;
-  }
-
-  // Language gate: an already-forwarded result turned out to be another language (late flip).
-  // Removes its not-yet-emitted tokens from pending and closes it without a MISMATCH.
-  closeResult(id: string, lang: string, now: number): void {
-    if (!this.results.has(id)) return;
-    this.results.delete(id);
-    const before = this.pending.length;
-    this.pending = this.pending.filter((t) => t.resultId !== id);
-    const removed = before - this.pending.length;
-    const emitted = this.emittedByResult.get(id)?.length ?? 0;
-    this.emittedByResult.delete(id);
-    log.warn(
-      `[verify] result=${id.slice(0, 8)} committed=${emitted + removed} emitted=${emitted} removed=${removed} ` +
-        `LANGDROP lang=${lang} (language switched after commit)`,
-    );
-    this.runCuts(now);
   }
 
   // No more results are coming (input ended or Transcribe failed): commit everything
@@ -336,19 +248,7 @@ export class MergeBaselineSegmenter {
     for (let i = 0; i < this.pending.length; i++) {
       const t = this.pending[i];
       if (t.punct) {
-        if (SENTENCE_END.has(t.content)) {
-          if (this.merge) {
-            // Short sentence: keep the period in the text and keep scanning (hold).
-            if (words < this.opts.sentenceMinWords) {
-              t.heldBoundary = true;
-              continue;
-            }
-            // Period followed by a lowercase word: likely a false sentence end; no cut.
-            const next = this.pending[i + 1];
-            if (next && !next.punct && /^\p{Ll}/u.test(next.content)) continue;
-          }
-          return { end: i + 1, reason: "sentence" };
-        }
+        if (SENTENCE_END.has(t.content)) return { end: i + 1, reason: "sentence" };
         if (mode === "clause" && CLAUSE_PUNCT.has(t.content) && words >= minWords) {
           return { end: i + 1, reason: "comma" };
         }
@@ -380,11 +280,8 @@ export class MergeBaselineSegmenter {
   private emit(tokens: Token[], reason: CutReason, now: number): void {
     if (tokens.length === 0) return;
     const resultCounts: Record<string, number> = {};
-    let merged = 0;
     for (const t of tokens) {
       resultCounts[t.resultId] = (resultCounts[t.resultId] ?? 0) + 1;
-      if (t.heldBoundary) merged++;
-      if (t.verified) continue; // its result was already verified while this token was held
       let rec = this.emittedByResult.get(t.resultId);
       if (!rec) this.emittedByResult.set(t.resultId, (rec = []));
       rec.push({ content: t.content, punct: t.punct });
@@ -404,32 +301,21 @@ export class MergeBaselineSegmenter {
       audioStart: words[0].start,
       audioEnd: Math.max(...words.map((t) => t.end)),
       committedAt: now,
-      ...(merged > 0 ? { merged } : {}),
     });
   }
 
   // Compare everything consumed for this result with the final transcript items.
-  // Tokens of this result still held in pending (merge on) count as committed; they are
-  // marked verified so emit() doesn't record them again for a result that is already closed.
   private verify(id: string, finalItems: TxItem[]): void {
-    const emitted = [...(this.emittedByResult.get(id) ?? [])];
+    const emitted = this.emittedByResult.get(id) ?? [];
     this.emittedByResult.delete(id);
-    let held = 0;
-    for (const t of this.pending) {
-      if (t.resultId !== id || t.verified) continue;
-      t.verified = true;
-      emitted.push({ content: t.content, punct: t.punct });
-      held++;
-    }
-    const heldStr = held > 0 ? ` held=${held}` : "";
     const finalTokens = finalItems.map((it) => ({ content: it.Content as string, punct: isPunctItem(it) }));
     const a = emitted.map((t) => t.content).join("\u0001");
     const b = finalTokens.map((t) => t.content).join("\u0001");
     if (a === b) {
-      log.info(`[verify] result=${id.slice(0, 8)} items=${finalTokens.length} committed=${emitted.length}${heldStr} OK final="${renderTokens(finalTokens)}"`);
+      log.info(`[verify] result=${id.slice(0, 8)} items=${finalTokens.length} committed=${emitted.length} OK final="${renderTokens(finalTokens)}"`);
     } else {
       log.warn(
-        `[verify] result=${id.slice(0, 8)} items=${finalTokens.length} committed=${emitted.length}${heldStr} MISMATCH ` +
+        `[verify] result=${id.slice(0, 8)} items=${finalTokens.length} committed=${emitted.length} MISMATCH ` +
           `committed="${renderTokens(emitted)}" final="${renderTokens(finalTokens)}"`,
       );
     }

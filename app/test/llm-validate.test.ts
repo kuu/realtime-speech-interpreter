@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateLlmOutput, type ValidationResult } from "./llm-validate.js";
-import type { GlossaryEntry } from "./glossary.js";
+import { validateLlmOutput, type ValidationResult } from "../src/llm-validate.js";
+import type { GlossaryEntry } from "../src/glossary.js";
 
 const GL: GlossaryEntry[] = [
   ["MediaLive", "MediaLive"],

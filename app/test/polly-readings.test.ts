@@ -12,9 +12,9 @@ import {
   initReadings,
   parseReadings,
   readingsStartupLine,
-} from "./polly-readings.js";
-import { buildSsml, buildSsmlWithReadings, synthesizeWithFallback } from "./speed-control.js";
-import { pollyReadings } from "./config.js";
+} from "../src/polly-readings.js";
+import { buildSsml, buildSsmlWithReadings, synthesizeWithFallback } from "../src/speed-control.js";
+import { pollyReadings } from "../src/config.js";
 
 const ASSET = fileURLToPath(new URL("../assets/polly-readings.csv", import.meta.url));
 const VALIDATE = fileURLToPath(new URL("../../dictionaries/validate.mjs", import.meta.url));

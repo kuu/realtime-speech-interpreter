@@ -1,9 +1,9 @@
 // Unit tests for the Segmenter (node:test). Run: npm test
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { Segmenter, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "./segmenter.js";
-import { BaselineSegmenter } from "./segmenter-baseline.test.js";
-import { MergeBaselineSegmenter } from "./segmenter-merge-baseline.test.js";
+import { Segmenter, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "../src/segmenter.js";
+import { BaselineSegmenter } from "./fixtures/segmenter-v1.baseline.js";
+import { MergeBaselineSegmenter } from "./fixtures/segmenter-merge.baseline.js";
 
 const CONJ = ["and", "but", "so", "because", "which", "who", "where", "when", "while", "although", "though", "if", "unless", "or", "then"];
 const CLAUSE: SegmenterOptions = {

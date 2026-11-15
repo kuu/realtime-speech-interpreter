@@ -54,3 +54,5 @@ code\.amazo[n]\.com
 !^git@github\.com$
 !^miyazaqui@gmail\.com$
 !@users\.noreply\.github\.com$
+# GitHub records itself as the committer of merge commits made on github.com.
+!^noreply@github\.com$

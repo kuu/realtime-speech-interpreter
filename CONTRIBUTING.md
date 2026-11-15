@@ -19,6 +19,12 @@ node scripts/check-links.mjs
 - If you change the diagram, edit `docs/architecture.model.json` and run `node scripts/render-architecture.mjs`.
 - If you add or change a CDK setting, document it in `docs/configuration.md` (a test fails otherwise).
 - Do not commit account IDs, IP addresses, secrets or recordings. `check-publishable.sh` looks for them.
+- `npm ci` in `cdk/` may report vulnerabilities in packages bundled inside `aws-cdk-lib` (for example
+  `minimatch` and `brace-expansion`). They run only on your machine during `cdk synth` and `cdk deploy` and are
+  not part of the deployed app. Do not run `npm audit fix --force` there: it changes the pinned `aws-cdk-lib`
+  version, the CDK CLI then no longer matches ("Cloud assembly schema version mismatch"), and synth fails.
+  To fix the warnings, upgrade `aws-cdk-lib` and `aws-cdk` together in one change, then check that
+  `npx cdk synth` still works and review `npx cdk diff` before deploying.
 - Feature ideas: see [docs/roadmap.md](docs/roadmap.md) and open an issue before a large change.
 
 By contributing you agree that your contribution is licensed under the MIT License (see `LICENSE`).

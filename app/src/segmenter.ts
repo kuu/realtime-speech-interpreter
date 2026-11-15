@@ -235,6 +235,21 @@ export function renderTokens(tokens: readonly { content: string; punct: boolean 
   return out.trim();
 }
 
+// Optional observer of the words the segmenter consumes (live captions). Called exactly once per
+// token, at the single point where tokens move into `pending`. Errors are swallowed: a caption
+// bug must never affect segmentation.
+export interface SegmenterTap {
+  onWords(batch: {
+    resultId: string;
+    tokens: { content: string; punct: boolean; filler: boolean }[];
+    audioStart: number;
+    audioEnd: number;
+    now: number;
+  }): void;
+  // The result was forwarded and later turned out to be another language (late flip).
+  onRetract(resultId: string): void;
+}
+
 export class Segmenter {
   private results = new Map<string, ResultState>();
   private pending: Token[] = [];
@@ -255,6 +270,7 @@ export class Segmenter {
   constructor(
     private readonly opts: SegmenterOptions,
     private readonly onChunk: (chunk: Chunk) => void,
+    private readonly tap?: SegmenterTap,
   ) {
     this.conj = new Set(opts.conjunctions.map((c) => c.trim().toLowerCase()).filter(Boolean));
     this.merge = opts.mergeShort && opts.mode === "clause";
@@ -463,6 +479,11 @@ export class Segmenter {
   closeResult(id: string, lang: string, now: number): void {
     if (!this.results.has(id)) return;
     this.results.delete(id);
+    try {
+      this.tap?.onRetract(id);
+    } catch (err) {
+      log.warn(`[segmenter] tap error: ${String(err)}`);
+    }
     const before = this.pending.length;
     this.pending = this.pending.filter((t) => t.resultId !== id);
     const removed = before - this.pending.length;
@@ -491,6 +512,9 @@ export class Segmenter {
 
   private commit(id: string, st: ResultState, items: TxItem[], now: number): void {
     this.deferUntil = null; // new text: the normal rules decide again
+    const tapTokens: { content: string; punct: boolean; filler: boolean }[] = [];
+    let tapStart = Infinity;
+    let tapEnd = 0;
     for (const it of items) {
       const content = it.Content as string;
       const punct = isPunctItem(it);
@@ -503,9 +527,28 @@ export class Segmenter {
         end: it.EndTime ?? 0,
         appendedAt: now,
       });
+      if (this.tap) {
+        const last = this.pending[this.pending.length - 1];
+        tapTokens.push({ content, punct, filler: last.filler });
+        tapStart = Math.min(tapStart, last.start);
+        tapEnd = Math.max(tapEnd, last.end);
+      }
       st.contents.push(content);
     }
     st.committed += items.length;
+    if (this.tap && tapTokens.length > 0) {
+      try {
+        this.tap.onWords({
+          resultId: id,
+          tokens: tapTokens,
+          audioStart: Number.isFinite(tapStart) ? tapStart : 0,
+          audioEnd: tapEnd,
+          now,
+        });
+      } catch (err) {
+        log.warn(`[segmenter] tap error: ${String(err)}`);
+      }
+    }
   }
 
   // Apply the size/punctuation rules repeatedly; the earliest cut wins.

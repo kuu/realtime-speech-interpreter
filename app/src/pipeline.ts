@@ -21,6 +21,7 @@ import { Segmenter } from "./segmenter.js";
 import { LanguageGate, createResultSink } from "./language-gate.js";
 import { transcribeParams } from "./transcribe-params.js";
 import type { ChunkPlayer } from "./chunk-player.js";
+import type { CaptionPublisher } from "./caption-publisher.js";
 
 const transcribeClient = new TranscribeStreamingClient({ region: config.region });
 
@@ -34,6 +35,7 @@ export async function runPipeline(
   audioFrames: AsyncIterable<Uint8Array>,
   player: ChunkPlayer,
   session: number,
+  captions?: CaptionPublisher,
 ): Promise<void> {
   // Transcribe starts a 15s "no new audio" timer the moment the request opens.
   // Wait for the first real audio frame before starting the stream so a slow-to-
@@ -110,8 +112,11 @@ export async function runPipeline(
       }
     }
 
-    const segmenter = new Segmenter(config.segmentation, (chunk) =>
-      player.enqueue({ ...chunk, t0, session }),
+    const extraFillers = config.fillers.enabled ? new Set(config.fillers.words.map((w) => w.toLowerCase())) : new Set<string>();
+    const segmenter = new Segmenter(
+      config.segmentation,
+      (chunk) => player.enqueue({ ...chunk, t0, session }),
+      captions?.tapFor(session, () => t0, (w) => extraFillers.has(w.toLowerCase())),
     );
     // LANGUAGE_FILTER=off: the segmenter itself (old behavior); langid: drops non-English results.
     const lf = config.languageFilter;

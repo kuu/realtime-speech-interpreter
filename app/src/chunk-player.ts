@@ -16,6 +16,7 @@ import { log } from "./log.js";
 import type { Chunk } from "./segmenter.js";
 import { SpeedController, spokenChars, synthesizeWithFallback } from "./speed-control.js";
 import { activeReadings } from "./polly-readings.js";
+import type { CaptionPublisher } from "./caption-publisher.js";
 
 export interface QueuedChunk extends Chunk {
   t0: number; // wall ms corresponding to Transcribe stream time 0
@@ -53,6 +54,7 @@ async function synthesizeOnce(text: string, ssml: boolean): Promise<Buffer> {
 
 // rate 100 and no readings hit = plain text. Otherwise SSML (readings and/or prosody); falls back
 // to plain text if Polly rejects the SSML.
+export type Synthesizer = (text: string, rate: number, tag: string) => Promise<{ pcm: Buffer; rate: number; hits: number }>;
 async function synthesize(text: string, rate: number, tag: string): Promise<{ pcm: Buffer; rate: number; hits: number }> {
   return synthesizeWithFallback(text, rate, activeReadings(), synthesizeOnce, (err) =>
     log.warn(`${tag} SSML synth failed, retrying as plain text: ${String(err)}`),
@@ -91,6 +93,9 @@ export class ChunkPlayer {
   constructor(
     private readonly sink: AudioSink,
     private readonly engine: TranslationEngine = new TranslateOnlyEngine(),
+    // Live captions: undefined (or not enabled) = no timers, no events, no behaviour change.
+    private readonly captions?: CaptionPublisher,
+    private readonly synth: Synthesizer = synthesize,
   ) {
     this.ctx = new ContextBuffer(engine.contextChunks, engine.contextResetMs);
     void this.worker();
@@ -247,7 +252,7 @@ export class ChunkPlayer {
     let rate: number;
     let readingsHits: number;
     try {
-      ({ pcm, rate, hits: readingsHits } = await synthesize(japanese, wantRate, tag));
+      ({ pcm, rate, hits: readingsHits } = await this.synth(japanese, wantRate, tag));
     } catch (err) {
       this.stats.failed++;
       log.error(`${tag} FAILED stage=synth err=${String(err)} ja="${japanese}"`);
@@ -273,13 +278,35 @@ export class ChunkPlayer {
     const playStart = Date.now();
     const queuedAtPush = this.sink.queuedMs();
     let written = 0;
+    // Live captions: the caption goes out when the first sample of this chunk leaves the sink queue
+    // (= when it is heard), not when pushPcm returns (it can wait up to ~1 s on the sink queue).
+    // Armed before the push, cleared if the push fails: failed chunks never get a caption.
+    let captionTimer: NodeJS.Timeout | null = null;
+    const captions = this.captions;
+    if (captions?.active) {
+      const startAt = playStart + queuedAtPush;
+      captionTimer = setTimeout(
+        () =>
+          captions.sendCaption({
+            session: c.session,
+            chunkSeq: c.seq,
+            text: japanese,
+            sourceText: english,
+            startAt,
+            durationMs: audioMs,
+          }),
+        Math.max(0, startAt - Date.now()),
+      );
+    }
     try {
       written = await this.sink.pushPcm(pcm);
     } catch (err) {
+      if (captionTimer) clearTimeout(captionTimer);
       this.stats.failed++;
       log.error(`${tag} FAILED stage=play err=${String(err)}`);
       return;
     }
+    if (written === 0 && captionTimer) clearTimeout(captionTimer); // nothing was heard
     this.stats.writtenBytes += written;
     this.stats.played++;
     // When the first Japanese sample is heard, relative to the English words.

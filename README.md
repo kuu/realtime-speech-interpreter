@@ -22,7 +22,7 @@ Details of the diagram: [docs/architecture.md](docs/architecture.md).
 | Custom dictionaries and pronunciations | **Supported** | Edit files, run a script. See [docs/dictionaries.md](docs/dictionaries.md). |
 | Round table or fireside chat, several speakers | **Planned** | Needs speaker detection and a different voice per speaker. |
 | Q&A in two directions with two channels | **Planned** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. |
-| Captions shown with the audio | **Planned** | The text already exists in the pipeline. It is not sent to the page yet. |
+| Captions on the listener page | **Supported** | After **Listen** is pressed, Japanese captions appear below the button in time with the voice, and the English source as it is recognised. See below. |
 | Browser microphone as input (`getUserMedia`) | **Planned** | For venues with no audio line out, or no PC to run OBS. |
 | Dictionary builder (easier than editing files) | **Idea** | A tool that suggests terms from slides or a transcript. |
 | Voice that follows the speaker | **Idea** | Depends on speaker detection. |
@@ -122,6 +122,11 @@ ffmpeg -re -i path/to/english-speech.wav -vn -ac 1 -ar 48000 -c:a libopus -b:a 1
 Open the `ListenerUrl` on a phone, press **Listen**, and put on headphones. Run this command from the network that
 you put in `venueCidr`.
 
+After **Listen** is pressed, captions appear below the button: the Japanese line when its audio starts, and the English
+source line as it is recognised. Listeners without earphones can mute the phone and read. `ListenerUrl?source=off`
+hides the English line (no visible switch). `-c captions=off` at deploy time turns both lines off and keeps the page
+as it was.
+
 ## Costs
 
 Prices as of 2026-11-15, region ap-northeast-1, USD, list price, tax excluded.
@@ -208,7 +213,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 
 ## Roadmap
 
-1. Subtitles on the listener page.
+1. ~~Subtitles on the listener page.~~ Done: see [docs/architecture.md](docs/architecture.md#captions).
 2. Two channels from one audio source (English to Japanese, Japanese to English).
 3. Speaker detection and one voice per speaker.
 4. Browser microphone input (`getUserMedia`).

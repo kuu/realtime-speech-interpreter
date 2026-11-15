@@ -21,6 +21,11 @@ Prices change. Check the current price pages before you budget, and see "Update 
 75-80% of a running hour is the speech services: Transcribe ($0.60), Bedrock or Translate, and Polly ($0.40).
 With 100 listeners, outbound audio adds about $0.27. Listener count is the main variable (see "Sensitivity").
 
+Captions add no AWS service: the text already exists in the app. They are sent as LiveKit data packets to every
+listener who pressed **Listen**. Measured on a local LiveKit server over a 2-minute talk: about 370 bytes per second
+per listener on average (peak about 1 KB/s, at most 5 packets per second), next to about 14 KB/s for the audio. The
+captions do not add participants; capacity and the listener estimate are unchanged.
+
 ## Which numbers are measured and which are estimates
 
 | Number | Status | Source |

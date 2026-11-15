@@ -17,7 +17,9 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
 ## Tokens
 
 - The Lambda mints a LiveKit token with `canPublish=false` and `canPublishData=false`, a random identity, and the
-  configured room only (`cdk/lambda/token/`). Nothing in the request changes the grant.
+  configured room only (`cdk/lambda/token/`). Nothing in the request changes the grant. Captions need no change:
+  receiving data packets is part of `canSubscribe`. `cdk/test/captions.test.ts` pins the exact grant, so a wider
+  grant fails the tests.
 - Listener tokens expire after `listenerTokenTtlSec` (default 21600 s, 6 hours). A listener must reload the page after
   that. The app's publisher token has its own lifetime (`publisherTokenTtl`, default 6 h).
 - The token endpoint accepts `GET` and `HEAD` only.
@@ -51,7 +53,7 @@ the app accepts SRT and the health check from the load balancer only.
 venue audio --SRT--> Fargate app --audio--> Amazon Transcribe  (English text)
                          |--- text --------> Amazon Translate or Amazon Bedrock (Japanese text)
                          |--- text --------> Amazon Polly      (Japanese speech)
-                         '--- speech ------> LiveKit host --WebRTC--> listeners
+                         '--- speech and caption text --> LiveKit host --WebRTC--> listeners
 ```
 
 | Data | Goes to | Stored by this project |
@@ -60,6 +62,7 @@ venue audio --SRT--> Fargate app --audio--> Amazon Transcribe  (English text)
 | English text | Translate or Bedrock (and the logs) | **Yes, in CloudWatch Logs** (see below). |
 | Japanese text | Polly (and the logs) | **Yes, in CloudWatch Logs.** |
 | Japanese speech | LiveKit, then listeners' browsers | No. LiveKit does not record in this setup. |
+| Caption text (English and Japanese) | LiveKit data packets, then the browsers of listeners who pressed **Listen** | No. |
 
 - The app logs the English and Japanese text of every chunk (`COMMIT`, `SYNTH`, `FAILED` lines). Anyone who can read the
   log group can read the transcript. The default retention is 14 days (`logRetentionDays`). Lower it, or restrict
@@ -72,6 +75,21 @@ venue audio --SRT--> Fargate app --audio--> Amazon Transcribe  (English text)
 - The end-to-end test harness (`e2e/`) does record the translated audio and the logs of its own runs into `e2e/runs/`
   (git-ignored). Treat those folders as confidential if the source audio is.
 
+### Captions
+
+- With `captions=on` (default) the English transcript and the Japanese translation are sent to every listener who
+  pressed **Listen**. Anyone with the listener URL can read them. Use `-c captions=off` if the text must not leave the
+  app.
+- The text comes from speech recognition and a language model, so the page treats it as untrusted: it is inserted
+  with `textContent` only, never as HTML (`app/test/captions-assembler.test.ts` checks this). The page accepts caption
+  packets only on topic `captions` and only from the participant `publisher-app`.
+- `?source=off` hides the English line. It is a display option, not a protection: the English packets are still sent.
+- The English line can show words for a few seconds that are later withdrawn (a result that Transcribe finally tags
+  as Japanese). The app retracts them; see [architecture.md](architecture.md#captions).
+- CloudFront uses the managed `SECURITY_HEADERS` response headers policy, which sets no `Content-Security-Policy`.
+  The captions do not change this. A CSP would have to allow the jsdelivr import of `livekit-client` and the LiveKit
+  `wss:` URL; it is left for a separate change.
+
 ## Machine-translation disclaimer for the listener page
 
 Show a short notice on the page. The current page does not include one. Suggested text:
@@ -81,7 +99,7 @@ Show a short notice on the page. The current page does not include one. Suggeste
 > 
 > この音声は自動翻訳です。音声認識・機械翻訳・音声合成によって生成されるため、遅れや誤訳が生じることがあります。公式な通訳ではありません。法律・医療・安全に関わる判断には使用しないでください。
 
-Add it to `app/web/index.html`.
+Add it to `app/web/index.html`. The captions do not change this: the page still has no notice.
 
 ## Recording and consent
 

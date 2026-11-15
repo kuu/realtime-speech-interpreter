@@ -92,6 +92,11 @@ export class LiveKitAudioSink implements AudioSink {
     return accepted;
   }
 
+  // Reliable, ordered data packet to every subscriber of the room (live captions).
+  async publishData(payload: Uint8Array, topic: string): Promise<void> {
+    await this.room.localParticipant!.publishData(payload, { reliable: true, topic });
+  }
+
   queuedMs(): number {
     return this.source.queuedDuration;
   }

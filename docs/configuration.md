@@ -211,6 +211,7 @@ Extra context keys that are not in `cdk.json`:
 | `pollyEngine` | `POLLY_ENGINE` | `neural` | `neural` or `standard`. |
 | `pollySampleRate` | `POLLY_SAMPLE_RATE` | `16000` | Polly output sample rate (Hz). |
 | `pollyReadings` | `POLLY_READINGS` | `on` | `on` or `off` (revert switch: Polly input identical to before) |
+| `captions` | `CAPTIONS` | `on` | `on` = live captions below the Listen button, after a listener presses Listen: Japanese in sync with the voice and the English source line as it is recognised. `off` = no caption data is sent and the page is exactly the page without captions. Not an event-file key: set it with `-c captions=off` or under `advanced`. See [Captions](architecture.md#captions). |
 
 ### LiveKit and listeners
 

@@ -99,6 +99,9 @@ function envOneOf<T extends string>(env: NodeJS.ProcessEnv, name: string, def: T
 export function pollyReadings(env: NodeJS.ProcessEnv): "on" | "off" {
   return envOneOf(env, "POLLY_READINGS", "on", ["on", "off"] as const);
 }
+export function captions(env: NodeJS.ProcessEnv): "on" | "off" {
+  return envOneOf(env, "CAPTIONS", "on", ["on", "off"] as const);
+}
 export function translateEngine(env: NodeJS.ProcessEnv): TranslateEngineName {
   return envOneOf(env, "TRANSLATE_ENGINE", "translate", ["translate", "llm"] as const);
 }
@@ -486,6 +489,9 @@ export const config = {
     readingsFile:
       str("POLLY_READINGS_FILE", "").trim() || fileURLToPath(new URL("../assets/polly-readings.csv", import.meta.url)),
   },
+
+  // Live captions on the LiveKit data channel (caption-event.ts). off = no data packets at all.
+  captions: { enabled: captions(process.env) === "on" },
 
   livekit: {
     url: str("LIVEKIT_URL", "ws://127.0.0.1:7880"),

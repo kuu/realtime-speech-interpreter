@@ -13,6 +13,8 @@ export interface AudioSink {
   pushPcm(pcm: Buffer): Promise<number>;
   // Audio queued in the output but not yet played (ms).
   queuedMs(): number;
+  // Optional data channel (live captions). The file sink has none: no captions are sent there.
+  publishData?(payload: Uint8Array, topic: string): Promise<void>;
   // Resolves when all queued audio has played.
   waitForPlayout(): Promise<void>;
   disconnect(): Promise<void>;

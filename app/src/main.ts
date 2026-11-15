@@ -18,6 +18,7 @@ import { PcmQueue } from "./pcm-queue.js";
 import { runPipeline } from "./pipeline.js";
 import { createSink } from "./audio-sink.js";
 import { ChunkPlayer } from "./chunk-player.js";
+import { CaptionPublisher } from "./caption-publisher.js";
 import { createTranslationEngine, TranslateOnlyEngine, type TranslationEngine } from "./translate-engine.js";
 import { pacingDelayMs } from "./input-pacing.js";
 
@@ -147,9 +148,13 @@ async function main(): Promise<void> {
   }
   const llmLine = engine.startupLine();
   if (llmLine) log.info(llmLine);
-  const player = new ChunkPlayer(sink, engine);
+  const captions = new CaptionPublisher(sink, config.captions.enabled);
+  log.info(captions.startupLine());
+  const player = new ChunkPlayer(sink, engine, captions);
   const logSummary = (label: string) => {
     log.info(player.summary(label));
+    const c = captions.summaryLine(label);
+    if (c) log.info(c);
     const l = engine.summaryLine(label);
     if (l) log.info(l);
   };
@@ -165,6 +170,7 @@ async function main(): Promise<void> {
     currentStop?.();
     // ECS stopTimeout is 10 s: give queued chunks up to 8 s to finish playing.
     await Promise.race([player.drain(), sleep(8000)]);
+    captions.close();
     logSummary("exit");
     engine.dispose();
     try {
@@ -181,7 +187,7 @@ async function main(): Promise<void> {
     const src = buildAudioSource(inputFile);
     currentStop = src.stop;
     try {
-      await runPipeline(src.frames, player, session);
+      await runPipeline(src.frames, player, session, captions);
     } catch (err) {
       log.error(`[session ${session}] pipeline error:`, err);
     }

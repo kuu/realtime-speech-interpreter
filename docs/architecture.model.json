@@ -270,7 +270,7 @@
       "from": "app",
       "to": "livekit",
       "step": 8,
-      "text": "The app publishes the audio to LiveKit over WebRTC (Opus)."
+      "text": "The app publishes the audio to LiveKit over WebRTC (Opus), and the caption text as data packets."
     },
     {
       "id": "e9",
@@ -278,7 +278,7 @@
       "to": "browser",
       "step": 9,
       "t": 0.4,
-      "text": "The listener's browser plays the audio from LiveKit (subscribe only)."
+      "text": "The listener's browser plays the audio and shows the captions from LiveKit (subscribe only)."
     },
     {
       "id": "e10",

@@ -1,0 +1,38 @@
+{
+  "name": "simul-translation-cdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK app: SRT ingest (NLB+Fargate) -> Transcribe/Translate/Polly -> self-hosted LiveKit SFU (EC2) -> browser listeners (CloudFront)",
+  "author": "Kuu Miyazaki <miyazaqui@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kuu/realtime-speech-interpreter.git",
+    "directory": "cdk"
+  },
+  "bugs": {
+    "url": "https://github.com/kuu/realtime-speech-interpreter/issues"
+  },
+  "homepage": "https://github.com/kuu/realtime-speech-interpreter#readme",
+  "bin": {
+    "simul-translation": "bin/simul-translation.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "synth": "cdk synth",
+    "cdk": "cdk",
+    "test": "node --require ts-node/register --test test/*.test.ts",
+    "doctor": "../scripts/doctor.sh"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.271.0",
+    "constructs": "10.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "aws-cdk": "2.1143.0",
+    "ts-node": "10.9.2",
+    "typescript": "5.9.3"
+  }
+}

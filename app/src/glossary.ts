@@ -1,0 +1,98 @@
+// Glossary for the LLM engine: the deployed Amazon Translate terminology (same terms the Translate
+// fallback uses), fetched at startup with translate:GetTerminology (CSV, presigned S3 URL).
+// Pure parsing here; the fetch is injected so it can be tested.
+
+import { GetTerminologyCommand } from "@aws-sdk/client-translate";
+
+export type GlossaryEntry = [en: string, ja: string];
+
+// Parse CSV text: optional BOM, CRLF or LF, quoted fields ("" escapes a quote, quoted commas),
+// header row `en,ja`, blank lines ignored. A duplicate English key keeps the first entry.
+export function parseTerminologyCsv(csv: string): GlossaryEntry[] {
+  const text = csv.replace(/^\uFEFF/, "");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      field = "";
+      rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  const out: GlossaryEntry[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (r.length < 2) continue;
+    const en = r[0].trim();
+    const ja = r[1].trim();
+    if (!en || !ja) continue;
+    if (en.toLowerCase() === "en" && ja.toLowerCase() === "ja") continue;
+    const key = en.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push([en, ja]);
+  }
+  return out;
+}
+
+// One `English = 日本語` line per entry, in terminology order.
+export function glossaryLines(entries: readonly GlossaryEntry[]): string {
+  return entries.map(([en, ja]) => `${en} = ${ja}`).join("\n");
+}
+
+export interface TerminologyClient {
+  send(command: any, options?: { abortSignal?: AbortSignal }): Promise<any>;
+}
+export type FetchFn = (url: string, init?: { signal?: AbortSignal }) => Promise<{
+  ok: boolean;
+  status: number;
+  text(): Promise<string>;
+}>;
+
+// Loads the deployed terminology. Rejects on any failure (API error, HTTP error, timeout,
+// empty or unparsable CSV); the caller disables the LLM engine for the session.
+export async function loadDeployedGlossary(
+  translateClient: TerminologyClient,
+  name: string,
+  fetchFn: FetchFn,
+  timeoutMs: number,
+): Promise<GlossaryEntry[]> {
+  if (!name) throw new Error("no terminology name configured (TRANSLATE_TERMINOLOGY is empty)");
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await translateClient.send(new GetTerminologyCommand({ Name: name, TerminologyDataFormat: "CSV" }), { abortSignal: ac.signal });
+    const url: string | undefined = res?.TerminologyDataLocation?.Location;
+    if (!url) throw new Error("GetTerminology returned no download location");
+    const r = await fetchFn(url, { signal: ac.signal });
+    if (!r.ok) throw new Error(`terminology download failed: HTTP ${r.status}`);
+    const entries = parseTerminologyCsv(await r.text());
+    if (entries.length === 0) throw new Error("terminology CSV has no entries");
+    return entries;
+  } catch (err) {
+    if (ac.signal.aborted) throw new Error(`glossary load timed out after ${timeoutMs} ms`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}

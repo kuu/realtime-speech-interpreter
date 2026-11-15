@@ -1,0 +1,346 @@
+{
+  "title": "Realtime Speech Interpreter: architecture",
+  "desc": "Audio leaves the venue mixer, goes through OBS and SRT to a Network Load Balancer and a Fargate app. The app calls Transcribe, Translate or Bedrock, and Polly, then publishes Japanese audio to a LiveKit server on EC2. Listener browsers play the audio. A CloudFront, S3 and Lambda path serves the page and subscribe-only tokens. Secrets Manager and CloudWatch Logs support the pipeline.",
+  "width": 1400,
+  "height": 1275,
+  "groups": [
+    {
+      "id": "venue",
+      "label": "Venue",
+      "kind": "venue",
+      "x": 20,
+      "y": 90,
+      "w": 200,
+      "h": 380
+    },
+    {
+      "id": "aws",
+      "label": "AWS Cloud (one Region, default ap-northeast-1)",
+      "kind": "aws",
+      "x": 250,
+      "y": 60,
+      "w": 940,
+      "h": 925
+    },
+    {
+      "id": "ai",
+      "parent": "aws",
+      "label": "AI services (HTTPS API calls)",
+      "kind": "service",
+      "x": 520,
+      "y": 95,
+      "w": 500,
+      "h": 165
+    },
+    {
+      "id": "vpc",
+      "parent": "aws",
+      "label": "VPC, public subnets in 2 AZs, no NAT",
+      "sublabel": "SRT is accepted from the venue IP only",
+      "kind": "vpc",
+      "x": 290,
+      "y": 330,
+      "w": 720,
+      "h": 340
+    },
+    {
+      "id": "support",
+      "parent": "aws",
+      "label": "Secrets and logs",
+      "kind": "service",
+      "x": 270,
+      "y": 710,
+      "w": 420,
+      "h": 255
+    },
+    {
+      "id": "web",
+      "parent": "aws",
+      "label": "Listener page and token (public)",
+      "kind": "service",
+      "x": 730,
+      "y": 710,
+      "w": 440,
+      "h": 255
+    },
+    {
+      "id": "listeners",
+      "label": "Listeners",
+      "kind": "venue",
+      "x": 1215,
+      "y": 330,
+      "w": 170,
+      "h": 300
+    }
+  ],
+  "nodes": [
+    {
+      "id": "mixer",
+      "group": "venue",
+      "service": "mixer",
+      "label": "Mixer or\nmicrophone",
+      "cx": 120,
+      "cy": 190
+    },
+    {
+      "id": "obs",
+      "group": "venue",
+      "service": "obs",
+      "label": "OBS or other\nSRT encoder",
+      "cx": 120,
+      "cy": 360
+    },
+    {
+      "id": "transcribe",
+      "group": "ai",
+      "service": "transcribe",
+      "label": "Transcribe\nstreaming",
+      "cx": 580,
+      "cy": 170
+    },
+    {
+      "id": "translate",
+      "group": "ai",
+      "service": "translate",
+      "label": "Translate",
+      "cx": 700,
+      "cy": 170
+    },
+    {
+      "id": "bedrock",
+      "group": "ai",
+      "service": "bedrock",
+      "label": "Bedrock\n(optional LLM)",
+      "cx": 820,
+      "cy": 170
+    },
+    {
+      "id": "polly",
+      "group": "ai",
+      "service": "polly",
+      "label": "Polly",
+      "cx": 940,
+      "cy": 170
+    },
+    {
+      "id": "nlb",
+      "group": "vpc",
+      "service": "nlb",
+      "label": "Network Load\nBalancer (SRT)",
+      "cx": 370,
+      "cy": 470
+    },
+    {
+      "id": "app",
+      "group": "vpc",
+      "service": "fargate",
+      "label": "Fargate app\nffmpeg, chunker",
+      "cx": 600,
+      "cy": 470
+    },
+    {
+      "id": "livekit",
+      "group": "vpc",
+      "service": "ec2",
+      "label": "EC2: LiveKit\n+ Caddy (TLS)",
+      "cx": 880,
+      "cy": 470
+    },
+    {
+      "id": "eip",
+      "group": "vpc",
+      "service": "eip",
+      "label": "Elastic IP",
+      "cx": 880,
+      "cy": 590
+    },
+    {
+      "id": "cloudwatch",
+      "group": "support",
+      "service": "cloudwatch",
+      "label": "CloudWatch\nLogs",
+      "cx": 360,
+      "cy": 830
+    },
+    {
+      "id": "secrets",
+      "group": "support",
+      "service": "secrets",
+      "label": "Secrets\nManager",
+      "cx": 580,
+      "cy": 830
+    },
+    {
+      "id": "s3",
+      "group": "web",
+      "service": "s3",
+      "label": "S3 (private,\nlistener page)",
+      "cx": 930,
+      "cy": 780
+    },
+    {
+      "id": "lambda",
+      "group": "web",
+      "service": "lambda",
+      "label": "Lambda\n(token)",
+      "cx": 930,
+      "cy": 885
+    },
+    {
+      "id": "cloudfront",
+      "group": "web",
+      "service": "cloudfront",
+      "label": "CloudFront",
+      "cx": 1100,
+      "cy": 830
+    },
+    {
+      "id": "browser",
+      "group": "listeners",
+      "service": "browser",
+      "label": "Listener\nbrowser",
+      "cx": 1300,
+      "cy": 480
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "from": "mixer",
+      "to": "obs",
+      "step": 1,
+      "text": "Audio line out from the mixer goes into OBS (or any SRT encoder)."
+    },
+    {
+      "id": "e2",
+      "from": "obs",
+      "to": "nlb",
+      "step": 2,
+      "t": 0.3,
+      "text": "OBS sends SRT with Opus audio over the internet to the load balancer (UDP, venue IP only)."
+    },
+    {
+      "id": "e3",
+      "from": "nlb",
+      "to": "app",
+      "step": 3,
+      "text": "The load balancer passes it to the Fargate app. ffmpeg decodes it to 16 kHz PCM."
+    },
+    {
+      "id": "e4",
+      "from": "app",
+      "to": "transcribe",
+      "step": 4,
+      "offset": -9,
+      "t": 0.3,
+      "text": "The app streams the audio to Transcribe streaming, with language identification."
+    },
+    {
+      "id": "e5",
+      "from": "transcribe",
+      "to": "app",
+      "step": 5,
+      "offset": -9,
+      "t": 0.7,
+      "text": "Transcribe returns text. The app drops non-English results and cuts chunks."
+    },
+    {
+      "id": "e6",
+      "from": "app",
+      "to": "translate",
+      "step": 6,
+      "text": "Translate (default) or a Bedrock model (optional, dashed) translates each chunk."
+    },
+    {
+      "id": "e6b",
+      "from": "app",
+      "to": "bedrock",
+      "variantOf": 6,
+      "optional": true
+    },
+    {
+      "id": "e7",
+      "from": "app",
+      "to": "polly",
+      "step": 7,
+      "text": "Polly speaks the Japanese text, with readings for product names."
+    },
+    {
+      "id": "e8",
+      "from": "app",
+      "to": "livekit",
+      "step": 8,
+      "text": "The app publishes the audio to LiveKit over WebRTC (Opus)."
+    },
+    {
+      "id": "e9",
+      "from": "livekit",
+      "to": "browser",
+      "step": 9,
+      "t": 0.4,
+      "text": "The listener's browser plays the audio from LiveKit (subscribe only)."
+    },
+    {
+      "id": "e10",
+      "from": "browser",
+      "to": "cloudfront",
+      "step": 10,
+      "t": 0.45,
+      "text": "The browser loads the page from CloudFront and asks for a token."
+    },
+    {
+      "id": "e11",
+      "from": "cloudfront",
+      "to": "s3",
+      "step": 11,
+      "text": "CloudFront serves the page from a private S3 bucket."
+    },
+    {
+      "id": "e12",
+      "from": "cloudfront",
+      "to": "lambda",
+      "step": 12,
+      "text": "CloudFront calls the token Lambda, which returns a subscribe-only token."
+    },
+    {
+      "id": "s1",
+      "from": "app",
+      "to": "secrets",
+      "style": "support"
+    },
+    {
+      "id": "s2",
+      "from": "livekit",
+      "to": "secrets",
+      "style": "support"
+    },
+    {
+      "id": "s3e",
+      "from": "lambda",
+      "to": "secrets",
+      "style": "support"
+    },
+    {
+      "id": "s4",
+      "from": "app",
+      "to": "cloudwatch",
+      "style": "support"
+    },
+    {
+      "id": "s5",
+      "from": "livekit",
+      "to": "eip",
+      "style": "assoc"
+    }
+  ],
+  "notes": [
+    {
+      "x": 236,
+      "y": 452,
+      "text": "internet",
+      "anchor": "middle"
+    }
+  ],
+  "legendNote": "Dashed grey lines: secrets are read from Secrets Manager (app, LiveKit host, token Lambda); app, LiveKit and Lambda logs go to CloudWatch Logs.",
+  "footer": "Simplified tiles, not the official AWS Architecture Icons. AWS service names are trademarks of Amazon.com, Inc. or its affiliates. Unofficial open-source project."
+}

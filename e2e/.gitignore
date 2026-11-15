@@ -1,0 +1,3 @@
+# Run outputs (recordings, translated audio, logs) must never be committed.
+runs/
+__pycache__/

@@ -1,0 +1,5 @@
+{
+  "description": "The cdk.json defaults, unchanged: longer chunks, short sentences are merged, Amazon Translate engine. Higher start delay, fewer fragments. Use it when sentence quality matters more than speed.",
+  "status": "ready",
+  "context": {}
+}

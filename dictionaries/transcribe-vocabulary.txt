@@ -1,0 +1,250 @@
+Phrase	SoundsLike	IPA	DisplayAs
+verticalization			verticalization
+verticalize			verticalize
+verticalized			verticalized
+A.W.S.-Elemental			AWS Elemental
+Elemental			Elemental
+A.W.S.-Elemental-Media-Services			AWS Elemental Media Services
+A.E.M.S.			AEMS
+Media-Live			MediaLive
+Media-Connect			MediaConnect
+Media-Convert			MediaConvert
+Media-Package			MediaPackage
+Media-Tailor			MediaTailor
+Media-Store			MediaStore
+A.W.S.-Elemental-Media-Live			AWS Elemental MediaLive
+A.W.S.-Elemental-Media-Connect			AWS Elemental MediaConnect
+A.W.S.-Elemental-Media-Convert			AWS Elemental MediaConvert
+A.W.S.-Elemental-Media-Package			AWS Elemental MediaPackage
+A.W.S.-Elemental-Media-Tailor			AWS Elemental MediaTailor
+Media-Live-Anywhere			MediaLive Anywhere
+A.W.S.-Elemental-Media-Live-Anywhere			AWS Elemental MediaLive Anywhere
+Media-Package-V.-two			MediaPackage v2
+Media-Package-version-two			MediaPackage v2
+Media-Package-V.-one			MediaPackage v1
+Media-Connect-Gateway			MediaConnect Gateway
+Media-Connect-Router			MediaConnect Router
+Media-Connect-flow			MediaConnect flow
+Elemental-Live			Elemental Live
+Elemental-Link			Elemental Link
+Elemental-Link-H.D.			Elemental Link HD
+Elemental-Link-U.H.D.			Elemental Link UHD
+Link-H.D.			Link HD
+Link-U.H.D.			Link UHD
+Elemental-Inference			Elemental Inference
+A.W.S.-Elemental-Inference			AWS Elemental Inference
+A.W.S.-C.D.I.			AWS CDI
+C.D.I.			CDI
+Cloud-Front			CloudFront
+Cloud-Watch			CloudWatch
+Event-Bridge			EventBridge
+Cloud-Formation			CloudFormation
+Cloud-Trail			CloudTrail
+Bedrock			Bedrock
+Data-Firehose			Data Firehose
+V.P.C.			VPC
+Zixi			Zixi
+Zixi-Edge-Compute			Zixi Edge Compute
+Data-zoom			Datazoom
+Wide-vine			Widevine
+Play-Ready			PlayReady
+Fair-Play			FairPlay
+Irdeto			Irdeto
+Clear-Key			ClearKey
+Pro-Res			ProRes
+Apple-Pro-Res			Apple ProRes
+Dolby-Vision			Dolby Vision
+Dolby-Vision-eight-point-one			Dolby Vision 8.1
+Dolby-Atmos			Dolby Atmos
+Dolby-Digital			Dolby Digital
+Dolby-Digital-Plus			Dolby Digital Plus
+Dolby-E.			Dolby E
+Kantar			Kantar
+Nielsen			Nielsen
+Matroska			Matroska
+jason-ata			JSONata
+F.F.-em-peg			FFmpeg
+Open-R.T.B.			OpenRTB
+G.A.M.			GAM
+A.P.S.			APS
+D.S.P.			DSP
+D.V.-three-sixty			DV360
+H.L.S.			HLS
+L.L.-H.L.S.			LL-HLS
+low-latency-H.L.S.			low-latency HLS
+H.L.S.-interstitials			HLS Interstitials
+em-peg-dash			MPEG-DASH
+dash-I.S.O.			DASH-ISO
+D.V.B.-dash			DVB-DASH
+C.M.A.F.			CMAF
+see-maf			CMAF
+C.M.A.F.-ingest			CMAF Ingest
+see-maf-ingest			CMAF Ingest
+M.S.S.			MSS
+M.P.D.			MPD
+M.-three-U.-eight			M3U8
+S.R.T.			SRT
+R.T.M.P.			RTMP
+R.T.M.P.S.			RTMPS
+R.T.P.			RTP
+R.T.P.-F.E.C.			RTP-FEC
+F.E.C.			FEC
+rist			RIST
+U.D.P.			UDP
+A.R.Q.			ARQ
+N.D.I.			NDI
+N.D.I.-H.X.			NDI HX
+N.D.I.-H.Q.			NDI HQ
+Speed-H.Q.			SpeedHQ
+M.D.N.S.			mDNS
+S.D.I.			SDI
+en-moss			NMOS
+N.M.O.S.			NMOS
+V.S.F.			VSF
+T.R.-oh-seven			TR-07
+T.R.-oh-eight			TR-08
+M.P.T.S.			MPTS
+em-peg			MPEG
+em-peg-two			MPEG-2
+em-peg-T.S.			MPEG-TS
+em-peg-two-T.S.			MPEG-2 TS
+I.R.D.			IRD
+S.S.M.			SSM
+Q.o.S.			QoS
+C.I.D.R.			CIDR
+cider-block			CIDR block
+gen-lock			genlock
+d.B.F.S.			dBFS
+O.T.T.			OTT
+C.D.N.			CDN
+V.O.D.			VOD
+live-to-V.O.D.			live-to-VOD
+V.O.D.-to-live			VOD-to-live
+simp-tee			SMPTE
+simpty			SMPTE
+simp-tee-twenty-one-ten			SMPTE 2110
+S.T.-twenty-one-ten			ST 2110
+S.T.-twenty-one-ten-dash-twenty-two			ST 2110-22
+simp-tee-twenty-twenty-two-dash-seven			SMPTE 2022-7
+S.T.-twenty-twenty-two-dash-seven			ST 2022-7
+simp-tee-twenty-thirty-eight			SMPTE 2038
+simp-tee-T.T.			SMPTE-TT
+jay-peg-X.S.			JPEG XS
+jay-peg-two-thousand			JPEG 2000
+A.R.I.B.			ARIB
+S.C.T.E.			SCTE
+S.C.T.E.-thirty-five			SCTE-35
+scutty-thirty-five			SCTE-35
+S.C.T.E.-one-oh-four			SCTE 104
+S.C.T.E.-twenty			SCTE-20
+P.O.I.S.			POIS
+E.S.A.M.			ESAM
+cue-out			cue-out
+cue-in			cue-in
+ext-X.-cue-out			EXT-X-CUE-OUT
+ext-X.-cue-in			EXT-X-CUE-IN
+ext-X.-date-range			EXT-X-DATERANGE
+ext-X.-program-date-time			EXT-X-PROGRAM-DATE-TIME
+S.S.A.I.			SSAI
+S.G.A.I.			SGAI
+A.D.S.			ADS
+V.-map			VMAP
+V.-paid			VPAID
+I.A.B.			IAB
+garm			GARM
+T.P.S.			TPS
+pre-roll			pre-roll
+mid-roll			mid-roll
+post-roll			post-roll
+ad-pod			ad pod
+ad-pods			ad pods
+ad-avail			ad avail
+ad-avails			ad avails
+pre-fetch			prefetch
+pre-fetching			prefetching
+L.-band			L-band
+H.-two-sixty-four			H.264
+H.-two-six-four			H.264
+H.-two-sixty-five			H.265
+H.-two-six-five			H.265
+A.V.C.			AVC
+A.V.C.-intra			AVC-Intra
+H.E.V.C.			HEVC
+hev-see			HEVC
+M.V.-H.E.V.C.			MV-HEVC
+A.V.-one			AV1
+V.P.-eight			VP8
+V.P.-nine			VP9
+X.A.V.C.			XAVC
+X.D.-cam			XDCAM
+M.X.F.			MXF
+I.M.F.			IMF
+Web-M.			WebM
+M.P.-four			MP4
+M.P.-two			MP2
+A.A.C.			AAC
+A.C.-three			AC3
+E.-A.C.-three			E-AC3
+E.A.C.-three			EAC3
+P.C.M.			PCM
+Opus			Opus
+Web-V.T.T.			WebVTT
+T.T.M.L.			TTML
+E.B.U.-T.T.-D.			EBU-TT-D
+D.V.B.-sub			DVB-Sub
+D.F.X.P.			DFXP
+I.M.S.C.			IMSC
+C.E.A.-six-oh-eight			CEA-608
+C.E.A.-seven-oh-eight			CEA-708
+I.D.-three			ID3
+K.L.V.			KLV
+S.E.I.			SEI
+P.T.S.			PTS
+H.D.R.			HDR
+H.D.R.-ten			HDR10
+H.D.R.-ten-plus			HDR10+
+S.D.R.			SDR
+three-D.-L.U.T.			3D LUT
+three-D.-L.U.T.-s			3D LUTs
+U.H.D.			UHD
+four-K.			4K
+eight-K.			8K
+ten-eighty-P.			1080p
+Y.C.b.C.r.			YCbCr
+Q.V.B.R.			QVBR
+C.B.R.			CBR
+V.B.R.			VBR
+A.B.R.			ABR
+A.B.R.-ladder			ABR ladder
+H.R.D.			HRD
+I.-frame			I-frame
+telecine			telecine
+J.I.T.P.			JITP
+D.R.M.			DRM
+Speke			SPEKE
+speaky			SPEKE
+C.P.I.X.			CPIX
+see-pix			CPIX
+C.E.N.C.			CENC
+C.B.C.S.			CBCS
+A.E.S.-one-twenty-eight			AES-128
+Sig-V.-four			SigV4
+epoch-locking			epoch locking
+epoch-locked			epoch-locked
+M.Q.C.S.			MQCS
+M.Q.A.R.			MQAR
+C.M.S.D.			CMSD
+C.T.A.-fifty-oh-six			CTA-5006
+A.-B.-watermarking			A/B watermarking
+A.-B.-forensic-watermarking			A/B forensic watermarking
+C.-two-P.A.			C2PA
+Tams			TAMS
+T.A.M.S.			TAMS
+A.S.R.			ASR
+Multiview			Multiview
+Dynamic-Multiview			Dynamic Multiview
+vended-logs			vended logs
+launch			launch
+launched			launched
+launches			launches
+launching			launching

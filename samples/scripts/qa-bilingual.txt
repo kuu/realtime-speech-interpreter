@@ -1,0 +1,12 @@
+# qa-bilingual: English speaker with Japanese audience questions (Japanese voices) interleaved.
+# Fictional company "Lumenstream". Japanese lines test the Japanese-speech filter (en->ja channel must ignore them)
+# and, in future, the second channel (ja->en).
+Matthew: Thank you for listening. We have a few minutes left, so let me open the floor for questions. Please go ahead.
+Takumi: すみません、質問です。ライブ配信の遅延は、どのくらいまで短くできますか。
+Matthew: Good question. With short segments and a tuned player, we reach about three seconds from the camera to the screen. With WebRTC, you can go below one second, but it costs more and it scales less easily.
+Kazuha: ありがとうございます。複数のCDNを使う場合、費用はどのように管理していますか。
+Matthew: We set a budget per event, and the player prefers the cheapest provider that meets the quality target. If that provider slows down, traffic moves to the next one automatically.
+Tomoko: モバイル回線が弱い会場でも、安定して視聴できますか。
+Matthew: Yes, in most cases. The bitrate ladder includes a very low bitrate rendition, and the player drops to it quickly when the throughput falls. Viewers see a lower resolution, but the stream does not stop.
+Takumi: 最後に、日本語の字幕には対応していますか。
+Matthew: Subtitles are on our roadmap. For now, you can use a separate translation service, and we provide the audio and the timing information for it. Thank you for all your questions, and thank you again for coming.

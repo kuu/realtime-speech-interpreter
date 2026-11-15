@@ -1,0 +1,24 @@
+# Contributing
+
+Issues and pull requests are welcome. This is a personal, unofficial project.
+
+Before you open a pull request, run the checks from the repository root (no AWS credentials needed):
+
+```bash
+(cd app && npm ci && npm run build && npm test)
+(cd cdk && npm ci && npx tsc --noEmit && npm test)
+node dictionaries/validate.mjs
+python3 -m unittest discover -s e2e/lib -p 'test_*.py'
+node --test scripts/render-architecture.test.mjs
+node scripts/render-architecture.mjs --check
+node scripts/check-links.mjs
+./scripts/check-publishable.sh
+```
+
+- Match the existing code style. Keep changes small and focused.
+- If you change the diagram, edit `docs/architecture.model.json` and run `node scripts/render-architecture.mjs`.
+- If you add or change a CDK setting, document it in `docs/configuration.md` (a test fails otherwise).
+- Do not commit account IDs, IP addresses, secrets or recordings. `check-publishable.sh` looks for them.
+- Feature ideas: see [docs/roadmap.md](docs/roadmap.md) and open an issue before a large change.
+
+By contributing you agree that your contribution is licensed under the MIT License (see `LICENSE`).

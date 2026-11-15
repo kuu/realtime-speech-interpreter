@@ -1,0 +1,10 @@
+node_modules
+dist
+web
+*.raw
+*.wav
+*.opus
+*.mp4
+.env
+.env.*
+*.token

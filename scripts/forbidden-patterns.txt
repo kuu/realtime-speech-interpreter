@@ -1,0 +1,56 @@
+# Forbidden patterns for scripts/check-publishable.mjs (extend freely).
+# One JavaScript regex per line, matched case-insensitively. `!regex` lines allow a match.
+# Real values are written in a self-non-matching form (a bracket around one character,
+# e.g. `1234[5]6` matches "123456" but not its own text), so this file passes its own check.
+# Put your own real values (account ID, IPs, name, e-mail) in forbidden-patterns.local.txt
+# (gitignored) so they are checked but never published.
+
+# AWS account of the original deployment
+4841909313[8]5
+# Any 12-digit AWS account ID inside an ARN other than the documentation account
+arn:aws[a-z-]*:[a-z0-9-]+:[a-z0-9-]*:(?!123456789012)\d{12}:
+# IAM access key IDs and private keys
+\b(AKIA|ASIA)[0-9A-Z]{16}\b
+-----BEGIN [A-Z ]*PRIVATE KEY-----
+# Secrets Manager ARNs with the random 6-character suffix
+secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}\b
+# Original venue / developer IP addresses (the built-in check also flags any public IPv4)
+12[4]\.102\.103\.\d+
+49\.9[6]\.\d+\.\d+
+# Elastic IP / EC2 resource IDs with real-looking suffixes
+eipalloc-[0-9a-f]{8,}
+\b(i|sg|vpc|subnet|rtb|igw|nat|eni)-[0-9a-f]{17}\b
+# Hostnames derived from a real IP
+\d+[-.]\d+[-.]\d+[-.]\d+\.sslip\.io
+\b[a-z0-9]{13,14}\.cloudfront\.net
+# Developer home paths
+/Use[r]s/[A-Za-z]
+/hom[e]/[a-z][a-z0-9_-]+
+# Internal systems and wording
+corp\.amazo[n]
+\bmidwa[y]\b
+drawi[o]\.corp
+\.agent[s]/[A-Za-z]
+AWS Media Roadsho[w]
+Media-RoadSho[w]
+Amazon[ ]internal
+amazon-interna[l]
+test-speec[h]/[A-Za-z0-9_]
+# Names of people from the original talks (add more here)
+Jerem[y]
+# Customer names that appeared in test recordings (add more here)
+\b(Hul[u]|Potor[o]|ABEM[A])\b
+# More internal systems: wiki, code hosting, ticketing, internal TLDs, the S[A]S tool
+\bw\.amazo[n]\.com
+code\.amazo[n]\.com
+\b[a-z0-9.-]+\.(a2z\.com|amazon\.dev|aws\.dev|corp\.amazo[n]\.com)\b
+\bSA[S]\b
+# draw.io files exported from an internal instance (run scripts/scrub-drawio.sh)
+(<|&lt;)mxfile[^>]*?\bhost=(\"|&quot;)(?!app\.diagrams\.net)
+(<|&lt;)mxfile[^>]*?\b(agent|etag|modified)=
+# E-mail addresses: only the project contact and example.com / example.org / example.net are allowed.
+# Any other address, including every @amazon.com address, fails. The contact is allowed by the `!` line below.
+[A-Za-z0-9._%+-]+@(?!example\.(com|org|net)\b)[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[a-z]{2,}\b
+!^git@github\.com$
+!^miyazaqui@gmail\.com$
+!@users\.noreply\.github\.com$

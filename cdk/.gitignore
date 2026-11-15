@@ -1,0 +1,12 @@
+node_modules
+cdk.out
+bin/*.js
+lib/*.js
+*.d.ts
+.env
+*.log
+
+# Local CDK lookups / generated
+cdk.context.json
+# Your event settings (copy config/event.example.json to config/event.json)
+config/event.json

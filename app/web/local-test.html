@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Test Listener</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+      input { width: 100%; font-family: monospace; padding: 0.4rem; margin-top: 0.3rem; }
+      textarea { width: 100%; height: 5rem; font-family: monospace; }
+      button { padding: 0.6rem 1.4rem; font-size: 1rem; margin-top: 0.8rem; }
+      #status { margin-top: 1rem; color: #555; }
+      .warn { background: #fff3cd; border: 1px solid #ffe69c; padding: 0.6rem 0.9rem; border-radius: 6px; }
+      .row { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Local Test Listener</h1>
+    <p class="warn">⚠️ Wear headphones. Without them the microphone will pick up the
+      translated audio and create an echo/feedback loop, and your latency reading
+      will be wrong.</p>
+    <p>For local mic/latency testing only. Paste the LiveKit URL and a subscriber
+      token (from <code>npm run token -- listener subscribe</code>), then Join.</p>
+
+    <div class="row">
+      <label for="url">LiveKit URL</label>
+      <input id="url" value="ws://127.0.0.1:7880" />
+    </div>
+    <div class="row">
+      <label for="token">Subscriber token</label>
+      <textarea id="token" placeholder="eyJhbGci..."></textarea>
+    </div>
+    <button id="join">Join &amp; Listen</button>
+    <button id="leave" disabled>Leave</button>
+    <div id="status">Not connected</div>
+
+    <script type="module">
+      import {
+        Room,
+        RoomEvent,
+      } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
+
+      const urlEl = document.getElementById("url");
+      const tokenEl = document.getElementById("token");
+      const joinBtn = document.getElementById("join");
+      const leaveBtn = document.getElementById("leave");
+      const statusEl = document.getElementById("status");
+      let room = null;
+
+      const setStatus = (m) => (statusEl.textContent = m);
+
+      joinBtn.addEventListener("click", async () => {
+        const url = urlEl.value.trim();
+        const token = tokenEl.value.trim();
+        if (!token) return setStatus("Paste a subscriber token first.");
+        try {
+          room = new Room();
+          room.on(RoomEvent.Connected, () => setStatus("Connected — waiting for audio…"));
+          room.on(RoomEvent.Disconnected, () => setStatus("Disconnected"));
+          room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+            if (track.kind === "audio") {
+              const el = track.attach();
+              el.autoplay = true;
+              document.body.appendChild(el);
+              el.play().catch(() => setStatus("Click the page to start audio"));
+              setStatus(`Listening 🎧 (from ${participant.identity})`);
+            }
+          });
+          await room.connect(url, token);
+          joinBtn.disabled = true;
+          leaveBtn.disabled = false;
+        } catch (e) {
+          setStatus(`Error: ${e.message}`);
+          room = null;
+        }
+      });
+
+      leaveBtn.addEventListener("click", async () => {
+        if (room) await room.disconnect();
+        joinBtn.disabled = false;
+        leaveBtn.disabled = true;
+      });
+    </script>
+  </body>
+</html>

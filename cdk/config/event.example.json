@@ -1,0 +1,17 @@
+{
+  "venueCidr": ["203.0.113.10/32"],
+  "region": "ap-northeast-1",
+  "profile": "talk",
+  "sourceLanguage": "en-US",
+  "targetLanguage": "ja",
+  "pollyVoice": "Kazuha",
+  "pollyReadings": true,
+  "translateEngine": "llm",
+  "llmModelId": "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "dictionaries": {
+    "transcribeVocabulary": "simul-translation",
+    "translateTerminology": "simul-translation"
+  },
+  "expectedListeners": 200,
+  "advanced": {}
+}

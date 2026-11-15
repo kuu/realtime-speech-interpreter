@@ -1,0 +1,29 @@
+{
+  "name": "simul-translation-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SRT ingest → Transcribe → Translate → Polly → LiveKit publisher",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "token": "tsx src/tools/make-token.ts",
+    "test": "node --import tsx --test src/segmenter.test.ts src/fillers.test.ts src/language-gate.test.ts src/speed-control.test.ts src/input-pacing.test.ts src/srt-source.test.ts src/corrections.test.ts src/translate-params.test.ts src/segmenter-quality.test.ts src/llm-config.test.ts src/glossary.test.ts src/llm-prompt.test.ts src/llm-validate.test.ts src/llm-breaker.test.ts src/llm-context.test.ts src/llm-stats.test.ts src/translate-engine.test.ts src/polly-readings.test.ts",
+    "probe:llm": "tsx src/tools/llm-probe.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.658.0",
+    "@aws-sdk/client-polly": "^3.658.0",
+    "@aws-sdk/client-transcribe-streaming": "^3.658.0",
+    "@aws-sdk/client-translate": "^3.658.0",
+    "@livekit/rtc-node": "^0.13.0",
+    "livekit-server-sdk": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

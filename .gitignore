@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+**/node_modules/
+# Build output
+dist/
+**/dist/
+*.tsbuildinfo
+# CDK (cdk.context.json contains the account ID and AZ lookups)
+cdk.out/
+**/cdk.out/
+.cdk.staging/
+cdk.context.json
+# Env and secrets: never commit
+.env
+.env.*
+!.env.example
+*.token
+.publish.token
+.subscribe.token
+# Local publish-check patterns (real values; never published)
+scripts/forbidden-patterns.local.txt
+# E2E runs and Python caches
+e2e/runs/
+e2e/**/__pycache__/
+__pycache__/
+*.pyc
+# Backups, logs, OS and editor files
+*.bak
+*.log
+.DS_Store
+.agents/
+# Maintainer-only notes (kept outside the repo; ignored in case a copy lands here)
+docs/release-checklist.md
+private/
+# Media and test artifacts (fixtures live in samples/ and are allowed there)
+samples/out/
+test-speech/
+*.raw
+*.opus
+*.wav
+*.mp3
+*.m4a
+*.mp4
+!samples/**/*.wav
+!samples/**/*.mp3
+!samples/**/*.m4a
+out/

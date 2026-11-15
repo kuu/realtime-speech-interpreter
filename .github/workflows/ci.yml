@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - run: npm test
+        working-directory: app
+
+  cdk:
+    name: CDK typecheck, test and synth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+      - run: npm ci
+        working-directory: cdk
+      - run: npx tsc --noEmit
+        working-directory: cdk
+      - run: npm test
+        working-directory: cdk
+      # Synth needs no AWS credentials; 203.0.113.10/32 is a documentation address.
+      - run: npx cdk synth -q -c venueCidr=203.0.113.10/32
+        working-directory: cdk
+
+  repo-checks:
+    name: Dictionaries, e2e unit tests, publish check, links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # check-publishable scans the whole history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: node dictionaries/validate.mjs
+      - name: e2e/lib unit tests (no AWS)
+        run: python3 -m unittest discover -s e2e/lib -p 'test_*.py'
+      - run: node --test scripts/render-architecture.test.mjs
+      - run: node scripts/render-architecture.mjs --check
+      - run: node scripts/check-publishable.mjs
+      - run: node scripts/check-links.mjs

@@ -1,0 +1,394 @@
+en,ja
+verticalization,バーティカライゼーション
+AWS Elemental Media Services,AWS Elemental Media Services
+AEMS,AEMS
+AWS Elemental,AWS Elemental
+AWS Elemental MediaConnect,AWS Elemental MediaConnect
+AWS Elemental MediaLive,AWS Elemental MediaLive
+AWS Elemental MediaConvert,AWS Elemental MediaConvert
+AWS Elemental MediaPackage,AWS Elemental MediaPackage
+AWS Elemental MediaTailor,AWS Elemental MediaTailor
+AWS Elemental MediaStore,AWS Elemental MediaStore
+AWS Elemental MediaLive Anywhere,AWS Elemental MediaLive Anywhere
+AWS Elemental Live,AWS Elemental Live
+AWS Elemental Link,AWS Elemental Link
+AWS Elemental Link HD,AWS Elemental Link HD
+AWS Elemental Link UHD,AWS Elemental Link UHD
+AWS Elemental Inference,AWS Elemental Inference
+MediaLive,MediaLive
+MediaConnect,MediaConnect
+MediaConvert,MediaConvert
+MediaPackage,MediaPackage
+MediaTailor,MediaTailor
+MediaStore,MediaStore
+MediaLive Anywhere,MediaLive Anywhere
+MediaPackage v2,MediaPackage v2
+MediaPackage v1,MediaPackage v1
+MediaConnect Gateway,MediaConnect Gateway
+MediaConnect Router,MediaConnect ルーター
+MediaConnect flow,MediaConnect フロー
+Elemental Live,Elemental Live
+Elemental Link,Elemental Link
+Elemental Link HD,Elemental Link HD
+Elemental Link UHD,Elemental Link UHD
+Link HD,Link HD
+Link UHD,Link UHD
+Link device,Link デバイス
+Elemental Link input,Elemental Link 入力
+Elemental Inference,Elemental Inference
+Elemental Inference feed,Elemental Inference フィード
+AWS CDI,AWS CDI
+AWS Cloud Digital Interface,AWS Cloud Digital Interface
+Amazon CloudFront,Amazon CloudFront
+CloudFront,CloudFront
+Amazon CloudWatch,Amazon CloudWatch
+CloudWatch,CloudWatch
+Amazon CloudWatch Logs,Amazon CloudWatch Logs
+CloudWatch metrics,CloudWatch メトリクス
+Amazon EventBridge,Amazon EventBridge
+EventBridge,EventBridge
+AWS CloudFormation,AWS CloudFormation
+AWS CloudTrail,AWS CloudTrail
+Amazon S3,Amazon S3
+Amazon Bedrock,Amazon Bedrock
+Bedrock,Bedrock
+Amazon Data Firehose,Amazon Data Firehose
+AWS Secrets Manager,AWS Secrets Manager
+AWS Certificate Manager,AWS Certificate Manager
+AWS Direct Connect,AWS Direct Connect
+AWS Resource Access Manager,AWS Resource Access Manager
+Amazon VPC,Amazon VPC
+Service Quotas,Service Quotas
+Amazon Publisher Services,Amazon Publisher Services
+APS Streaming TV,APS Streaming TV
+Amazon Ads,Amazon Ads
+Amazon DSP,Amazon DSP
+Sponsored TV,スポンサード TV
+Google Ad Manager,Google アド マネージャー
+Datazoom,Datazoom
+Zixi,Zixi
+Zixi Edge Compute,Zixi Edge Compute
+Zixi push,Zixi プッシュ
+Zixi pull,Zixi プル
+Dolby Vision,Dolby Vision
+Dolby Vision 8.1,Dolby Vision 8.1
+Dolby Atmos,Dolby Atmos
+Dolby Digital,Dolby Digital
+Dolby Digital Plus,Dolby Digital Plus
+Dolby E,Dolby E
+Apple ProRes,Apple ProRes
+ProRes,ProRes
+Apple FairPlay,Apple FairPlay
+FairPlay,FairPlay
+Widevine,Widevine
+PlayReady,PlayReady
+Irdeto,Irdeto
+ClearKey,ClearKey
+Kantar watermarking,カンターウォーターマーキング
+Nielsen watermarking,ニールセンウォーターマーキング
+FFmpeg,FFmpeg
+JSONata,JSONata
+OpenRTB,OpenRTB
+Microsoft Smooth Streaming,Microsoft Smooth Streaming
+HLS,HLS
+LL-HLS,LL-HLS
+low-latency HLS,低レイテンシー HLS
+HLS Interstitials,HLS インタースティシャル
+DASH,DASH
+MPEG-DASH,MPEG-DASH
+DASH-ISO,DASH-ISO
+DVB-DASH,DVB-DASH
+CMAF,CMAF
+CMAF Ingest,CMAF Ingest
+CMAF Ingest output group,CMAF Ingest 出力グループ
+MSS,MSS
+MPD,MPD
+M3U8,M3U8
+SRT,SRT
+SRT listener,SRT リスナー
+SRT caller,SRT コーラー
+RTMP,RTMP
+RTMPS,RTMPS
+RTP,RTP
+RTP-FEC,RTP-FEC
+RIST,RIST
+UDP,UDP
+NDI,NDI
+NDI source,NDI ソース
+SDI,SDI
+CDI,CDI
+NMOS,NMOS
+JPEG XS,JPEG XS
+MPTS,MPTS
+MPEG-2,MPEG-2
+MPEG-TS,MPEG-TS
+MPEG-2 TS,MPEG-2 TS
+transport stream,トランスポートストリーム
+SMPTE,SMPTE
+SMPTE 2110,SMPTE 2110
+ST 2110,ST 2110
+ST 2110-22,ST 2110-22
+SMPTE 2022-7,SMPTE 2022-7
+ST 2022-7,ST 2022-7
+SMPTE 2038,SMPTE 2038
+seamless protection switching,シームレスな保護スイッチング
+TR-07,TR-07
+TR-08,TR-08
+QoS,QoS
+CIDR,CIDR
+VPC,VPC
+VPC interface,VPC インターフェイス
+OTT,OTT
+CDN,CDN
+VOD,VOD
+live-to-VOD,Live-to-VOD
+VOD-to-live,VOD-to-live
+H.264,H.264
+H.265,H.265
+AVC,AVC
+HEVC,HEVC
+MV-HEVC,MV-HEVC
+AV1,AV1
+VP9,VP9
+AAC,AAC
+AC3,AC3
+EAC3,EAC3
+E-AC3,E-AC3
+PCM,PCM
+MXF,MXF
+IMF,IMF
+XDCAM,XDCAM
+XAVC,XAVC
+TTML,TTML
+WebVTT,WebVTT
+EBU-TT-D,EBU-TT-D
+DVB-Sub,DVB-Sub
+CEA-608,CEA-608
+CEA-708,CEA-708
+ID3,ID3
+KLV,KLV
+HDR,HDR
+HDR10,HDR10
+HDR10+,HDR10+
+SDR,SDR
+3D LUT,3D LUT
+UHD,UHD
+QVBR,QVBR
+CBR,CBR
+VBR,VBR
+ABR,ABR
+ABR ladder,ABR ラダー
+ABR stack,ABR スタック
+adaptive bitrate,アダプティブビットレート
+Automated ABR,自動化 ABR
+quality-defined variable bitrate,品質が定義された可変ビットレート
+SCTE,SCTE
+SCTE-35,SCTE-35
+SCTE 35,SCTE 35
+SCTE 104,SCTE 104
+SCTE-35 marker,SCTE-35 マーカー
+SCTE-35 message,SCTE-35 メッセージ
+POIS,POIS
+ESAM,ESAM
+SSAI,SSAI
+SGAI,SGAI
+VMAP,VMAP
+VPAID,VPAID
+VAST response,VAST レスポンス
+Video Ad Serving Template,動画広告配信テンプレート
+IAB,IAB
+GARM,GARM
+DRM,DRM
+digital rights management,デジタル著作権管理
+SPEKE,SPEKE
+CPIX,CPIX
+CENC,CENC
+CBCS,CBCS
+SigV4,SigV4
+MQCS,MQCS
+Media Quality Confidence Score,メディア品質信頼スコア
+MQAR,MQAR
+CMSD,CMSD
+C2PA,C2PA
+C2PA manifest,C2PA マニフェスト
+TAMS,TAMS
+JITP,JITP
+just-in-time packaging,ジャストインタイムパッケージング
+channel,チャンネル
+channels,チャンネル
+channel class,チャンネルクラス
+standard channel,標準チャンネル
+single-pipeline channel,単一パイプラインチャンネル
+channel placement group,チャンネルプレイスメントグループ
+channel group,チャンネルグループ
+channel assembly,チャンネルアセンブリ
+pipeline,パイプライン
+pipeline redundancy,パイプラインの冗長性
+pipeline locking,パイプラインロック
+output locking,出力ロック
+epoch locking,エポックロック
+epoch-locked,エポックロック
+video aligned locking,動画整列ロック
+input,入力
+inputs,入力
+output,出力
+outputs,出力
+output group,出力グループ
+MediaPackage output group,MediaPackage 出力グループ
+push input,プッシュ入力
+pull input,プル入力
+input security group,入力セキュリティグループ
+input switching,入力切り替え
+automatic input failover,自動入力フェイルオーバー
+input redundancy,入力冗長性
+preferred input,優先入力
+cross-Region failover,クロスリージョンフェイルオーバー
+multiplex,マルチプレックス
+upstream system,アップストリームシステム
+downstream system,ダウンストリームシステム
+contribution encoder,コントリビューションエンコーダー
+on-premises,オンプレミス
+low latency,低レイテンシー
+Dynamic Multiview,動的マルチビュー
+workflow monitor,ワークフローモニター
+signal map,シグナルマップ
+flow,フロー
+flows,フロー
+source,ソース
+sources,ソース
+source failover,ソースフェイルオーバー
+entitlement,エンタイトルメント
+entitlements,エンタイトルメント
+ingress bridge,イングレスブリッジ
+egress bridge,エグレスブリッジ
+ingress,イングレス
+egress,エグレス
+ancillary data,補助データ
+mezzanine,メザニン
+genlock,ゲンロック
+content quality analysis,コンテンツ品質分析
+Smart Subtitles,スマート字幕
+smart crop,スマートクロップ
+smart cropping,スマートクロッピング
+event clipping,イベントクリッピング
+contextual metadata enrichment,コンテキストメタデータエンリッチメント
+contextual metadata,コンテキストメタデータ
+contextual ad targeting,コンテキスト広告ターゲティング
+brand safety,ブランドセーフティ
+playground,プレイグラウンド
+endpoint,エンドポイント
+endpoints,エンドポイント
+origin endpoint,オリジンエンドポイント
+origin endpoints,オリジンエンドポイント
+origin,オリジン
+origin server,オリジンサーバー
+packager,パッケージャ
+ingest,取り込み
+manifest,マニフェスト
+manifests,マニフェスト
+manifest filtering,マニフェストのフィルタリング
+manifest decoration,マニフェストデコレーション
+personalized manifest,パーソナライズされたマニフェスト
+multivariant playlist,マルチバリアントプレイリスト
+media playlist,メディアプレイリスト
+rendition,レンディション
+renditions,レンディション
+rendition group,レンディショングループ
+trick-play,トリックプレイ
+I-frame,I フレーム
+multi-period DASH,複数期間 DASH
+adaptation set,適応セット
+time-shift,タイムシフト
+time-shifted viewing,タイムシフト表示
+startover window,スタートオーバーウィンドウ
+catch-up TV,キャッチアップ TV
+harvest job,収集ジョブ
+VOD asset,VOD アセット
+content key,コンテンツキー
+key rotation,キーローテーション
+CDN authorization,CDN 認可
+ad insertion,広告挿入
+server-side ad insertion,サーバー側の広告挿入
+server-guided ad insertion,サーバーガイド広告挿入
+ad decision server,広告決定サーバー
+ad break,広告ブレーク
+ad breaks,広告ブレーク
+ad avail,広告アベイル
+ad avails,広告アベイル
+ad pod,広告ポッド
+ad pods,広告ポッド
+ad marker,広告マーカー
+ad markers,広告マーカー
+ad creative,広告クリエイティブ
+pre-roll,プレロール
+mid-roll,ミッドロール
+post-roll,ポストロール
+playback configuration,再生設定
+playback session,再生セッション
+cue-out,キューアウト
+cue-in,キューイン
+splice insert,スプライス挿入
+splice point,スプライスポイント
+placement opportunity,配置機会
+filler slate,フィラースレート
+bumper,バンパー
+bumpers,バンパー
+avail suppression,Avail 抑制
+live edge,ライブエッジ
+ad prefetching,広告プリフェッチ
+prefetch,プリフェッチ
+prefetch schedule,プリフェッチスケジュール
+guided prefetch,ガイド付きプリフェッチ
+ad fill rate,広告フィル率
+preconditioned ads,事前調整済み広告
+ad buffet,広告ビュッフェ
+house ads,ハウス広告
+overlay ads,オーバーレイ広告
+non-linear ads,非線形広告
+linear ads,リニア広告
+L-band ads,L バンド広告
+Monetization Functions,収益化関数
+lifecycle hooks,ライフサイクルフック
+Yield Optimization,Yield Optimization
+programmatic ads,プログラマティック広告
+bid request,入札リクエスト
+beacon,ビーコン
+beacons,ビーコン
+source location,ソースロケーション
+VOD source,VOD ソース
+live source,ライブソース
+linear stream,リニアストリーム
+Program Rules,プログラムルール
+audience cohort,オーディエンスコホート
+transcoding,トランスコーディング
+accelerated transcoding,高速トランスコーディング
+job template,ジョブテンプレート
+MediaConvert job,MediaConvert ジョブ
+preset,プリセット
+output preset,出力プリセット
+system preset,システムプリセット
+queue,キュー
+on-demand queue,オンデマンドキュー
+reserved queue,リザーブドキュー
+queue hopping,キューホッピング
+Professional tier,プロフェッショナル階層
+frame capture,フレームキャプチャ
+passthrough,パススルー
+video passthrough,ビデオパススルー
+tone mapping,トーンマッピング
+color space conversion,色空間変換
+spatial video,空間ビデオ
+image overlay,イメージオーバーレイ
+motion graphics overlay,モーショングラフィックスオーバーレイ
+timecode,タイムコード
+timecode burn-in,タイムコードバーンイン
+captions,キャプション
+subtitles,字幕
+sidecar captions,サイドカーキャプション
+Teletext,テレテキスト
+thumbnails,サムネイル
+A/B watermarking,A/B ウォーターマーク
+A/B forensic watermarking,A/B フォレンジックウォーターマーク
+A/B forensic video watermarking,A/B フォレンジックビデオウォーターマーク
+Availability Zone,アベイラビリティーゾーン
+AWS Region,AWS リージョン

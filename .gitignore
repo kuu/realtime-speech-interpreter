@@ -29,8 +29,6 @@ __pycache__/
 *.log
 .DS_Store
 .agents/
-# Maintainer-only notes (kept outside the repo; ignored in case a copy lands here)
-docs/release-checklist.md
 private/
 # Media and test artifacts (fixtures live in samples/ and are allowed there)
 samples/out/

@@ -653,6 +653,10 @@
           "Value": "on"
         },
         {
+          "Name": "CAPTIONS",
+          "Value": "on"
+        },
+        {
           "Name": "LIVEKIT_URL",
           "Value": {
             "Fn::Join": [

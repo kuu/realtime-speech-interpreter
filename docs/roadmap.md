@@ -68,21 +68,15 @@ be measured, then documented in [cost.md](cost.md)); dictionaries per direction.
 - Listener page offers a channel choice and remembers it.
 - `samples/scripts/qa-bilingual.txt` is the test input.
 
-## 4. Captions with audio
+## 4. Captions with audio (done)
 
-**Problem.** Listeners without earphones or in loud rooms cannot rely on audio only. Captions also help accessibility.
+**Shipped.** After **Listen** is pressed, the page shows Japanese captions when their audio starts and the English
+source as it is recognised (`?source=off` hides it). Data goes as reliable LiveKit data packets from the app; listener
+tokens still cannot publish. The deploy setting `captions` (default `on`) turns it off. The event schema has `channel`
+and `speaker` fields for items 2 and 3. Details: [architecture.md](architecture.md#captions).
 
-**Proposal.** Send the translated text of each chunk to the listener page, for example through a LiveKit data channel
-(or text stream), together with a timestamp so the caption is shown when the matching audio plays (the audio is delayed
-by Polly and the playback queue, so show the text from the chunk player, not from the translation step). Add a toggle
-and a size setting on the page. Optional: English source text, shown smaller.
-
-**Acceptance criteria.**
-- Captions appear within one chunk of the audio start and never earlier than the audio.
-- The token the browser receives cannot publish (existing rule); data messages are published by the app only.
-- The page works without captions (feature toggle in the event file; default off or on is a product decision).
-- The machine-translation notice from [security.md](security.md) is shown on the page.
-- Text is escaped before it is inserted into the DOM (test).
+**Not built, on purpose.** A toggle and a size setting on the page: the page keeps only the **Listen** button. The
+on-page machine-translation notice from [security.md](security.md) is still open.
 
 ## 5. Browser microphone ingest
 

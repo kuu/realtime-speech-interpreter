@@ -134,3 +134,10 @@ test("parseJsonc keeps // inside strings", () => {
 test("a missing eventFile that was asked for is an error", () => {
   assert.throws(() => cfgFor({ eventFile: "/nonexistent/event.json" }), /does not exist/);
 });
+
+test("captions: default on, -c captions=off, junk is rejected", () => {
+  assert.equal(cfgFor({}).captions, "on");
+  assert.equal(cfgFor({ captions: "off" }).captions, "off");
+  assert.equal(cfgFor({ captions: "OFF" }).captions, "off");
+  assert.throws(() => cfgFor({ captions: "maybe" }), /captions must be "on" or "off"/);
+});

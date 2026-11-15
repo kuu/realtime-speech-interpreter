@@ -209,9 +209,9 @@
 <circle cx="713" cy="1055" r="11" fill="#232F3E"/><text x="713" y="1059.2" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">7</text>
 <text x="732" y="1059" font-size="12.5" fill="#232F3E">Polly speaks the Japanese text, with readings for product names.</text>
 <circle cx="713" cy="1081" r="11" fill="#232F3E"/><text x="713" y="1085.2" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">8</text>
-<text x="732" y="1085" font-size="12.5" fill="#232F3E">The app publishes the audio to LiveKit over WebRTC (Opus).</text>
+<text x="732" y="1085" font-size="12.5" fill="#232F3E">The app publishes the audio to LiveKit over WebRTC (Opus), and the caption text as data packets.</text>
 <circle cx="713" cy="1107" r="11" fill="#232F3E"/><text x="713" y="1111.2" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">9</text>
-<text x="732" y="1111" font-size="12.5" fill="#232F3E">The listener's browser plays the audio from LiveKit (subscribe only).</text>
+<text x="732" y="1111" font-size="12.5" fill="#232F3E">The listener's browser plays the audio and shows the captions from LiveKit (subscribe only).</text>
 <circle cx="713" cy="1133" r="11" fill="#232F3E"/><text x="713" y="1137.2" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">10</text>
 <text x="732" y="1137" font-size="12.5" fill="#232F3E">The browser loads the page from CloudFront and asks for a token.</text>
 <circle cx="713" cy="1159" r="11" fill="#232F3E"/><text x="713" y="1163.2" text-anchor="middle" font-size="12" font-weight="700" fill="#FFFFFF">11</text>

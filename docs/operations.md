@@ -62,6 +62,8 @@ Add `--filter-pattern` with one of these:
 | `[langfilter] dropped` | Japanese or non-English speech was dropped on purpose. | Many drops while only English is spoken: language filter problem. |
 | `[srt] stream ended` | The encoder disconnected. | Restart the encoder. |
 | `[summary]`, `[llm-summary]` | Totals at the end of a session. | Keep for the report. |
+| `captions=on` | Startup line: captions are on (`topic=captions schema=1`). | `captions=off`: the deploy setting is off. |
+| `[captions]` | Caption totals per session: `caption=` Japanese lines sent (equals `played`), `source=` English packets, `retracted=` English results withdrawn after a late language flip, `failed=` packets LiveKit refused, `sourceLagMs(avg/max)=` time from the end of the words to their packet. | `failed` above 0 or `caption=0` while `played` grows: check `[livekit] connected` and the LiveKit host. |
 
 The LiveKit host logs to `/simul-translation/livekit`, the token function to `/simul-translation/token`.
 

@@ -273,6 +273,7 @@ export class SimulTranslationStack extends cdk.Stack {
         POLLY_ENGINE: cfg.pollyEngine,
         POLLY_SAMPLE_RATE: String(cfg.pollySampleRate),
         POLLY_READINGS: cfg.pollyReadings,
+        CAPTIONS: cfg.captions,
         LIVEKIT_URL: livekitUrl,
         LIVEKIT_ROOM: cfg.roomName,
         LIVEKIT_TOKEN_TTL: cfg.publisherTokenTtl,
@@ -436,7 +437,7 @@ export class SimulTranslationStack extends cdk.Stack {
       destinationBucket: siteBucket,
       sources: [
         s3deploy.Source.asset(path.resolve(__dirname, "..", cfg.appPath, "web"), { exclude: ["local-test.html"] }),
-        s3deploy.Source.jsonData("config.json", { livekitUrl, tokenEndpoint: "/token" }),
+        s3deploy.Source.jsonData("config.json", { livekitUrl, tokenEndpoint: "/token", captions: cfg.captions === "on" }),
       ],
       distribution,
       distributionPaths: ["/*"],

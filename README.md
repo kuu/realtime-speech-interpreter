@@ -221,7 +221,7 @@ Details and acceptance criteria: [docs/roadmap.md](docs/roadmap.md). The order c
 Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Before you open a pull request:
 
 ```bash
-(cd app && npm run build && npm test)
+(cd app && npm run build && npm run typecheck && npm test)
 (cd cdk && npm test)
 node dictionaries/validate.mjs
 node --test scripts/render-architecture.test.mjs

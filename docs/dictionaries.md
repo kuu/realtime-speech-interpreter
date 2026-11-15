@@ -68,7 +68,7 @@ Readings use Katakana, the long-vowel mark, spaces, digits and hyphens. Turn the
 ### Context corrections
 
 Rules in `app/src/corrections.ts`. Each rule has a pattern and a function that returns the replacement, or
-`null` to leave the text alone. Add a unit test in `app/src/corrections.test.ts` that shows both the fix and a
+`null` to leave the text alone. Add a unit test in `app/test/corrections.test.ts` that shows both the fix and a
 sentence that must not change. The log line of a changed chunk ends with `[corrected: ABC -> AVC]`. The switch is
 `ENABLE_CORRECTION` (`"advanced": {"enableCorrection": "false"}` in `event.json`).
 

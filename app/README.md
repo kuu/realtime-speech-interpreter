@@ -33,6 +33,7 @@ src/
   log.ts           leveled logger
   tools/make-token.ts  LiveKit token generator
   tools/llm-probe.ts   real-API checks of the LLM engine (`npm run probe:llm`, cents)
+test/              unit tests (*.test.ts, mirrors src/); fixtures/ holds frozen reference copies of older segmenter code
 web/               browser listener page (LiveKit client SDK)
 Dockerfile         Node + ffmpeg (libsrt/libopus); used by the Fargate CDK construct
 ```
@@ -109,7 +110,7 @@ between finishing it and hearing the Japanese begin. That is the ear-to-ear late
 INPUT_FILE=../../slice-1/sample.raw AUDIO_SINK=file OUTPUT_FILE=/tmp/out.pcm \
 TRANSCRIBE_VOCABULARY=simul-translation TRANSLATE_TERMINOLOGY=simul-translation npm start
 ffplay -f s16le -ar 16000 -ac 1 /tmp/out.pcm      # listen to the result
-npm test                                          # segmenter unit tests
+npm test                                          # unit tests in test/ (no AWS)
 ```
 
 The app exits after the file is fully played and prints a `[summary]` line.

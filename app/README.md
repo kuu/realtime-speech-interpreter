@@ -28,13 +28,15 @@ src/
   llm-stats.ts     counters, cache hit rate, cost estimate, [llm-summary] (pure)
   glossary.ts      deployed Translate terminology → glossary lines (pure parse + loader)
   audio-sink.ts    sink interface + FileAudioSink (local tests)
-  livekit-sink.ts  headless LiveKit publisher (PCM → Opus track)
+  livekit-sink.ts  headless LiveKit publisher (PCM → Opus track, caption data packets)
+  caption-event.ts caption event schema v1 (builders; the contract is in docs/architecture.md)
+  caption-publisher.ts sends captions (Japanese at play start, English from the segmenter tap); CAPTIONS=on|off
   corrections.ts   post-recognition correction map
   log.ts           leveled logger
   tools/make-token.ts  LiveKit token generator
   tools/llm-probe.ts   real-API checks of the LLM engine (`npm run probe:llm`, cents)
 test/              unit tests (*.test.ts, mirrors src/); fixtures/ holds frozen reference copies of older segmenter code
-web/               browser listener page (LiveKit client SDK)
+web/               browser listener page (LiveKit client SDK); captions.js = caption parser and line assembler (pure)
 Dockerfile         Node + ffmpeg (libsrt/libopus); used by the Fargate CDK construct
 ```
 

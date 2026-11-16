@@ -95,8 +95,9 @@ const len = (s) => Array.from(s).length;
 // Shared rolling-line store: merges pieces into the open line, closes it at sentence end / max length /
 // quiet gap, keeps at most maxLines, and expires lines (fade, then removal).
 class Lines {
-  constructor(o, prefix, spaced, closeOn) {
+  constructor(o, prefix, spaced, closeOn, splitLong = false) {
     this.o = o;
+    this.splitLong = splitLong; // true: a line longer than maxLineChars is cut (at a comma, else a word) and goes on in a new line
     this.prefix = prefix;
     this.spaced = spaced;
     this.closeOn = closeOn; // regex: line ends here
@@ -118,11 +119,55 @@ class Lines {
     line.segs.push({ resultId, text });
     line.updatedAt = now;
     line.text = this.render(line);
+    this.settle(line, closeAfter, now);
+  }
+
+  // Cuts an over-long line, then closes the last part if it ends a sentence (or the caller says so).
+  settle(line, closeAfter, now) {
+    while (this.splitLong && len(line.text) > this.o.maxLineChars) {
+      const cut = this.cutPoint(line.text);
+      const next = { id: `${this.prefix}${this.n++}`, segs: [], closed: false, updatedAt: now, text: "", kind: line.kind, contOf: line, closedByLength: false };
+      let pos = 0;
+      const keep = [];
+      for (const sg of line.segs) {
+        const start = pos === 0 ? 0 : line.text.indexOf(sg.text, pos);
+        const end = start + sg.text.length;
+        pos = end;
+        const head = sg.text.slice(0, Math.max(0, Math.min(end, cut) - start)).trimEnd();
+        const tail = sg.text.slice(Math.max(0, cut - start)).trimStart();
+        if (head !== "") keep.push({ resultId: sg.resultId, text: head });
+        if (tail !== "") next.segs.push({ resultId: sg.resultId, text: tail });
+      }
+      line.segs = keep;
+      line.text = this.render(line);
+      line.closed = true;
+      line.closedByLength = true;
+      next.text = this.render(next);
+      this.lines.push(next);
+      while (this.lines.length > this.o.maxLines) this.lines.shift();
+      line = next;
+    }
     if (closeAfter || this.closeOn.test(line.text)) line.closed = true;
-    else if (len(line.text) >= this.o.maxLineChars) {
+    else if (!this.splitLong && len(line.text) >= this.o.maxLineChars) {
       line.closed = true;
       line.closedByLength = true;
     }
+  }
+
+  // Where to cut a line longer than the limit: just after the last comma, semicolon or colon within the limit,
+  // else at the last space within it, else at the limit itself.
+  cutPoint(text) {
+    const max = this.o.maxLineChars;
+    const head = text.slice(0, max + 1);
+    let i = -1;
+    for (let k = max - 1; k > 0; k--) {
+      if (",;:".includes(head[k])) {
+        i = k + 1;
+        break;
+      }
+    }
+    if (i < 0) i = head.lastIndexOf(" ");
+    return i > 0 ? i : max;
   }
 
   render(line) {
@@ -164,7 +209,9 @@ class Lines {
 const JA_DEFAULTS = { maxLines: 3, maxLineChars: 60, lineGapMs: 6000, lineTtlMs: 12000, fadeMs: 600 };
 // English lines group by sentence: a pause does not close a line (only a sentence end or the maximum length does;
 // an idle line expires after lineTtlMs), because Transcribe results end in the middle of sentences.
-const EN_DEFAULTS = { maxLines: 3, maxLineChars: 90, lineGapMs: 10000, lineTtlMs: 10000, fadeMs: 600 };
+// Safety limit only: the page wraps long lines itself. It guards against a speaker who never ends a sentence.
+export const EN_MAX_LINE_CHARS = 240;
+const EN_DEFAULTS = { maxLines: 3, maxLineChars: EN_MAX_LINE_CHARS, lineGapMs: 10000, lineTtlMs: 10000, fadeMs: 600 };
 
 /**
  * Japanese caption assembler. Consecutive caption events (same channel and speaker) merge into one line
@@ -212,7 +259,7 @@ export function createAssembler(opts = {}, showSpeech = true) {
  * result when it is retracted. A retract for an unknown resultId is a no-op.
  */
 export function createSourceAssembler(opts = {}) {
-  const store = new Lines({ ...EN_DEFAULTS, ...opts }, "en", true, /[?!.]["')”]*$/);
+  const store = new Lines({ ...EN_DEFAULTS, ...opts }, "en", true, /[?!.]["')”]*$/, true);
   return {
     /** @param {ParsedEvent | null} ev */
     push(ev, now) {

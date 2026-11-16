@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 
 // The page module is plain JS without types; load it by URL so the type checker does not resolve it.
 const m: any = await import(new URL("../web/captions.js", import.meta.url).href);
-const { parseEvent, parseCaptionEvent, parseSourceOption, createAssembler, createSourceAssembler } = m;
+const { parseEvent, parseCaptionEvent, parseSourceOption, createAssembler, createSourceAssembler, EN_MAX_LINE_CHARS } = m;
 
 const cap = (text: string, extra: object = {}) =>
   JSON.stringify({ v: 1, type: "caption", id: "1-1", seq: 1, channel: "ja", lang: "ja", text, speaker: null, final: true, ...extra });
@@ -163,7 +163,7 @@ test("English: ? and ! and closing quotes end a sentence; no space before , . ? 
   en(a, "; then :", 5, { resultId: "f" });
   assert.deepEqual(texts(a.model(5)), ["Really?", 'he said, and "go!"', "next; then :"]);
 });
-test("English: a pause does not split a sentence; the max length wraps between words", () => {
+test("English: a pause does not split a sentence; a line over the limit is cut at a comma, else between words", () => {
   const a = createSourceAssembler();
   en(a, "Viewers see", 0);
   a.tick(5000);
@@ -172,7 +172,36 @@ test("English: a pause does not split a sentence; the max length wraps between w
   const b = createSourceAssembler({ maxLineChars: 12 });
   en(b, "aaaa bbbb cccc", 0);
   en(b, "dddd eeee", 10, { resultId: "r2" });
-  assert.deepEqual(texts(b.model(10)), ["aaaa bbbb cccc", "dddd eeee"]);
+  assert.deepEqual(texts(b.model(10)), ["aaaa bbbb", "cccc dddd", "eeee"]);
+});
+test("English: the default limit is 240 characters; the cut is after the last comma before it, else at a space", () => {
+  assert.equal(EN_MAX_LINE_CHARS, 240);
+  const a = createSourceAssembler();
+  const first = "So the system picks the cheapest provider that meets the quality target, and when that provider slows down the viewers see a lower resolution";
+  assert.ok(first.length < 240);
+  en(a, first, 0, { resultId: "a" });
+  assert.deepEqual(texts(a.model(0)), [first], "under the limit: one line (the old limit was 90)");
+  const w = " word".repeat(30); // pushes the line over 240; last comma is at "target,"
+  en(a, w.trim() + " and more", 10, { resultId: "b" });
+  const m = texts(a.model(10));
+  assert.equal(m.length, 2);
+  assert.ok(m[0].endsWith("target,"), m[0]);
+  assert.ok(m[0].length <= 240 && m[1].length > 0);
+  const c = createSourceAssembler();
+  en(c, "word ".repeat(70).trim(), 0); // 349 chars, no comma: cut between words
+  const mc = texts(c.model(0));
+  assert.equal(mc.length, 2);
+  assert.ok(mc[0].length <= 240 && !mc[0].endsWith(" ") && mc.join(" ") === "word ".repeat(70).trim());
+});
+test("English: retract stays exact across a cut line", () => {
+  const a = createSourceAssembler({ maxLineChars: 20 });
+  en(a, "alpha beta, gamma", 0, { resultId: "r1" });
+  en(a, "delta epsilon zeta eta", 10, { resultId: "r2" });
+  assert.ok(a.model(10).length >= 2);
+  a.push(parseEvent(retract("r2")), 20);
+  assert.deepEqual(texts(a.model(20)), ["alpha beta,", "gamma"], "the words are exact; the line breaks already made stay");
+  a.push(parseEvent(retract("r1")), 30);
+  assert.deepEqual(a.model(30), []);
 });
 test("English: retract of a middle result inside a joined line removes exactly its words", () => {
   const a = createSourceAssembler();

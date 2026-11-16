@@ -226,9 +226,11 @@ will make this easier to read.
   the meaning, the colour is a second cue. A line that wraps at the maximum length continues the same utterance
   and does not repeat the `― `.
 - English: lines group by sentence across Transcribe results (a result often ends mid-sentence). Batches join
-  into one line that ends at `.?!` or at 90 characters (wrapped between words); a pause does not end it. `boundary`
-  is not used to end a line, because it only says a sentence ended somewhere in the batch. At most 3 lines, 10 s
-  before fading. A retract removes exactly that result's words, also inside a joined line.
+  into one line that ends at `.?!`; a pause does not end it. The page wraps long lines itself, so the only length
+  limit is a safety limit of 240 characters (`EN_MAX_LINE_CHARS`) for a speaker who never ends a sentence: the line
+  is cut after the last comma, semicolon or colon within the limit, else at the last space. `boundary` is not used
+  to end a line, because it only says a sentence ended somewhere in the batch. At most 3 lines, 10 s before fading.
+  A retract removes exactly that result's words, also inside a joined line (a line break already made stays).
 - Text goes into the page with `textContent` only. A test fails if the page code contains `innerHTML` or similar.
 - Late joiners (and reconnects) see captions from the next words on. There is no history.
 

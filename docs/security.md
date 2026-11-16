@@ -140,8 +140,9 @@ Notes:
 
 `POST /publisher-token`, behind the same CloudFront distribution (no new public hostname, no CORS).
 
-- Request: `Content-Type: application/json`, body `{"code":"..."}`, at most 256 bytes. Anything else gets `400` with the
-  same generic body. The code is in the body, never in the URL or a header, so it does not appear in CloudFront
+- Request: `Content-Type: application/json`, body `{"code":"..."}`, at most 256 bytes. Every request that is not a valid,
+  in-limit JSON body with a matching code (wrong content type, body over 256 bytes, bad JSON, missing field, wrong
+  code) gets `401 {"error":"invalid"}`. The code is in the body, never in the URL or a header, so it does not appear in CloudFront
   access logs, browser history or referrers.
 - The CloudFront behavior allows `POST`, disables caching, forwards no cookies and no query string.
 - A function URL behind CloudFront OAC needs, for `POST`, the SHA-256 of the body in the `x-amz-content-sha256` header
@@ -152,10 +153,10 @@ Notes:
 
 | Case | Status | Body |
 |---|---|---|
-| Wrong code, malformed body, missing field | `401` | `{"error":"invalid"}` |
+| Wrong code, wrong content type, body over 256 bytes, malformed JSON, missing field | `401` | `{"error":"invalid"}` |
 | After the event end time (checked before the code, so it does not depend on the code) | `403` | `{"error":"not available"}` |
 | Throttled by Lambda | `429` (from the platform) | platform default |
-| Server error (secret unreadable, code too short) | `500` | `{"error":"internal error"}` |
+| Server error (secret unreadable, code too short, `PublisherNotAfter` missing, unreadable or not valid ISO 8601; fail closed, no token) | `500` | `{"error":"internal error"}` |
 
 The page treats `401` as "wrong code", `403` as "closed", `429` and `5xx` as "try again" with a jittered retry, and
 shows plain text for each. It never reveals more than the server did.
@@ -222,7 +223,9 @@ question.
 - **Already connected publisher at the end time.** The app reads `PublisherNotAfter` at start and **polls it every
   60 seconds**, re-arming its timer when the value changes (so `--ends-at` takes effect within a minute). At
   `notAfter` it removes `browser-publisher` from the ingest room (RoomService `RemoveParticipant`, using the API
-  credentials it already has) and keeps the ingest closed. Without this a session opened just before the end could run
+  credentials it already has) and keeps the ingest closed: a token minted up to 10 minutes
+  before `notAfter` can still join afterwards, so the app re-checks on every `ParticipantConnected` and, after
+  `notAfter`, removes any `browser-publisher` it sees and never subscribes to it. Without this a session opened just before the end could run
   on. If the parameter cannot be read, the app keeps the last known value and logs a warning.
 - **Rotation.** One command, run by the operator from the repository root with their own AWS identity:
 
@@ -256,13 +259,20 @@ and holds no secret: `https://<distribution>/publish.html`.
 - The code is cleared from the field after the request. **Decision:** it is kept in a closure variable (never a global
   or a DOM property) and used only to fetch a new token after a LiveKit disconnect, so a speaker who is not looking at
   the page still reconnects after a network drop. It is cleared on `beforeunload`, on `DUPLICATE_IDENTITY` and on a
-  `401` or `403`. It is never written to `localStorage`, `sessionStorage`, cookies, the URL, the hash or `history`. A
+  `401` or `403`.
+  **Bounded auto-reconnect (stale pages cannot take the stage back).** After a LiveKit disconnect the page reconnects
+  by itself only within 60 seconds of its last successful publish, and only if it never saw `DUPLICATE_IDENTITY`.
+  After 60 seconds it clears the closure variable and returns to "enter code". A page that was offline during a
+  takeover therefore cannot return with its retained code and kick the newest publisher, even if the speaker forgot to
+  close the tab. It is never written to `localStorage`, `sessionStorage`, cookies, the URL, the hash or `history`. A
   reload asks again.
 - `<meta name="referrer" content="no-referrer">` and `noindex`.
 - **No third-party script.** The listener page imports `livekit-client` from a CDN today. The publisher page must serve a
   pinned copy of `livekit-client` from its own origin, because a script that can read the field can steal both the code
   and the microphone. It also gets its own CloudFront response headers policy with a `Content-Security-Policy`
-  (`default-src 'self'`, `connect-src 'self'` plus the LiveKit `wss:` URL, no inline script). The listener page is not
+  (`default-src 'self'`, `connect-src 'self'` plus both `https://<livekit-host>` and `wss://<livekit-host>`, because livekit-client also calls
+  the signalling host over HTTPS; no inline script; whether `worker-src` or `blob:` is needed for the level meter is
+  **unverified** and is confirmed in the first build). The listener page is not
   changed by this.
 - `getUserMedia` needs a secure context. The page is served over HTTPS by CloudFront, and the LiveKit URL is `wss://`
   (Caddy, certificate for the `sslip.io` name), so there is no mixed content. `http://` access is redirected to
@@ -417,12 +427,12 @@ Automated (run in `cdk/test` and `app/test`, no AWS needed unless said):
 | 1 | Listener token cannot publish | Mint a listener token; decode it: `canPublish=false`, `canPublishData=false`, room is `roomName`, no `canPublishSources`. Existing `captions.test.ts` pins the grant; add the ingest room check. |
 | 2 | Listener token cannot join the ingest room | The listener token's room differs from the ingest room. A real LiveKit run (docker, local) rejects the join. |
 | 3 | The listener Lambda cannot mint a publisher token | No code path of `cdk/lambda/token/` produces `canPublish: true`; the stack gives that function no read on the code secret (template assertion). |
-| 4 | Publisher token grant is exactly as in the table | Decode and compare every field of the grant; identity `browser-publisher`; room `<roomName>-ingest`; TTL 10 minutes. |
+| 4 | Publisher token grant is exactly as in the table | Decode and compare every field of the grant; identity `browser-publisher`; room `<roomName>-ingest`; TTL 10 minutes. A camera-track publish attempt with this token is refused (`canPublishSources` is unverified on the pinned server, see test 13). |
 | 5 | Wrong code rejected | `401 {"error":"invalid"}`; the same for empty, missing, malformed, wrong length, wrong case-insensitive match. No token in the body. |
-| 6 | Generic errors | Responses for wrong code, malformed JSON and wrong content type are byte-identical except where the table says otherwise. |
+| 6 | Generic errors | Responses for wrong code, malformed JSON, wrong content type, body over 256 bytes and missing field are all `401` and byte-identical. |
 | 7 | Constant-time compare | The handler uses `timingSafeEqual` on equal-length digests (unit test with a spy; a timing test is too noisy to be a gate). |
 | 8 | No code in logs | A known code is sent in a right and a wrong attempt; no log line contains it or a 4-character piece of it. |
-| 9 | Code too short fails closed | A stored code of 9 characters gives `500` and no token. |
+| 9 | Fails closed | A stored code of 9 characters gives `500` and no token. A missing, unreadable or non-ISO-8601 `PublisherNotAfter` gives `500` and no token. |
 | 10 | Event end | After `notAfter` the right code gets `403`. Before it, `200`. |
 | 11 | Rotation invalidates the old code | After `rotate`, the old code gets `401` on the next request and the new one `200`. Needs a deployed stack or a mocked Secrets Manager. |
 | 12 | Throttle | The template sets reserved concurrency on the publish-token function only (also covered by 22). The quota-refusal path is a manual deploy check in a low-quota account. |
@@ -432,7 +442,7 @@ Automated (run in `cdk/test` and `app/test`, no AWS needed unless said):
 | 16 | Page keeps no secret | The page source has no `localStorage`, `sessionStorage`, `location.hash`, `history`, `innerHTML` use for the code; the code is never in a URL (test checks the `fetch` call). |
 | 17 | No third-party script | The publisher page has no `src` or `import` from another origin. |
 | 18 | App cannot read the code | Template assertion: the app task role has no `secretsmanager:GetSecretValue` on `PublisherCodeSecret`, and has `ssm:GetParameter` on `PublisherNotAfter`. |
-| 19 | `notAfter` follows rotation | Changing the parameter moves the app's removal timer within 60 s (unit test with a fake clock). |
+| 19 | `notAfter` follows rotation | Changing the parameter moves the app's removal timer within 60 s (unit test with a fake clock). After `notAfter`, a `browser-publisher` that joins with a still-valid token is removed and never subscribed to. |
 | 20 | Idle costs nothing | No publisher for 5 minutes: zero Transcribe seconds streamed. After a publisher leaves, the session closes after the grace period. |
 | 21 | `srt` mode deploys nothing browser-related | Template assertion: no publish-token function, behavior, page or secret. |
 | 22 | `browser` mode requires the throttle | Template assertion: reserved concurrency is set and `0` is rejected at synth. |
@@ -449,6 +459,8 @@ Manual, before the feature is announced:
 - A laptop sleep test: lid closed for 30 seconds, then open. Record what happens and how long recovery takes.
 - Handover test: speaker 1 talks, speaker 2 starts the page and enters the code; speaker 1's page shows "taken over"
   and speaker 2's audio is translated with a gap under 5 seconds.
+- Stale-page test: speaker 1 loses network for 90 s, speaker 2 takes over, speaker 1's network returns. Speaker 2
+  stays; speaker 1's page shows "enter code" and does not reconnect.
 - Latency: record the time from speech to first Japanese word through the browser path and through SRT with the same
   sample, and add both to [architecture.md](architecture.md). Not estimated here.
 
@@ -470,7 +482,7 @@ Small, and mostly fixed per event. Prices are the ones used in [cost.md](cost.md
 ### Open questions for the owner
 
 1. **Browser path and SRT hardware.** In `browser` mode should the stack still deploy the SRT NLB and Elastic IPs (one
-   deploy to switch back), or can a browser-only event skip them to save about $0.02 per hour?
+   deploy to switch back), or can a browser-only event skip them to save about $0.034 per hour (NLB $0.0243 plus two Elastic IPs at $0.005, before LCU, per [cost.md](cost.md))?
 2. **Switching at run time.** Is a deploy (2 to 3 minutes) acceptable to switch `INPUT_SOURCE` during an event, or do you
    need a faster switch (for example a parameter the app polls)?
 3. **Rate limit per IP (optional extra).** The reserved-concurrency throttle is required and decided. Do you also want
@@ -489,6 +501,7 @@ Small, and mostly fixed per event. Prices are the ones used in [cost.md](cost.md
 11. **Event code in the speaker briefing.** How does the operator hand it out (on paper, in the opening slide notes,
     spoken)? The design assumes it is not on the projector.
 12. **Mobile.** Out of scope for the first version. Confirm.
+13. **Edge on Mac.** The decision says Chrome and Edge desktop. This design lists Edge on Mac as unsupported until tested. Confirm the narrowing, or add Edge on Mac to the 60-minute matrix.
 
 ## Transcript privacy and data flow
 

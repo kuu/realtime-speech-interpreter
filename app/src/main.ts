@@ -148,7 +148,7 @@ async function main(): Promise<void> {
   }
   const llmLine = engine.startupLine();
   if (llmLine) log.info(llmLine);
-  const captions = new CaptionPublisher(sink, config.captions.enabled);
+  const captions = new CaptionPublisher(sink, config.captions.enabled, undefined, config.captions.japaneseSpeech);
   log.info(captions.startupLine());
   const player = new ChunkPlayer(sink, engine, captions);
   const logSummary = (label: string) => {

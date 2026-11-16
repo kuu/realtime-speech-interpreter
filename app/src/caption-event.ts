@@ -59,7 +59,41 @@ export interface SourceRetractEventV1 {
 }
 
 export type SourceEventV1 = SourceAppendEventV1 | SourceRetractEventV1;
-export type CaptionEvent = CaptionEventV1 | SourceEventV1;
+// Japanese speech shown as said (not translated, not spoken): words of a result the language gate classified
+// as Japanese, once they are stable. Same shape and retract semantics as `source`; a separate `type` so that
+// pages that predate it ignore these events without any check.
+export interface SpeechAppendEventV1 {
+  v: 1;
+  type: "speech";
+  op: "append";
+  id: string;
+  seq: number;
+  session: number;
+  resultId: string;
+  channel: string; // "ja"
+  lang: string; // "ja"
+  asSaid: true; // shown as said, untranslated (the browser adds the display-only ― marker)
+  text: string; // stable words of this batch (Japanese fillers removed); may start with punctuation
+  stable: true;
+  final: boolean; // the batch ends the result (Transcribe finalised it)
+  boundary: boolean; // the batch ends a sentence (。？！)
+  speaker: string | null; // null until speaker detection exists
+  audioEnd: number; // Transcribe stream seconds (diagnostic)
+}
+// The result turned out not to be Japanese after its words were forwarded (language flip).
+export interface SpeechRetractEventV1 {
+  v: 1;
+  type: "speech";
+  op: "retract";
+  seq: number;
+  session: number;
+  resultId: string;
+  channel: string;
+  lang: string;
+  asSaid: true;
+}
+export type SpeechEventV1 = SpeechAppendEventV1 | SpeechRetractEventV1;
+export type CaptionEvent = CaptionEventV1 | SourceEventV1 | SpeechEventV1;
 
 export function truncateText(s: string, max = MAX_CAPTION_TEXT): string {
   const cps = Array.from(s);
@@ -140,6 +174,49 @@ export function buildSourceRetract(a: { session: number; seq: number; resultId: 
   };
 }
 
+export function buildSpeechAppend(a: {
+  session: number;
+  n: number;
+  seq: number;
+  resultId: string;
+  text: string;
+  boundary: boolean;
+  final: boolean;
+  audioEnd: number;
+  speaker?: string | null;
+}): SpeechAppendEventV1 {
+  return {
+    v: CAPTION_SCHEMA_VERSION,
+    type: "speech",
+    op: "append",
+    id: `${a.session}-s${a.n}`,
+    seq: a.seq,
+    session: a.session,
+    resultId: a.resultId,
+    channel: "ja",
+    lang: "ja",
+    asSaid: true,
+    text: truncateText(a.text),
+    stable: true,
+    final: a.final,
+    boundary: a.boundary,
+    speaker: a.speaker ?? null,
+    audioEnd: a.audioEnd,
+  };
+}
+export function buildSpeechRetract(a: { session: number; seq: number; resultId: string }): SpeechRetractEventV1 {
+  return {
+    v: CAPTION_SCHEMA_VERSION,
+    type: "speech",
+    op: "retract",
+    seq: a.seq,
+    session: a.session,
+    resultId: a.resultId,
+    channel: "ja",
+    lang: "ja",
+    asSaid: true,
+  };
+}
 // JSON.stringify escapes only JSON syntax: no HTML escaping, no entity conversion. The page renders
 // the text with textContent, so '<script>' stays plain characters.
 export function encodeCaptionEvent(ev: CaptionEvent): Uint8Array {

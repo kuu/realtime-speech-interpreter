@@ -102,6 +102,9 @@ export function pollyReadings(env: NodeJS.ProcessEnv): "on" | "off" {
 export function captions(env: NodeJS.ProcessEnv): "on" | "off" {
   return envOneOf(env, "CAPTIONS", "on", ["on", "off"] as const);
 }
+export function captionsJapaneseSpeech(env: NodeJS.ProcessEnv): "on" | "off" {
+  return envOneOf(env, "CAPTIONS_JA_SPEECH", "on", ["on", "off"] as const);
+}
 export function translateEngine(env: NodeJS.ProcessEnv): TranslateEngineName {
   return envOneOf(env, "TRANSLATE_ENGINE", "translate", ["translate", "llm"] as const);
 }
@@ -491,7 +494,8 @@ export const config = {
   },
 
   // Live captions on the LiveKit data channel (caption-event.ts). off = no data packets at all.
-  captions: { enabled: captions(process.env) === "on" },
+  // japaneseSpeech: results the language gate classifies as Japanese are also shown, as said (never translated or spoken).
+  captions: { enabled: captions(process.env) === "on", japaneseSpeech: captionsJapaneseSpeech(process.env) === "on" },
 
   livekit: {
     url: str("LIVEKIT_URL", "ws://127.0.0.1:7880"),

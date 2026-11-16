@@ -107,5 +107,8 @@ test("summary line fields", async () => {
   p.tapFor(1, () => Date.now() - 500)!.onWords(batch("r1", [tok("a")], 0));
   await wait(30);
   const line = p.summaryLine("session=1")!;
-  assert.match(line, /^\[captions\] session=1 caption=0 source=1 retracted=0 failed=0 sourceLagMs\(avg\/max\)=\d+\/\d+$/);
+  assert.match(line, /^\[captions\] session=1 caption=0 source=1 retracted=0 failed=0 sourceLagMs\(avg\/max\)=\d+\/\d+ speech=0 speechRetracted=0 speechLagMs\(avg\/max\)=0\/0$/);
+  // CAPTIONS_JA_SPEECH=off: the line is exactly what it was before as-said Japanese existed.
+  const off = new CaptionPublisher(f.transport, true, 5, false);
+  assert.match(off.summaryLine("session=1")!, /^\[captions\] session=1 caption=0 source=0 retracted=0 failed=0 sourceLagMs\(avg\/max\)=0\/0$/);
 });

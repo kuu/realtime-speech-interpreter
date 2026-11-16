@@ -26,8 +26,8 @@ export interface CaptionTransport {
 
 const SENTENCE_END = new Set([".", "?", "!"]);
 export const SOURCE_FLUSH_MS = 250;
-export const JA_HOLD_MAX_MS = 8000;
-export const JA_CARRY_MS = 2000;
+export const JA_HOLD_MAX_MS = 5000;
+export const JA_CARRY_MS = 1000;
 
 interface Buffered {
   kind: "source";

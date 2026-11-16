@@ -208,16 +208,16 @@ so Translate, the LLM and Polly never see them. A result tagged Japanese whose w
 hidden only where it is safe: before 、 or 。, at the end of a result, and `つまり、` only at a sentence start; a
 possible filler at the end of the stable words waits for the next word, so `あの人` keeps its demonstrative. The
 publisher holds these words and sends one `speech` event per sentence: at 。？！, or the rest of an unfinished
-sentence 2 s after its result ended without a continuation (Transcribe often ends a result in the middle of a
-sentence; the next result then continues it, and both parts go out as one sentence), at the end of the stream, or 8 s
+sentence 1 s after its result ended without a continuation (Transcribe often ends a result in the middle of a
+sentence; the next result then continues it, and both parts go out as one sentence), at the end of the stream, or 5 s
 after the first held word (`JA_HOLD_MAX_MS`, `JA_CARRY_MS` in `caption-publisher.ts`). A sentence therefore appears
 whole, which cannot happen while a translation line is shown in the middle of it. Held words of a result that
 flips to English are discarded. If a result flips to English after its Japanese was published, the app sends `speech` `retract` and the page removes
 those words (no duplicate with the translation that follows). A result already forwarded as English is never shown as
-Japanese. Measured on `qa-bilingual` (local): a sentence left the app a median 2.6 s (p90 3.7 s, n=6) after its last
-word was spoken, and a median 6.2 s after its first word (the sentence itself lasts that long). In a real Q&A slice
-with long, unpunctuated Japanese the median from the last word was 4.2 s (p90 7.9 s, n=13): most sentences there wait
-for the hold time.
+Japanese. Measured on `qa-bilingual` (local): a sentence left the app a median 2.7 s (p90 3.0 s, n=6) after its last
+word was spoken, and a median 5.9 s after its first word (the sentence itself lasts that long). In a real Q&A slice
+with long, unpunctuated Japanese the median from the last word was 2.9 s (p90 5.0 s, n=17): sentences without a 。
+wait for the 1 s carry or the 5 s hold, so a long question can be shown as two lines.
 **Order.** Lines appear in the order they are shown. As-said text has no audio to wait for and appears about 2-3 s
 after the last word of its sentence, while the Japanese translation of English speech appears with its voice, several seconds after the
 English was spoken. A question that follows an English answer can therefore appear between two translated lines of that

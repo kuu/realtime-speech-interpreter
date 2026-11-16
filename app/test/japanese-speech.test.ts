@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Segmenter, type Chunk, type SegmenterOptions, type TxItem, type TxResult } from "../src/segmenter.js";
 import { LanguageGate, JA_SETTLE_ITEMS, type JapaneseSpeechTap, type LanguageGateOptions } from "../src/language-gate.js";
-import { CaptionPublisher } from "../src/caption-publisher.js";
+import { CaptionPublisher, JA_CARRY_MS, JA_HOLD_MAX_MS } from "../src/caption-publisher.js";
 import { ChunkPlayer, type QueuedChunk } from "../src/chunk-player.js";
 import { buildSpeechAppend, buildSpeechRetract } from "../src/caption-event.js";
 import type { AudioSink } from "../src/audio-sink.js";
@@ -261,7 +261,7 @@ test("sentence hold: several sentences in one batch are published one event each
 });
 test("sentence hold: a result that ends mid-sentence waits for the next result to continue it; otherwise the rest goes out after the carry time", async () => {
   const f = fakeTransport();
-  const p = new CaptionPublisher(f.transport, true, 20, true, 8000, 50);
+  const p = new CaptionPublisher(f.transport, true, 20, true, 5000, 50);
   const tap = p.japaneseTapFor(1, () => Date.now())!;
   // Transcribe finalises the first result in the middle of the question; the next result continues it
   tap.onSpeech({ resultId: "a1xxxxxx", tokens: [tk("ライブ"), tk("配信"), tk("は")], final: true, audioEnd: 1 });
@@ -279,6 +279,20 @@ test("sentence hold: a result that ends mid-sentence waits for the next result t
   await wait(80);
   assert.deepEqual(f.sent.map((s) => s.ev.text), ["ライブ配信はどうですか？", "終わりの"]);
   assert.equal(f.sent[1].ev.final, true);
+});
+test("sentence hold: default timers are 1 s carry and 5 s maximum hold", async () => {
+  assert.equal(JA_CARRY_MS, 1000);
+  assert.equal(JA_HOLD_MAX_MS, 5000);
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20); // defaults
+  const tap = p.japaneseTapFor(1, () => Date.now())!;
+  tap.onSpeech({ resultId: "m1xxxxxx", tokens: [tk("途中"), tk("の")], final: true, audioEnd: 1 });
+  tap.onResultEnd!("m1xxxxxx");
+  await wait(900);
+  assert.equal(f.sent.length, 0, "still held before 1 s");
+  await wait(250);
+  assert.deepEqual(f.sent.map((s) => s.ev.text), ["途中の"], "released by the 1 s carry");
+  p.close();
 });
 test("sentence hold: the end of the stream and close() release what is held", async () => {
   const f = fakeTransport();

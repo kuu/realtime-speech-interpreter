@@ -100,6 +100,13 @@ export interface StackConfig {
   livekitUdpPortStart: number;
   livekitUdpPortEnd: number;
   livekitTcpPort: number;
+  inputSource: string;
+  browserInputConcurrency: number;
+  browserInputTokenTtlSec: number;
+  browserSessionGraceSec: number;
+  browserAudioProcessing: string;
+  browserSilenceDb: number;
+  browserSilenceSec: number;
   taskCpu: number;
   taskMemoryMiB: number;
   desiredCount: number;
@@ -271,6 +278,13 @@ export function loadConfig(scope: Construct): StackConfig {
     livekitUdpPortStart: ctxPort("livekitUdpPortStart"),
     livekitUdpPortEnd: ctxPort("livekitUdpPortEnd"),
     livekitTcpPort: ctxPort("livekitTcpPort"),
+    inputSource: ctxStr("inputSource").trim().toLowerCase(),
+    browserInputConcurrency: ctxNum("browserInputConcurrency"),
+    browserInputTokenTtlSec: ctxNum("browserInputTokenTtlSec"),
+    browserSessionGraceSec: ctxNum("browserSessionGraceSec"),
+    browserAudioProcessing: ctxStr("browserAudioProcessing").trim().toLowerCase(),
+    browserSilenceDb: ctxNum("browserSilenceDb"),
+    browserSilenceSec: ctxNum("browserSilenceSec"),
     taskCpu: ctxNum("taskCpu"),
     taskMemoryMiB: ctxNum("taskMemoryMiB"),
     desiredCount: ctxNum("desiredCount"),
@@ -454,6 +468,17 @@ export function loadConfig(scope: Construct): StackConfig {
   if (!/^[A-Za-z0-9_-]+$/.test(cfg.roomName)) throw new Error("roomName must be alphanumeric/_/-");
   if (cfg.livekitHostname && !/^[A-Za-z0-9.-]+$/.test(cfg.livekitHostname)) {
     throw new Error("livekitHostname must be a plain DNS name");
+  }
+  // Browser microphone input. All ranges are checked even when inputSource=srt, so a typo shows up early.
+  if (cfg.inputSource !== "srt" && cfg.inputSource !== "browser") throw new Error('inputSource must be "srt" or "browser"');
+  intRangeEarly(cfg, "browserInputConcurrency", 1, 1000, " (0 is not allowed: the reserved concurrency is the brute-force throttle of the publisher endpoint)");
+  intRangeEarly(cfg, "browserInputTokenTtlSec", 60, 3600);
+  intRangeEarly(cfg, "browserSessionGraceSec", 10, 600);
+  if (!["all", "echo", "none"].includes(cfg.browserAudioProcessing)) throw new Error('browserAudioProcessing must be "all", "echo" or "none"');
+  if (cfg.browserSilenceDb < -120 || cfg.browserSilenceDb > 0) throw new Error("browserSilenceDb must be a number from -120 to 0");
+  intRangeEarly(cfg, "browserSilenceSec", 5, 600);
+  if (cfg.roomName.endsWith("-ingest")) {
+    throw new Error('roomName must not end in "-ingest": that suffix is reserved for the browser ingest room (<roomName>-ingest)');
   }
   return cfg;
 }

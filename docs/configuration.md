@@ -231,6 +231,25 @@ Extra context keys that are not in `cdk.json`:
 | `livekitUdpPortStart` | - | `50000` | First UDP port of the WebRTC media range opened to the internet. |
 | `livekitUdpPortEnd` | - | `60000` | Last UDP port of that range. Must be >= start. |
 | `livekitTcpPort` | - | `7881` | TCP fallback port for WebRTC (ICE/TCP). |
+
+### Browser microphone input
+
+A second input next to SRT: a speaker opens `/publish` in a desktop browser and types the event code. Off by default.
+With `inputSource=srt` the synthesized template is the same as without this feature (see the check in
+[cdk/README.md](../cdk/README.md)). Design and security model: [security.md](security.md#browser-microphone-input-planned-not-built). The event end time is not a
+CDK key: the operator command `cdk/scripts/publisher-code.mjs --ends-at <UTC time>` sets it.
+
+| Key | Env var in the app | Default | Meaning |
+|---|---|---|---|
+| `inputSource` | `INPUT_SOURCE` | `srt` | `srt` or `browser`. Exactly one input runs, never both. `browser` deploys the publisher endpoint, the page and the code secret. Changing it is a deploy. Not an event-file key: set it with `-c inputSource=browser` or under `advanced`. |
+| `browserInputConcurrency` | - | `5` | Reserved concurrency of the publisher token function. Integer, at least 1 (0 is rejected). It is the brute-force throttle. A low-quota account may refuse the reservation: raise the Lambda concurrency quota. |
+| `browserInputTokenTtlSec` | - | `600` | Lifetime of a publisher token (seconds, 60-3600). Covers the join only. |
+| `browserSessionGraceSec` | `INGEST_SESSION_GRACE_SEC` | `60` | A browser session ends when no publisher has been present for this many seconds (10-600). A handover inside this time is one session. |
+| `browserAudioProcessing` | - | `all` | **Provisional, to be set after the live measurement.** `all` = echo cancellation, noise suppression and auto gain on (browser default); `echo` = echo cancellation only; `none` = all off. Passed to the page through `config.json`. |
+| `browserSilenceDb` | `INGEST_SILENCE_DB` | `-60` | **Provisional, to be set after the live measurement.** Level (dBFS, -120 to 0) below which the input counts as silent in the operator log. |
+| `browserSilenceSec` | `INGEST_SILENCE_SEC` | `30` | **Provisional, to be set after the live measurement.** Seconds below the silence level before the app logs a warning (5-600). |
+
+`roomName` must not end in `-ingest`: the browser path uses the separate room `<roomName>-ingest`.
 ### Not CDK keys
 
 CDK feature flags (`@aws-cdk/...`) in `cdk.json` are CDK settings, not part of this project's configuration.

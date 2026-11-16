@@ -67,7 +67,8 @@ during the build.
 - The code lives in Secrets Manager. One operator command rotates it during the event. It stops working at the event
   end time.
 - SRT stays the primary input. One input is active per session, never two.
-- Supported: Chrome and Edge on desktop. Safari, Firefox and mobile are unsupported until tested.
+- Supported: Chrome on Windows and Mac, Edge on Windows. Edge on Mac, Safari, Firefox and mobile are unsupported until
+  tested.
 
 ### Threat model change
 
@@ -145,8 +146,7 @@ Notes:
 - The CloudFront behavior allows `POST`, disables caching, forwards no cookies and no query string.
 - A function URL behind CloudFront OAC needs, for `POST`, the SHA-256 of the body in the `x-amz-content-sha256` header
   ([AWS documentation](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html)).
-  The page computes it with `crypto.subtle` (available because the page is on HTTPS). Content was rephrased for
-  compliance with licensing restrictions.
+  The page computes it with `crypto.subtle` (available because the page is on HTTPS).
 - The function URL keeps `AWS_IAM`: only CloudFront can call it, as for `/token`.
 - Success: `200 {"token":"...","url":"wss://...","expiresAt":"..."}`. Failure: always the same status and body.
 
@@ -168,9 +168,13 @@ shows plain text for each. It never reveals more than the server did.
   hand-set value fails closed. The rotate command rejects short values too.
 - **Generated, never chosen:** the stack creates the secret with Secrets Manager's generator, using that alphabet and
   length. The rotate command generates the next one the same way.
-- **Stored** in its own secret (`PublisherCodeSecret`), JSON `{"code":"...","notAfter":"<ISO 8601, UTC>"}`. The code is
-  stored in clear because the operator must be able to read it back on the day. Only the publish-token Lambda and the
-  operator's IAM identity can read it. It is not an environment variable and not in the template.
+- **Stored** in its own secret (`PublisherCodeSecret`), JSON `{"code":"..."}`. The code is stored in clear because the
+  operator must be able to read it back on the day. Only the publish-token Lambda and the operator's IAM identity can
+  read it. **The app task role cannot read it** (a template assertion checks this). It is not an environment variable
+  and not in the template.
+- **The event end time is not in the secret.** It lives in an SSM String parameter (proposed `PublisherNotAfter`,
+  ISO 8601 UTC), which holds no code and may be read by the publish-token Lambda, the app task role and the operator.
+  The Lambda reads it on every attempt, like the secret.
 - The Lambda reads the secret on **every attempt** (no cache), so a rotation takes effect on the next request. At
   $0.05 per 10,000 calls this is negligible even under attack.
 
@@ -178,13 +182,17 @@ shows plain text for each. It never reveals more than the server did.
 
 The endpoint is public, so assume someone finds it and tries codes.
 
-1. **Entropy.** 59 bits. At a generous 1,000 attempts per second, exhausting the space takes about 1.8 × 10^8 years.
+1. **Entropy.** 59 bits. At a generous 1,000 attempts per second, exhausting the space takes about 2.5 × 10^7 years (half that on average).
    The throttle below makes the real rate far lower.
 2. **Throttle.** The publish-token Lambda gets a small **reserved concurrency** (proposed `browserInputConcurrency`,
    default 5). Excess requests get `429` from the platform. Reserved concurrency is also a cap: this function can never
-   use more than its share, and it cannot starve the listener Lambda. **Unverified:** an account with a low
-   concurrency limit may be unable to reserve this much (Lambda keeps a minimum unreserved pool). The deploy must
-   fail with a clear message if the reservation is refused.
+   use more than its share, and it cannot starve the listener Lambda. **Rule: `inputSource=browser` refuses to deploy
+   without this throttle.** A new account often has a quota of 10 concurrent executions, and Lambda keeps at least 100
+   unreserved, so the reservation can be refused (**unverified** for current quotas). Then the deploy fails, and the
+   documented fix is to request a Lambda concurrency quota increase in Service Quotas and deploy again. Setting
+   `browserInputConcurrency` to 0 to skip the throttle is not allowed. The AWS WAF rate rule (open question 3) is an
+   optional extra, not a substitute. The failure delay (item 3) is per invocation, not per client, so the
+   concurrency cap is the only control that bounds the whole internet.
 3. **Failure delay.** A wrong code holds the invocation for about 1 second before it answers. With 5 slots that is at
    most about 5 wrong attempts per second for the whole internet. A correct code answers at once.
 4. **Generic answers.** One status and one body for every kind of wrong request (table above). No hint about length,
@@ -207,19 +215,24 @@ question.
 
 ### Expiry, event end and rotation
 
-- **Event end.** `notAfter` is set at deploy time from a proposed `browserInputEndsAt` (ISO 8601 with offset, for
-  example `2026-11-20T18:00:00+09:00`). After it the endpoint answers `403` whatever the code. Later events deploy a new
-  value or run the rotate command with `--ends-at`.
-- **Already connected publisher at the end time.** The app removes `browser-publisher` from the ingest room at
-  `notAfter` (RoomService `RemoveParticipant`, using the API credentials it already has). Without this a session
-  opened just before the end could run on.
+- **Event end.** `notAfter` is written to the SSM parameter `PublisherNotAfter` at deploy time from a proposed
+  `browserInputEndsAt` (ISO 8601 with offset, for example `2026-11-20T18:00:00+09:00`). After it the endpoint answers
+  `403` whatever the code. Later events deploy a new value or run the rotate command with `--ends-at`, which updates
+  the parameter.
+- **Already connected publisher at the end time.** The app reads `PublisherNotAfter` at start and **polls it every
+  60 seconds**, re-arming its timer when the value changes (so `--ends-at` takes effect within a minute). At
+  `notAfter` it removes `browser-publisher` from the ingest room (RoomService `RemoveParticipant`, using the API
+  credentials it already has) and keeps the ingest closed. Without this a session opened just before the end could run
+  on. If the parameter cannot be read, the app keeps the last known value and logs a warning.
 - **Rotation.** One command, run by the operator from the repository root with their own AWS identity:
 
   ```bash
-  ./scripts/publisher-code.sh rotate [--ends-at 2026-11-20T18:00:00+09:00] [--disconnect]
+  ./cdk/scripts/publisher-code.sh rotate [--ends-at 2026-11-20T18:00:00+09:00] [--disconnect]
   ```
 
-  It generates a new code, writes it to the secret with `put-secret-value`, and prints the new code **once** to the
+  The script sits in `cdk/scripts/` next to `dictionaries.sh`, the other stack-aware script; `scripts/` holds
+  repository checks only. It generates a new code, writes it to the secret with `put-secret-value` (and `--ends-at` to
+  the `PublisherNotAfter` parameter), and prints the new code **once** to the
   terminal (it is not written to a file or the shell history). `--disconnect` also removes the current
   `browser-publisher` from the ingest room. Proposed sibling commands: `show` (prints the current code, for the
   operator who lost it) and `status` (prints `notAfter` and whether a publisher is connected, never the code).
@@ -240,9 +253,11 @@ and holds no secret: `https://<distribution>/publish.html`.
 - One `<input type="password" autocomplete="off">` for the code, one button, no `<form>` element and no
   `name`, so the browser has nothing to submit, save or put in the address bar. The handler calls `fetch` with `POST`.
   Whether Chrome or Edge still offers to save the password **is unverified** and is part of the test.
-- The code is cleared from the field after the request. It is kept in a JavaScript variable only, so the page can fetch
-  a new token if LiveKit needs one for a reconnect. It is never written to `localStorage`, `sessionStorage`, cookies, the
-  URL, the hash or `history`. A reload asks again.
+- The code is cleared from the field after the request. **Decision:** it is kept in a closure variable (never a global
+  or a DOM property) and used only to fetch a new token after a LiveKit disconnect, so a speaker who is not looking at
+  the page still reconnects after a network drop. It is cleared on `beforeunload`, on `DUPLICATE_IDENTITY` and on a
+  `401` or `403`. It is never written to `localStorage`, `sessionStorage`, cookies, the URL, the hash or `history`. A
+  reload asks again.
 - `<meta name="referrer" content="no-referrer">` and `noindex`.
 - **No third-party script.** The listener page imports `livekit-client` from a CDN today. The publisher page must serve a
   pinned copy of `livekit-client` from its own origin, because a script that can read the field can steal both the code
@@ -280,7 +295,8 @@ and holds no secret: `https://<distribution>/publish.html`.
 
 - New setting `INPUT_SOURCE=srt|browser` (proposed CDK context `inputSource`, default `srt`). It is read once at start.
   Changing it needs a deploy (about 2 to 3 minutes, like other app settings). In `srt` mode nothing browser-related
-  runs and the browser endpoint answers `403` (the stack deploys the publish path only when `inputSource=browser`).
+  runs and nothing browser-related is deployed: no publish-token Lambda, no CloudFront behavior for
+  `/publisher-token`, no `publish.html` upload, no code secret.
   In `browser` mode the SRT listener is not started. The SRT port and security groups stay as they are, so
   switching back is one deploy. Never both: the app starts exactly one source.
 - In `browser` mode `main.ts` starts an ingest source instead of `startSrtListener()`. It joins the ingest room as
@@ -297,6 +313,12 @@ and holds no secret: `https://<distribution>/publish.html`.
   queue holds more than a short bound (proposed 500 ms) the oldest are dropped and counted, so a stalled browser
   cannot build latency.
 - On a track change the pacer does not reset the Transcribe stream. A handover is a short silence, as a pause is.
+- **Session lifecycle (browser mode).** A session starts at the first audio frame from a publisher and ends when no
+  publisher has been present for N seconds (proposed 60, `browserSessionGraceSec`). A handover inside that window is the
+  same session. The pacer emits silence only while a session is open and inside the window. With no publisher and no
+  open session nothing is sent, so no Transcribe stream is opened and nothing is billed. When the session ends the
+  pipeline closes the stream and prints `[summary]`; the next first frame starts a new session. This matches SRT, where a
+  session is one sender connection.
 - `INPUT_FILE` (the test mode) keeps working. A third path, a headless browser or the LiveKit CLI publishing a file as
   `browser-publisher`, lets the e2e harness drive the browser path (acceptance criterion of the issue).
 
@@ -369,7 +391,7 @@ Why it should work, and what could still break it:
 
 Print or send this to speakers with the URL. (Proposed; the Mac and Windows steps are to be confirmed by the tests.)
 
-1. Use **Chrome or Edge** on a laptop. Not Safari, not Firefox, not a phone.
+1. Use **Chrome** (Mac or Windows) or **Edge** (Windows only) on a laptop. Not Safari, not Firefox, not a phone.
 2. **Plug in the charger.** Do not close the lid. Do not let the laptop sleep: set "never sleep when plugged in"
    (Windows: Settings, System, Power; Mac: System Settings, Battery or Lock Screen, prevent automatic sleeping on
    power adapter).
@@ -403,16 +425,21 @@ Automated (run in `cdk/test` and `app/test`, no AWS needed unless said):
 | 9 | Code too short fails closed | A stored code of 9 characters gives `500` and no token. |
 | 10 | Event end | After `notAfter` the right code gets `403`. Before it, `200`. |
 | 11 | Rotation invalidates the old code | After `rotate`, the old code gets `401` on the next request and the new one `200`. Needs a deployed stack or a mocked Secrets Manager. |
-| 12 | Throttle | The template sets reserved concurrency on the publish-token function only. |
+| 12 | Throttle | The template sets reserved concurrency on the publish-token function only (also covered by 22). The quota-refusal path is a manual deploy check in a low-quota account. |
 | 13 | Old publisher disconnected | Two clients join with `browser-publisher` against the pinned `livekitImage` (docker); the first receives `DUPLICATE_IDENTITY`; the app consumes only the second. |
 | 14 | One input at a time | With `INPUT_SOURCE=srt` no ingest connection is made; with `browser` no ffmpeg SRT listener starts. |
 | 15 | Same pipeline | The e2e harness feeds a recorded talk through a LiveKit publisher as `browser-publisher`; the result matches the SRT run within the normal run-to-run spread (commit lag, chunk count). |
 | 16 | Page keeps no secret | The page source has no `localStorage`, `sessionStorage`, `location.hash`, `history`, `innerHTML` use for the code; the code is never in a URL (test checks the `fetch` call). |
 | 17 | No third-party script | The publisher page has no `src` or `import` from another origin. |
+| 18 | App cannot read the code | Template assertion: the app task role has no `secretsmanager:GetSecretValue` on `PublisherCodeSecret`, and has `ssm:GetParameter` on `PublisherNotAfter`. |
+| 19 | `notAfter` follows rotation | Changing the parameter moves the app's removal timer within 60 s (unit test with a fake clock). |
+| 20 | Idle costs nothing | No publisher for 5 minutes: zero Transcribe seconds streamed. After a publisher leaves, the session closes after the grace period. |
+| 21 | `srt` mode deploys nothing browser-related | Template assertion: no publish-token function, behavior, page or secret. |
+| 22 | `browser` mode requires the throttle | Template assertion: reserved concurrency is set and `0` is rejected at synth. |
 
 Manual, before the feature is announced:
 
-- **60-minute background test on a Mac and on a Windows laptop**, Chrome and Edge on Windows, Chrome on Mac. The
+- **60-minute background test on a Mac and on a Windows laptop**, Chrome and Edge on Windows, Chrome on Mac (Edge on Mac is not in the matrix, so it stays unsupported). The
   speaker opens the page, starts a talk recording, opens a PowerPoint deck full screen on the HDMI output and runs
   it for 60 minutes with the page in the background, on mains power. A reference tone or a counting voice is played
   at the microphone. Pass: the app log shows no gap longer than 1 second in the received audio, no `no publisher`
@@ -435,6 +462,7 @@ Small, and mostly fixed per event. Prices are the ones used in [cost.md](cost.md
 | Lambda and CloudFront for the publish endpoint | a few requests per speaker; below $0.01 per event, a flood adds little because of the concurrency cap |
 | LiveKit: publisher uplink to the server | inbound traffic is not charged for EC2 |
 | LiveKit to the app (one subscriber, about 50 kbps with headers, **estimate**) | about 90 MB for 4 hours, about $0.01 at $0.114 per GB |
+| Transcribe while nobody publishes | **$0 by design.** A stream held open with silence would bill about $0.60 per hour (see [cost.md](cost.md)); the session rule above avoids it. Up to 60 s of silence after the last publisher is billed once per session end |
 | Fargate | same task; one more connection |
 | CloudWatch Logs | a few lines per 5 seconds, negligible; metric filters have no charge by themselves, each alarm has a monthly price (check) |
 | SRT infrastructure (NLB, Elastic IPs) | unchanged. It keeps costing money in `browser` mode; removing it for browser-only events is a separate change |
@@ -445,12 +473,12 @@ Small, and mostly fixed per event. Prices are the ones used in [cost.md](cost.md
    deploy to switch back), or can a browser-only event skip them to save about $0.02 per hour?
 2. **Switching at run time.** Is a deploy (2 to 3 minutes) acceptable to switch `INPUT_SOURCE` during an event, or do you
    need a faster switch (for example a parameter the app polls)?
-3. **Rate limit per IP.** Reserved concurrency limits the whole internet together. Do you want an AWS WAF rate-based
-   rule per IP in front of `/publisher-token` (adds a monthly cost and a dependency on WAF in the template)?
+3. **Rate limit per IP (optional extra).** The reserved-concurrency throttle is required and decided. Do you also want
+   an AWS WAF rate-based rule per IP in front of `/publisher-token` (adds a monthly cost and a WAF dependency)?
 4. **Alarm delivery.** Should the stack create a CloudWatch alarm and an SNS topic for "no publisher" and "silence"
    (needs an operator e-mail setting), or is the log tail enough?
-5. **Keep the code in page memory** to refetch a token after a reconnect (convenient, but a speaker who reloads still
-   has to type again), or ask again every time?
+5. **Code in page memory.** Decided in "The publisher page" (closure variable, cleared on unload, takeover and
+   401/403). Say if you want the stricter "ask again every time".
 6. **`rotate --disconnect` by default?** Disconnecting on every rotation is safer; it also drops an honest speaker who is
    talking at that moment.
 7. **Event end time.** Is one `browserInputEndsAt` per deployment enough, or do you want a start time as well (a code

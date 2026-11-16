@@ -236,7 +236,7 @@ Extra context keys that are not in `cdk.json`:
 
 A second input next to SRT: a speaker opens `/publish` in a desktop browser and types the event code. Off by default.
 With `inputSource=srt` the synthesized template is the same as without this feature (see the check in
-[cdk/README.md](../cdk/README.md)). Design and security model: [security.md](security.md#browser-microphone-input-planned-not-built). The event end time is not a
+[cdk/README.md](../cdk/README.md)). Design and security model: [security.md](security.md#browser-microphone-input). The event end time is not a
 CDK key: the operator command `cdk/scripts/publisher-code.mjs --ends-at <UTC time>` sets it.
 
 | Key | Env var in the app | Default | Meaning |

@@ -447,7 +447,7 @@ aws s3 rb s3://simul-translation-dict-<ACCOUNT_ID>-ap-northeast-1 --force --regi
 
 `-c inputSource=browser` deploys the publisher page (`/publish`), its token endpoint and the event code secret.
 Settings: [configuration.md](../docs/configuration.md#browser-microphone-input). Design and security:
-[security.md](../docs/security.md#browser-microphone-input-planned-not-built).
+[security.md](../docs/security.md#browser-microphone-input).
 
 **Off by default is checked.** With no browser setting the synthesized template must equal the one of `origin/main`:
 

@@ -19,7 +19,8 @@ draw.io diagram embedded, so GitHub shows it as an image and draw.io opens it fo
 | Media server | LiveKit (container) and Caddy (TLS) on one EC2 instance with an Elastic IP | Delivers the audio to browsers over WebRTC. | `cdk/lib/livekit-user-data.ts` |
 | Listener page | CloudFront, private S3 bucket | Static page with the LiveKit client. Plays the audio and shows the captions. | `app/web/` |
 | Token endpoint | Lambda function URL behind CloudFront (`/token`) | Issues subscribe-only LiveKit tokens. | `cdk/lambda/token/` |
-| Secrets | Secrets Manager | LiveKit API key and secret, SRT passphrase. | stack |
+| Publisher page and endpoint (optional) | CloudFront (`/publish`), Lambda function URL (`/publisher-token`) | Speaker page and the publish token for it, only with `inputSource=browser`. | `app/publisher/`, `cdk/lambda/publisher-token/` |
+| Secrets | Secrets Manager | LiveKit API key and secret, SRT passphrase, and with browser input the event code. | stack |
 | Logs | CloudWatch Logs | `/simul-translation/app`, `/livekit`, `/token`. | stack |
 
 ## Data flow
@@ -40,6 +41,16 @@ The numbers match the diagram.
 | 10 | The browser loads the page from CloudFront and asks for a token. |
 | 11 | CloudFront serves the page from a private S3 bucket. |
 | 12 | CloudFront calls the token Lambda, which returns a subscribe-only token. |
+
+With `inputSource=browser`, steps 1 to 3 are replaced: a speaker's browser publishes the microphone to the LiveKit
+ingest room (`<roomName>-ingest`), and the app subscribes to that one track (`ingest-room.ts`) and writes 16 kHz PCM
+frames into the same `PcmQueue` (`ingest-session.ts`). From the queue on, everything is the same.
+
+**Latency of the browser path.** Real audio goes from the LiveKit `AudioStream` into the queue with no added delay.
+The only thing added on the audio path is a silence filler: when no real audio arrived for 100 ms during an open
+session, a 100 ms silent frame is pushed, so Transcribe does not stop the stream across a handover. Buffers inside
+the browser, the LiveKit jitter buffer and the native `AudioStream` are not controlled by the app. The measured latency
+of the browser path against SRT is not known yet; it is on the live-test list in [security.md](security.md#browser-microphone-input).
 
 Inside the app (steps 3 to 8), each stage is a small module:
 
@@ -81,7 +92,7 @@ for audio only. LiveKit publishes audio-only from a server SDK and plays it in t
 **OBS and SRT for ingest.** Event teams already know OBS. SRT survives packet loss on venue networks and
 supports a passphrase. The Network Load Balancer gives static IPs, so the venue can allow-list them.
 
-**Browser microphone input (planned, not built).** A second input next to SRT, for venues without an audio line out: a Chrome or Edge page captures the microphone and publishes it to a separate LiveKit ingest room; the app subscribes and feeds the same PCM queue and pipeline. One input is active per session. The design and its security model are in [security.md](security.md#browser-microphone-input-planned-not-built) (issue #10).
+**Browser microphone input (optional, `inputSource=browser`).** A second input next to SRT, for venues without an audio line out: a desktop browser page (`/publish`) captures the microphone and publishes it to a separate LiveKit ingest room; the app subscribes and feeds the same `PcmQueue` and pipeline as SRT. One input is active at a time (`INPUT_SOURCE=srt|browser`). The security model is in [security.md](security.md#browser-microphone-input) (issue #10).
 
 **Language filter.** Rooms with a moderator or questions in Japanese would otherwise be transcribed as English-looking
 words and translated into nonsense. Transcribe identifies the language of every result and the app drops results that

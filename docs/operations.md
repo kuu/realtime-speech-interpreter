@@ -35,6 +35,28 @@ Commands run from the repository root unless a `cd` is shown. Replace `ap-northe
 4. **Go live.** Only one SRT sender can be connected at a time. Stop any test encoder first.
 5. **Watch the logs** (see below). After the session, check the `[summary]` line.
 
+## Browser microphone input (only with `-c inputSource=browser`)
+
+The stack is closed until you run the operator command. Before the event, and again to rotate the code:
+
+```bash
+node cdk/scripts/publisher-code.mjs --ends-at 2026-11-06T09:00:00Z
+```
+
+`--ends-at` is the event end time in UTC (`Z` suffix, in the future). The command prints the speaker URL
+(`https://<site>/publish`) and the event code once. Send both to speakers in Slack. Speakers paste the code on their
+laptop screen only, never on the projector-mirrored screen. Run the command again to rotate the code (an old code is
+rejected on the next request). A connected publisher stays unless you add `--disconnect`. `--dry-run` checks the
+arguments and calls nothing. The code is not stored in a file or log; the secret in Secrets Manager holds it.
+
+The operator's identity needs `cloudformation:DescribeStacks`, `secretsmanager:PutSecretValue` on the code secret,
+`ssm:PutParameter` on `/simul-translation/publisher-not-after`, and for `--disconnect` `secretsmanager:GetSecretValue`
+on the LiveKit secret. Switching `inputSource` between `srt` and `browser` is a deploy (2 to 3 minutes).
+
+Watch the log with `aws logs tail /simul-translation/app --follow --filter-pattern "[ingest]" --region ap-northeast-1`.
+The lines (`publisher joined`, `publisher replaced`, `no publisher for Ns`, `silent Ns`, `level`) are listed in
+[security.md](security.md#browser-microphone-input). The speaker checklist is in the same section.
+
 ## Encoder settings (OBS)
 
 Output: custom, FFmpeg output to the SRT URL, container `mpegts`, audio codec `libopus`, mono or stereo, 48 kHz,
@@ -102,7 +124,7 @@ npx cdk destroy
 
 This removes the stack and its resources: VPC, Network Load Balancer, Fargate service, EC2 host, Elastic IPs,
 CloudFront distribution, the site bucket (emptied automatically), the Lambda function and the CloudWatch log groups.
-The two Secrets Manager secrets are deleted, but Secrets Manager may keep them for a recovery period.
+The two Secrets Manager secrets (three with browser input) are deleted, but Secrets Manager may keep them for a recovery period.
 
 `cdk destroy` does **not** remove what `dictionaries.sh` and the bootstrap created. Delete these by hand if you do not need them:
 
@@ -112,6 +134,8 @@ aws translate delete-terminology --name simul-translation --region ap-northeast-
 aws s3 rb s3://simul-translation-dict-<account-id>-ap-northeast-1 --force
 ```
 
+With browser input, the SSM parameter `/simul-translation/publisher-not-after` was created by the operator command, not
+by CDK, so `cdk destroy` leaves it. Delete it by hand: `aws ssm delete-parameter --name /simul-translation/publisher-not-after --region ap-northeast-1`.
 The CDK bootstrap stack `CDKToolkit` (and its asset bucket and image repository) stays. Other projects may use it.
 
 ## Do not rename

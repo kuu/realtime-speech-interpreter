@@ -67,6 +67,12 @@ The report cannot judge quality. Listen to `side-by-side.wav`, then write your s
 This needs AWS credentials with Transcribe, Translate and Polly access and an installed `app/` (`cd app && npm ci`).
 The repository `samples/` folder holds short clips when they are included in your checkout.
 
+## Browser input
+
+The browser path is driven in tests by a LiveKit publisher with identity `browser-publisher` (see
+`app/test/ingest-livekit.test.ts` for a local run). Pointing this harness at it is not built; it is on the live-test list
+in [security.md](security.md#browser-microphone-input).
+
 ## Safety notes
 
 - `check`, `report`, `compare` and `langscan` do not change AWS. `check --fix` asks before each change and never

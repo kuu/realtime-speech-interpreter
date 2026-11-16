@@ -86,7 +86,7 @@ node dictionaries/validate.mjs
 ```
 
 This creates a Transcribe custom vocabulary and a Translate terminology named `simul-translation`, from the example
-files in `dictionaries/`. Replace them with your own terms later.
+dictionary in `dictionaries/example/` (AWS Elemental Media Services terms). Step 9 replaces it with your own.
 
 **6. Deploy**
 
@@ -128,6 +128,22 @@ hides the English line (no visible switch). `-c captions=off` at deploy time tur
 as it was. Japanese speech (for example audience questions) is shown as said, untranslated, on lines that start
 with `―`, one whole sentence at a time; it is never translated or spoken (`-c captionsJapaneseSpeech=off` turns only that off).
 
+**9. Make your own dictionary**
+
+The example dictionary fits AWS media talks. For your subject, build your own. It lives in `dictionaries/local/`, which
+git ignores, so it cannot be committed by mistake.
+
+```bash
+node dictionaries/build.mjs init                          # copy the example to dictionaries/local/
+node dictionaries/build.mjs suggest --from notes.md       # candidate terms from your slides or notes (.txt, .md, .pdf)
+# edit dictionaries/local/terms.proposed.csv, then:
+node dictionaries/build.mjs merge && node dictionaries/build.mjs generate
+(cd cdk && ./scripts/dictionaries.sh --dry-run && ./scripts/dictionaries.sh --restart-app)
+```
+
+The Polly readings travel in the app image, so run `npx cdk deploy` when they changed. The whole workflow, the
+`terms.csv` format and the optional Bedrock suggestions are in [docs/dictionaries.md](docs/dictionaries.md).
+
 ## Costs
 
 Prices as of 2026-11-15, region ap-northeast-1, USD, list price, tax excluded.
@@ -150,16 +166,17 @@ assumed, the listener-count sensitivity and the calculator (`node scripts/estima
 
 | What | How | Needs |
 |---|---|---|
-| Terms the speech recognizer gets wrong | Edit `dictionaries/transcribe-vocabulary.txt`. | `dictionaries.sh` |
-| Translation of a term | Edit `dictionaries/translate-terminology.csv`. | `dictionaries.sh` |
-| Polly pronunciation of a name | Edit `app/assets/polly-readings.csv`. The displayed text never changes. | `cdk deploy` |
+| Terms the speech recognizer gets wrong | Add a row to `terms.csv` in your dictionary folder (`transcribe_en`), run `generate`. | `dictionaries.sh` |
+| Translation of a term | Add a row with `ja` and `translate_en_ja` to `terms.csv`, run `generate`. | `dictionaries.sh` |
+| Polly pronunciation of a name | Add a row with `reading` and `polly_ja` to `terms.csv`, run `generate`. The displayed text never changes. | `cdk deploy` |
 | Wrong word that is valid English (ABC for AVC) | Add a rule in `app/src/corrections.ts`. | `cdk deploy` |
 | Voice | `"pollyVoice"` in `event.json`. | `cdk deploy` |
 | Speed of the first word vs. quality | `"profile"` in `event.json`: `talk` (fast, LLM), `careful` (longer chunks, Translate). | `cdk deploy` |
 | Translation engine and model | `"translateEngine"` and `"llmModelId"` in `event.json`. | `cdk deploy` |
 | Expected number of listeners | `"expectedListeners"`. Sets the LiveKit instance size (an estimate). | `cdk deploy` |
 
-Run `node dictionaries/validate.mjs` after dictionary edits. See [docs/dictionaries.md](docs/dictionaries.md) and
+Your dictionary folder is `dictionaries/local/` (see step 9). Edit `terms.csv`, then run
+`node dictionaries/build.mjs generate`, which also validates. Never edit the three generated files by hand. See [docs/dictionaries.md](docs/dictionaries.md) and
 [docs/configuration.md](docs/configuration.md).
 
 ## Event-day checklist
@@ -181,7 +198,7 @@ Run `node dictionaries/validate.mjs` after dictionary edits. See [docs/dictionar
 | OBS or ffmpeg keeps "connecting" and nothing is logged | **The venue IP is not allowed.** SRT is UDP, so a blocked sender gets no error. Check the public IP from the venue network, put it in `venueCidr`, run `cdk deploy`. `./e2e/e2e.sh check` tells you whether this machine is allowed. A phone hotspot has another IP. |
 | Second encoder cannot connect | **Only one SRT sender at a time.** Stop the first one (a test encoder, a second OBS). |
 | Connected, but listeners hear nothing | Tap **Listen** again (browsers need a tap). Run `./e2e/e2e.sh check`. Look in `/simul-translation/app` for `[livekit] connected` and `PLAYED`. Check that the speech really is English: Japanese speech is dropped on purpose. |
-| Polly says a product name wrongly | Add a reading in `app/assets/polly-readings.csv`, validate, `cdk deploy`. Do not change the name in the text. See [docs/dictionaries.md](docs/dictionaries.md). |
+| Polly says a product name wrongly | Add a reading row to `terms.csv` (`reading`, `polly_ja=y`), `node dictionaries/build.mjs generate`, `cdk deploy`. Do not change the name in the text. See [docs/dictionaries.md](docs/dictionaries.md). |
 | A term is heard as another word | Add it to the vocabulary. If it is still wrong (for example ABC for AVC), add a context correction. |
 | Bedrock "access denied" or "model not found" | Open the Bedrock console in your Region and check that the model in `llmModelId` is available to your account (first use of some models asks for a use-case form). `./scripts/doctor.sh` checks the profile. Or use `"translateEngine": "translate"`. |
 | `doctor` says CDK is not bootstrapped | Run step 4. |
@@ -229,7 +246,9 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Be
 ```bash
 (cd app && npm run build && npm run typecheck && npm test)
 (cd cdk && npm test)
-node dictionaries/validate.mjs
+node dictionaries/validate.mjs dictionaries/example
+node dictionaries/build.mjs generate --check --dir dictionaries/example
+node --test "dictionaries/test/*.test.mjs"
 node scripts/check-diagram.mjs
 ./scripts/check-publishable.sh
 ```

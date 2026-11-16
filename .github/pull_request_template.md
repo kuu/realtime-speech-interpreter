@@ -6,7 +6,7 @@
 
 - [ ] `cd app && npm run build && npm run typecheck && npm test`
 - [ ] `cd cdk && npx tsc --noEmit && npm test` (and `npx cdk synth -q -c venueCidr=203.0.113.10/32` if infrastructure changed)
-- [ ] `node dictionaries/validate.mjs` (if dictionaries changed)
+- [ ] `node dictionaries/build.mjs generate --check --dir dictionaries/example` and `node dictionaries/validate.mjs dictionaries/example` (if dictionaries changed; edit `terms.csv`, not the generated files)
 - [ ] `node scripts/check-publishable.mjs`
 
 ## Checklist

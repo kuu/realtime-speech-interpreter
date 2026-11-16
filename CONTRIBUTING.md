@@ -7,13 +7,19 @@ Before you open a pull request, run the checks from the repository root (no AWS 
 ```bash
 (cd app && npm ci && npm run build && npm run typecheck && npm test)
 (cd cdk && npm ci && npx tsc --noEmit && npm test)
-node dictionaries/validate.mjs
+node dictionaries/validate.mjs dictionaries/example
+node dictionaries/build.mjs generate --check --dir dictionaries/example
+node --test "dictionaries/test/*.test.mjs"
 python3 -m unittest discover -s e2e/lib -p 'test_*.py'
 node scripts/check-diagram.mjs
 node scripts/check-links.mjs
 ./scripts/check-publishable.sh
 ```
 
+- The three dictionary files in `dictionaries/example/` are generated. Do not edit them by hand: change
+  `dictionaries/example/terms.csv`, run `node dictionaries/build.mjs generate --dir dictionaries/example`, and commit
+  both. CI fails when `generate --check` finds a difference. Your own dictionary goes in `dictionaries/local/`
+  (gitignored); `check-publishable.sh` fails if a file there is tracked.
 - Match the existing code style. Keep changes small and focused.
 - If you change the diagram, edit `docs/architecture.drawio.svg` in draw.io (or its embedded XML), then run `scripts/export-diagram.sh` (needs draw.io Desktop) or at least `scripts/scrub-drawio.sh docs/architecture.drawio.svg`. See [docs/architecture.md](docs/architecture.md).
 - If you add or change a CDK setting, document it in `docs/configuration.md` (a test fails otherwise).

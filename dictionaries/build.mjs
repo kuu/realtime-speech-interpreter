@@ -208,7 +208,7 @@ function proposalRow(c) {
     derivePhrase(c.term);
     r.transcribe_en = "y";
   } catch {
-    notes.push("Transcribe: add a phrase (spell numbers out), then set transcribe_en=y");
+    notes.push("Transcribe: write the phrase by hand (spell numbers out, plain letters only), then set transcribe_en=y");
   }
   r.notes = notes.join("; ");
   return r;

@@ -67,8 +67,10 @@ during the build.
 - The code lives in Secrets Manager. One operator command rotates it during the event. It stops working at the event
   end time.
 - SRT stays the primary input. One input is active per session, never two.
-- Supported: Chrome on Windows and Mac, Edge on Windows. Edge on Mac, Safari, Firefox and mobile are unsupported until
-  tested.
+- Supported: Chrome and Edge, desktop (Windows and Mac). Safari and Firefox are unsupported until tested.
+
+**Proposed narrowing, owner to confirm (question 13):** this design adds mobile browsers to the unsupported list. It
+keeps Edge on Mac in scope and in the 60-minute test matrix. Drop it from the matrix only if the owner says so.
 
 ### Threat model change
 
@@ -202,17 +204,33 @@ The endpoint is public, so assume someone finds it and tries codes.
    32-byte digests with `crypto.timingSafeEqual`. Hashing first makes both inputs the same length, so length does not
    leak. Do not use `===`.
 6. **Logging without the code.** The function logs the outcome (`ok`, `bad_code`, `closed`, `malformed`), the viewer
-   address from `x-forwarded-for`, and a timestamp. It never logs the body, the submitted code, a prefix or the length,
+   address, and a timestamp. The address is the leftmost value of `x-forwarded-for`, which the existing origin request
+   policy (`ALL_VIEWER_EXCEPT_HOST_HEADER`) already forwards; the build checks this against the policy actually used for
+   the new behavior, and adds `CloudFront-Viewer-Address` to it if the header is missing. It never logs the body, the submitted code, a prefix or the length,
    and never prints the stored code. A test feeds a known code through the handler and fails if the string, or a
    substring of four characters or more, appears in any `console` output. The viewer address is personal data; it
    follows the log retention (`logRetentionDays`).
-7. **Alarm on guessing.** A metric filter counts `bad_code` lines. A burst is visible in CloudWatch (see "Operator
-   visibility").
+7. **Metric on guessing.** A metric filter counts `bad_code` lines. A burst is visible in CloudWatch (see "Operator
+   visibility"). Whether it raises an alarm is open question 4.
 
 Accepted residual risk: an attacker who saturates the slots with wrong guesses makes real speakers see `429` for as
 long as the flood lasts. That is a denial of service on the browser path only; SRT and listeners are unaffected, and
 the page retries. An optional AWS WAF rate-based rule per IP would help; it adds a monthly cost and is left as an open
 question.
+
+### Configuration validation
+
+The new keys follow the existing pattern: validated in `cdk/lib/config.ts`, covered by `cdk/test/config.test.ts`, and
+each documented in [configuration.md](configuration.md) when built (`docs.test.ts` already fails on an undocumented
+key). Every rule fails at `cdk synth`, never at run time:
+
+- `inputSource`: must be `srt` or `browser`; default `srt`.
+- `browserInputEndsAt`: required when `inputSource=browser`; ISO 8601 with an offset; must be in the future at synth.
+  A missing value is a synth error, not a `500` from a deployed endpoint.
+- `browserInputConcurrency`: integer, at least 1; default 5. `0` is rejected.
+- `browserInputTokenTtlSec`: integer from 60 to 3600; default 600.
+- `browserSessionGraceSec`: integer from 10 to 600; default 60.
+- `roomName`: `<roomName>-ingest` must not equal `roomName` or collide with another configured room name.
 
 ### Expiry, event end and rotation
 
@@ -268,7 +286,8 @@ and holds no secret: `https://<distribution>/publish.html`.
   reload asks again.
 - `<meta name="referrer" content="no-referrer">` and `noindex`.
 - **No third-party script.** The listener page imports `livekit-client` from a CDN today. The publisher page must serve a
-  pinned copy of `livekit-client` from its own origin, because a script that can read the field can steal both the code
+  pinned copy of `livekit-client` from its own origin (copied from the npm package at deploy time, the version pinned in
+  the lockfile, and its SHA-256 recorded in a test so a changed file fails the build), because a script that can read the field can steal both the code
   and the microphone. It also gets its own CloudFront response headers policy with a `Content-Security-Policy`
   (`default-src 'self'`, `connect-src 'self'` plus both `https://<livekit-host>` and `wss://<livekit-host>`, because livekit-client also calls
   the signalling host over HTTPS; no inline script; whether `worker-src` or `blob:` is needed for the level meter is
@@ -317,13 +336,28 @@ and holds no secret: `https://<distribution>/publish.html`.
   and the `INPUT_FILE` mode use. From the queue on, everything is unchanged: Transcribe, language gate, segmenter,
   translation, Polly, LiveKit.
 - **Pacer.** Transcribe streaming needs a steady stream of audio and stops a stream that receives none for about
-  15 seconds (**unverified**; check the Transcribe documentation). SRT keeps sending silence; the browser path does
-  not when the publisher is gone. A wall-clock pacer emits one 100 ms frame per 100 ms: real audio when available, digital
+  15 seconds (**unverified**; check the Transcribe documentation). An SRT sender such as OBS usually keeps sending silence (a property of the sender, not of
+  the app); the browser path sends nothing when the publisher is gone. A wall-clock pacer emits one 100 ms frame per 100 ms: real audio when available, digital
   silence when not, and counts the silent milliseconds. Frames that arrive late are not dropped silently; if the
   queue holds more than a short bound (proposed 500 ms) the oldest are dropped and counted, so a stalled browser
   cannot build latency.
+**Ingest connection failures.** The app's connection to the ingest room is new code. `RoomServiceClient` is not used in
+`app/src` today (`livekit-server-sdk` is only used for tokens), so the app derives the HTTP(S) service URL from the
+`wss://` LiveKit URL for `RemoveParticipant`.
+
+| Event | Action | Log line | Level |
+|---|---|---|---|
+| Join of `<roomName>-ingest` fails at start (LiveKit down, bad credentials) | Retry with backoff (1 s, doubling, capped at 30 s). The task stays up and the SRT or file path is not affected. | `[ingest] join failed, retry in Ns: <error>` | error |
+| Connection drops mid-event | Rejoin with the same backoff; the pacer keeps emitting silence while a session is open. | `[ingest] app connection lost, rejoining` then `[ingest] app reconnected` | error, info |
+| `ingest-app` token expires mid-event (lifetime `publisherTokenTtl`, 6 h) | Mint a new token and rejoin before expiry, at 90% of the lifetime. | `[ingest] token refreshed` | info |
+| A publisher is already in the room when the app starts or rejoins | After joining, enumerate existing participants and subscribe to `browser-publisher` if present; do not wait only for `ParticipantConnected`. | `[ingest] publisher already present` | info |
+| `RemoveParticipant` fails (at `notAfter`, on `--disconnect`) | Retry every 10 s until it succeeds, and refuse to subscribe to the publisher meanwhile. | `[ingest] remove publisher failed, retry: <error>` | error |
+
 - On a track change the pacer does not reset the Transcribe stream. A handover is a short silence, as a pause is.
-- **Session lifecycle (browser mode).** A session starts at the first audio frame from a publisher and ends when no
+- **Session lifecycle (browser mode).** A session starts at the first audio frame from a publisher. Mechanism: the browser source's frame
+  iterable yields nothing until the first frame arrives, and the pipeline opens the Transcribe stream lazily on the
+  first yielded frame, so `main.ts` can create the source at start without opening a stream (this needs a small change
+  to how `runPipeline` is started; **unverified** against the current loop). A session ends when no
   publisher has been present for N seconds (proposed 60, `browserSessionGraceSec`). A handover inside that window is the
   same session. The pacer emits silence only while a session is open and inside the window. With no publisher and no
   open session nothing is sent, so no Transcribe stream is opened and nothing is billed. When the session ends the
@@ -365,6 +399,7 @@ the page being visible.
 | Publisher left | `[ingest] publisher left reason=...` | warn |
 | No publisher connected | `[ingest] no publisher for Ns` every 10 s while none is connected | warn |
 | Silence | `[ingest] silent Ns rmsDb=...` when the level stays below a threshold for N seconds | warn |
+| App lost ingest connection | `[ingest] app connection lost, rejoining` (see table above) | error |
 | Level | `[ingest] level rmsDb=... silentMs=... droppedMs=...` every 5 s | info |
 
 - **Disconnect** is exact: the token Lambda and LiveKit tell us. **Silence** is a heuristic. A muted or unplugged
@@ -401,7 +436,8 @@ Why it should work, and what could still break it:
 
 Print or send this to speakers with the URL. (Proposed; the Mac and Windows steps are to be confirmed by the tests.)
 
-1. Use **Chrome** (Mac or Windows) or **Edge** (Windows only) on a laptop. Not Safari, not Firefox, not a phone.
+1. Use **Chrome** or **Edge** (desktop) on a laptop. Not Safari, not Firefox, not a phone. (Edge on Mac stays on this
+   line until the 60-minute test shows a problem.)
 2. **Plug in the charger.** Do not close the lid. Do not let the laptop sleep: set "never sleep when plugged in"
    (Windows: Settings, System, Power; Mac: System Settings, Battery or Lock Screen, prevent automatic sleeping on
    power adapter).
@@ -446,10 +482,15 @@ Automated (run in `cdk/test` and `app/test`, no AWS needed unless said):
 | 20 | Idle costs nothing | No publisher for 5 minutes: zero Transcribe seconds streamed. After a publisher leaves, the session closes after the grace period. |
 | 21 | `srt` mode deploys nothing browser-related | Template assertion: no publish-token function, behavior, page or secret. |
 | 22 | `browser` mode requires the throttle | Template assertion: reserved concurrency is set and `0` is rejected at synth. |
+| 23 | Configuration validation | Each rule in "Configuration validation" has a failing-config test in `config.test.ts` (bad `inputSource`, missing, past or offset-less `browserInputEndsAt`, concurrency below 1, TTL and grace out of range, colliding room names); `docs.test.ts` finds every new key in configuration.md. |
+| 24 | Ingest reconnect | Drop the app's ingest connection (fake or local LiveKit): the app rejoins with backoff, picks up a publisher that was already present, and logs the lines in "Ingest connection failures". |
+| 25 | Lazy session start | With no frames, no Transcribe stream is opened; the first frame opens it (unit test on the browser source and `runPipeline`). |
+| 26 | Pinned `livekit-client` | The SHA-256 of the served copy equals the recorded value. |
 
 Manual, before the feature is announced:
 
-- **60-minute background test on a Mac and on a Windows laptop**, Chrome and Edge on Windows, Chrome on Mac (Edge on Mac is not in the matrix, so it stays unsupported). The
+- **60-minute background test on a Mac and on a Windows laptop**: Chrome and Edge on each (Edge on Mac is the same
+  laptop and one more run; drop it only if the owner decides so, question 13). The
   speaker opens the page, starts a talk recording, opens a PowerPoint deck full screen on the HDMI output and runs
   it for 60 minutes with the page in the background, on mains power. A reference tone or a counting voice is played
   at the microphone. Pass: the app log shows no gap longer than 1 second in the received audio, no `no publisher`
@@ -500,8 +541,8 @@ Small, and mostly fixed per event. Prices are the ones used in [cost.md](cost.md
 10. **A short vanity URL** (`/publish` without `.html`) needs a CloudFront Function or a path rewrite. Worth it?
 11. **Event code in the speaker briefing.** How does the operator hand it out (on paper, in the opening slide notes,
     spoken)? The design assumes it is not on the projector.
-12. **Mobile.** Out of scope for the first version. Confirm.
-13. **Edge on Mac.** The decision says Chrome and Edge desktop. This design lists Edge on Mac as unsupported until tested. Confirm the narrowing, or add Edge on Mac to the 60-minute matrix.
+12. **Mobile and Edge on Mac.** Your decision is Chrome and Edge, desktop. This design keeps Edge on Mac in scope and in
+    the test matrix, and only adds mobile as unsupported. Confirm, or say which to drop.
 
 ## Transcript privacy and data flow
 

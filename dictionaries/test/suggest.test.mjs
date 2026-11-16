@@ -115,7 +115,7 @@ test("--from-log: corrected words get a note with what was heard and how often",
   const rows = proposal(d).slice(1).map((x) => x.cells);
   const v = rows.find((c) => c[0] === "verticalization");
   assert.match(v[COLUMNS.indexOf("notes")], /corrected; heard as "fertilization" 2 times/);
-  assert.match(v[COLUMNS.indexOf("source")], /rehearsal\.log:3$/);
+  assert.match(v[COLUMNS.indexOf("source")], /rehearsal-log\.txt:3$/);
   assert.ok(rows.some((c) => c[0] === "quokkaform"));
   cleanup(d);
 });

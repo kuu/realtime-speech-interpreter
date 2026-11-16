@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Checks docs/architecture.drawio.svg: it exists, is well-formed XML, embeds an uncompressed <mxfile>
-// (the editable diagram), every resIcon / grIcon / shape in it is an mxgraph.aws4 name, and the embedded
+// (the editable diagram), every resIcon / grIcon / shape in it is an mxgraph.aws4 name (plus a short list of
+// generic shapes for non-AWS components, NON_AWS_SHAPES below), and the embedded
 // metadata has no machine data (host other than app.diagrams.net, agent, etag, modified).
 // No dependencies, no draw.io needed. Usage: node scripts/check-diagram.mjs [FILE]
 import { readFileSync } from 'node:fs';
@@ -56,8 +57,12 @@ if (svg) {
       icons++;
       if (!/^mxgraph\.aws4\.[a-z0-9_]+$/.test(m[2])) fail(`${m[1]}=${m[2]} is not an mxgraph.aws4 icon name`);
     }
+    // Non-AWS things at the venue have no AWS icon; these built-in draw.io shapes are allowed for them.
+    const NON_AWS_SHAPES = new Set(['mxgraph.office.devices.microphone']);
     for (const m of xml.matchAll(/\bshape=([^;"]+)/g)) {
-      if (m[1].startsWith('mxgraph.') && !m[1].startsWith('mxgraph.aws4.')) fail(`shape=${m[1]} is not from the AWS 2021+ library (mxgraph.aws4)`);
+      if (m[1].startsWith('mxgraph.') && !m[1].startsWith('mxgraph.aws4.') && !NON_AWS_SHAPES.has(m[1])) {
+        fail(`shape=${m[1]} is not from the AWS 2021+ library (mxgraph.aws4); add it to NON_AWS_SHAPES only for a non-AWS component`);
+      }
     }
     if (!icons) fail('no resIcon/grIcon found: the diagram has no AWS icons');
     if (/data:image\//.test(xml)) fail('the diagram embeds bitmap images; use the built-in mxgraph.aws4 shapes');

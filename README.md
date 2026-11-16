@@ -231,13 +231,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 
 ## Roadmap
 
-1. ~~Subtitles on the listener page.~~ Done: see [docs/architecture.md](docs/architecture.md#captions).
-2. Two channels from one audio source (English to Japanese, Japanese to English).
-3. Speaker detection and one voice per speaker.
-4. Browser microphone input (`getUserMedia`).
-5. Dictionary builder.
-
-Details and acceptance criteria: [docs/roadmap.md](docs/roadmap.md). The order can change. Ideas and use cases are welcome as issues.
+Planned work and ideas are tracked in [GitHub Issues](https://github.com/kuu/realtime-speech-interpreter/issues).
 
 ## Contributing
 

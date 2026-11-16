@@ -145,3 +145,27 @@ test("page: positions come from svh with a 100vh fallback, never dvh; the hint i
   assert.ok(!/\.hint\s*\{\s*display:\s*none/.test(html) && !/max-height[^}]*\.hint/.test(html), "hint stays visible");
   assert.ok(!/innerHeight/.test(js.replace(/Math\.min\(h, window\.innerHeight\)/, "")), "innerHeight only as the no-svh fallback");
 });
+
+test("as-said: a continuation line of a long utterance has no marker; a new utterance has one", () => {
+  const a = createAssembler({ maxLineChars: 10 });
+  push(a, say("あいうえおかきくけこ", { resultId: "j1" }), 0); // reaches the max length
+  push(a, say("さしすせそ", { resultId: "j2" }), 10); // same utterance, wrapped
+  push(a, say("です。", { resultId: "j2" }), 20);
+  push(a, say("次の発言", { resultId: "j3" }), 30); // after a sentence end: new utterance
+  const m = a.model(30);
+  assert.deepEqual(m.map((l: any) => l.shown), ["\u2015 あいうえおかきくけこ", "さしすせそです。", "\u2015 次の発言"]);
+  assert.deepEqual(m.map((l: any) => l.said), [true, true, true], "colour class kept on the continuation");
+});
+test("as-said: a retract of the first wrapped line gives the continuation its marker back", () => {
+  const a = createAssembler({ maxLineChars: 10 });
+  push(a, say("あいうえおかきくけこ", { resultId: "j1" }), 0);
+  push(a, say("さしすせそ", { resultId: "j2" }), 10);
+  push(a, unsay("j1"), 20);
+  assert.deepEqual(a.model(20).map((l: any) => l.shown), ["\u2015 さしすせそ"]);
+});
+test("translated line after a wrapped as-said line is not a continuation", () => {
+  const a = createAssembler({ maxLineChars: 10 });
+  push(a, say("あいうえおかきくけこ", { resultId: "j1" }), 0);
+  push(a, cap("翻訳です。"), 10);
+  assert.deepEqual(a.model(10).map((l: any) => l.shown), ["\u2015 あいうえおかきくけこ", "翻訳です。"]);
+});

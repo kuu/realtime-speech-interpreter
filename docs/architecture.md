@@ -223,9 +223,12 @@ will make this easier to read.
   A line fades out 12 s after its last update. As-said words (`speech` events) merge the same way, but a change
   between translated and as-said text always starts a new line, and a retract removes the words of that result.
   As-said lines start with `― ` and use `#1a4a8a` (8.8:1 on white; `#4a6585`, 6.0:1, when older). The marker carries
-  the meaning, the colour is a second cue.
-- English: batches join into lines that end at `.?!`, 90 characters, or 4 s of silence. At most 3 lines,
-  10 s before fading. A retract removes that result's words.
+  the meaning, the colour is a second cue. A line that wraps at the maximum length continues the same utterance
+  and does not repeat the `― `.
+- English: lines group by sentence across Transcribe results (a result often ends mid-sentence). Batches join
+  into one line that ends at `.?!` or at 90 characters (wrapped between words); a pause does not end it. `boundary`
+  is not used to end a line, because it only says a sentence ended somewhere in the batch. At most 3 lines, 10 s
+  before fading. A retract removes exactly that result's words, also inside a joined line.
 - Text goes into the page with `textContent` only. A test fails if the page code contains `innerHTML` or similar.
 - Late joiners (and reconnects) see captions from the next words on. There is no history.
 

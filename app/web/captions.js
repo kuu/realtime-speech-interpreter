@@ -109,14 +109,20 @@ class Lines {
     // Never two sources (translated vs as said) in one line: a change of kind starts a new line.
     if (line && !line.closed && line.kind !== kind) line.closed = true;
     if (!line || line.closed) {
-      line = { id: `${this.prefix}${this.n++}`, segs: [], closed: false, updatedAt: now, text: "", kind };
+      // A line that was closed only because it reached the maximum length continues the same utterance.
+      const contOf = line && line.closedByLength && line.kind === kind ? line : null;
+      line = { id: `${this.prefix}${this.n++}`, segs: [], closed: false, updatedAt: now, text: "", kind, contOf, closedByLength: false };
       this.lines.push(line);
       while (this.lines.length > this.o.maxLines) this.lines.shift();
     }
     line.segs.push({ resultId, text });
     line.updatedAt = now;
     line.text = this.render(line);
-    if (closeAfter || this.closeOn.test(line.text) || len(line.text) >= this.o.maxLineChars) line.closed = true;
+    if (closeAfter || this.closeOn.test(line.text)) line.closed = true;
+    else if (len(line.text) >= this.o.maxLineChars) {
+      line.closed = true;
+      line.closedByLength = true;
+    }
   }
 
   render(line) {
@@ -144,18 +150,21 @@ class Lines {
     const last = this.lines.length - 1;
     return this.lines
       .filter((l) => now - l.updatedAt < this.o.lineTtlMs + this.o.fadeMs)
-      .map((l, i) => ({
+      .map((l, i, all) => ({
         id: l.id,
         text: l.text,
         said: l.kind === "said",
-        shown: l.kind === "said" ? SAID_MARKER + l.text : l.text,
+        // The ― marks a new as-said utterance; a continuation line of a long one does not repeat it.
+        shown: l.kind === "said" && !(l.contOf && all[i - 1] === l.contOf) ? SAID_MARKER + l.text : l.text,
         state: now - l.updatedAt >= this.o.lineTtlMs ? "fading" : i === last ? "live" : "old",
       }));
   }
 }
 
 const JA_DEFAULTS = { maxLines: 3, maxLineChars: 60, lineGapMs: 6000, lineTtlMs: 12000, fadeMs: 600 };
-const EN_DEFAULTS = { maxLines: 3, maxLineChars: 90, lineGapMs: 4000, lineTtlMs: 10000, fadeMs: 600 };
+// English lines group by sentence: a pause does not close a line (only a sentence end or the maximum length does;
+// an idle line expires after lineTtlMs), because Transcribe results end in the middle of sentences.
+const EN_DEFAULTS = { maxLines: 3, maxLineChars: 90, lineGapMs: 10000, lineTtlMs: 10000, fadeMs: 600 };
 
 /**
  * Japanese caption assembler. Consecutive caption events (same channel and speaker) merge into one line
@@ -215,7 +224,8 @@ export function createSourceAssembler(opts = {}) {
       if (ev.channel !== "en" && ev.channel !== "") return false;
       // A batch may contain several sentences: close the line at each sentence end inside it.
       const pieces = ev.text.split(/(?<=[.?!])\s+/).filter((p) => p !== "");
-      pieces.forEach((p, i) => store.add(p, ev.resultId, now, ev.boundary && i === pieces.length - 1));
+      // `boundary` only says that a sentence ends somewhere in the batch; the pieces already close at each of those.
+      for (const p of pieces) store.add(p, ev.resultId, now, false);
       return true;
     },
     tick: (now) => store.tick(now),

@@ -120,7 +120,7 @@ function initCaptions() {
     for (const b of blocks) {
       b.asm.tick(now);
       const model = b.asm.model(now);
-      const key = model.map((l) => `${l.id}\u0000${l.state}\u0000${l.said ? 1 : 0}\u0000${l.text}`).join("\u0001");
+      const key = model.map((l) => `${l.id}\u0000${l.state}\u0000${l.said ? 1 : 0}\u0000${l.shown}`).join("\u0001");
       if (key === b.key) continue;
       b.key = key;
       const seen = new Set();

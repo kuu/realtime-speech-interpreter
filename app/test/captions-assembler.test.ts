@@ -133,6 +133,58 @@ test("English: retract removes that result's words, drops empty lines, unknown i
   assert.deepEqual(a.model(40), []);
 });
 
+test("English: lines group by sentence across Transcribe results, not by result", () => {
+  const a = createSourceAssembler();
+  en(a, "the player drops quickly when the throughput falls", 0, { resultId: "a" });
+  en(a, ". Viewers see", 10, { resultId: "a", boundary: true });
+  en(a, "a lower resolution,", 20, { resultId: "b" });
+  en(a, "but the stream does not stop.", 30, { resultId: "c", boundary: true });
+  en(a, "If that", 40, { resultId: "c" });
+  en(a, "provider slows down.", 50, { resultId: "d", boundary: true });
+  assert.deepEqual(texts(a.model(50)), [
+    "the player drops quickly when the throughput falls.",
+    "Viewers see a lower resolution, but the stream does not stop.",
+    "If that provider slows down.",
+  ]);
+});
+test("English: boundary:true in the middle of a batch does not close the trailing partial sentence", () => {
+  const a = createSourceAssembler();
+  en(a, "I see. This is a", 0, { boundary: true });
+  en(a, "test", 10, { resultId: "r2" });
+  assert.deepEqual(texts(a.model(10)), ["I see.", "This is a test"]);
+});
+test("English: ? and ! and closing quotes end a sentence; no space before , . ? ! ; :", () => {
+  const a = createSourceAssembler();
+  en(a, "Really", 0, { resultId: "a" });
+  en(a, "? he said", 1, { resultId: "b" });
+  en(a, ", and", 2, { resultId: "c" });
+  en(a, '"go!"', 3, { resultId: "d" });
+  en(a, "next", 4, { resultId: "e" });
+  en(a, "; then :", 5, { resultId: "f" });
+  assert.deepEqual(texts(a.model(5)), ["Really?", 'he said, and "go!"', "next; then :"]);
+});
+test("English: a pause does not split a sentence; the max length wraps between words", () => {
+  const a = createSourceAssembler();
+  en(a, "Viewers see", 0);
+  a.tick(5000);
+  en(a, "a lower resolution.", 5000, { resultId: "r2" });
+  assert.deepEqual(texts(a.model(5000)), ["Viewers see a lower resolution."]);
+  const b = createSourceAssembler({ maxLineChars: 12 });
+  en(b, "aaaa bbbb cccc", 0);
+  en(b, "dddd eeee", 10, { resultId: "r2" });
+  assert.deepEqual(texts(b.model(10)), ["aaaa bbbb cccc", "dddd eeee"]);
+});
+test("English: retract of a middle result inside a joined line removes exactly its words", () => {
+  const a = createSourceAssembler();
+  en(a, "Viewers see", 0, { resultId: "r1" });
+  en(a, "garbled noise", 10, { resultId: "r2" });
+  en(a, "a lower resolution.", 20, { resultId: "r3" });
+  a.push(parseEvent(retract("r2")), 30);
+  assert.deepEqual(texts(a.model(30)), ["Viewers see a lower resolution."]);
+  a.push(parseEvent(retract("r1")), 40);
+  a.push(parseEvent(retract("r3")), 50);
+  assert.deepEqual(a.model(50), []);
+});
 test("?source option: English is on unless source=off", () => {
   assert.equal(parseSourceOption(""), true);
   assert.equal(parseSourceOption("?source=off"), false);

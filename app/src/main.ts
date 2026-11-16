@@ -21,12 +21,15 @@ import { ChunkPlayer } from "./chunk-player.js";
 import { CaptionPublisher } from "./caption-publisher.js";
 import { createTranslationEngine, TranslateOnlyEngine, type TranslationEngine } from "./translate-engine.js";
 import { pacingDelayMs } from "./input-pacing.js";
+import { selectSource } from "./input-source.js";
+import { BrowserIngest } from "./ingest.js";
 
 // Build the PCM frame source for one session: either the live SRT listener or a paced file (test).
-function buildAudioSource(inputFile: string | undefined): {
+function buildAudioSource(inputFile: string | undefined, ingest?: BrowserIngest): {
   frames: AsyncIterable<Uint8Array>;
   stop: () => void;
 } {
+  if (!inputFile && ingest) return ingest.session.nextSession();
   const queue = new PcmQueue(config.audio.frameBytes);
 
   if (inputFile) {
@@ -157,9 +160,14 @@ async function main(): Promise<void> {
     if (c) log.info(c);
     const l = engine.summaryLine(label);
     if (l) log.info(l);
+    if (ingest) log.info(ingest.session.summaryLine(label));
   };
 
   const inputFile = process.env.INPUT_FILE;
+  // Exactly one live input: the browser ingest or the SRT listener (started per session below). Never both.
+  const kind = selectSource({ inputFile, source: config.input.source });
+  const ingest = kind === "browser" ? new BrowserIngest() : undefined;
+  if (ingest) await ingest.start();
   let shuttingDown = false;
   let currentStop: (() => void) | null = null;
 
@@ -168,6 +176,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log.info(`shutting down (${reason})`);
     currentStop?.();
+    await ingest?.close();
     // ECS stopTimeout is 10 s: give queued chunks up to 8 s to finish playing.
     await Promise.race([player.drain(), sleep(8000)]);
     captions.close();
@@ -184,7 +193,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   for (let session = 1; !shuttingDown; session++) {
-    const src = buildAudioSource(inputFile);
+    const src = buildAudioSource(inputFile, ingest);
     currentStop = src.stop;
     try {
       await runPipeline(src.frames, player, session, captions);

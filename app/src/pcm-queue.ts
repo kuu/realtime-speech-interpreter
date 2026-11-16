@@ -16,6 +16,21 @@ export class PcmQueue {
     this.firstByte = new Promise<void>((r) => (this.firstByteResolve = r));
   }
 
+  /** Bytes waiting in whole frames (not yet pulled by the consumer). */
+  get pendingBytes(): number {
+    return this.frames.reduce((n, f) => n + f.length, 0);
+  }
+  /** Drops the oldest queued frames until at most maxBytes are waiting. Returns the dropped bytes. */
+  trimTo(maxBytes: number): number {
+    let dropped = 0;
+    let pending = this.pendingBytes;
+    while (pending > maxBytes && this.frames.length > 0) {
+      const f = this.frames.shift() as Uint8Array;
+      pending -= f.length;
+      dropped += f.length;
+    }
+    return dropped;
+  }
   push(chunk: Buffer): void {
     if (this.totalBytes === 0) this.firstByteResolve();
     this.totalBytes += chunk.length;

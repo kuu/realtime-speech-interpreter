@@ -274,6 +274,7 @@ export class SimulTranslationStack extends cdk.Stack {
         POLLY_SAMPLE_RATE: String(cfg.pollySampleRate),
         POLLY_READINGS: cfg.pollyReadings,
         CAPTIONS: cfg.captions,
+        CAPTIONS_JA_SPEECH: cfg.captionsJapaneseSpeech,
         LIVEKIT_URL: livekitUrl,
         LIVEKIT_ROOM: cfg.roomName,
         LIVEKIT_TOKEN_TTL: cfg.publisherTokenTtl,

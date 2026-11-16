@@ -11,34 +11,34 @@
       button:disabled { background: #ccc; }
       #status { margin-top: 1.5rem; color: #555; }
       .hint { margin-top: 2rem; color: #888; font-size: 0.9rem; }
-      /* Captions. Nothing here applies until the first caption arrives (html.live), so before that the page is
-         exactly the page without captions. Once live, the page is one viewport tall and never scrolls: the
-         Japanese area (primary) and the English area (secondary) have fixed heights (line-height x lines),
-         are bottom-anchored, and clip older lines at the top with a soft fade. */
+      /* Captions. Nothing here applies until Listen is pressed (html.live), so before that the page is exactly
+         the page without captions. Once live, the page is one small viewport tall, never scrolls, and nothing
+         moves: the header, button, status and hint stay where they are, and both caption areas are placed
+         once (page script, from the SMALL viewport height svh, which the mobile toolbar does not change) with
+         fixed heights of whole lines. Japanese: bottom-anchored under the hint, most of the free space.
+         English: pinned near the bottom, above the safe area. Older lines fade out at the top. */
       /* overflow on html only (propagates to the viewport); on body it would stop the h1 margin from collapsing
-         and move the button. */
-      html.live { overflow: hidden; height: 100vh; height: 100dvh; }
-      html.live body { margin-bottom: 0; padding-bottom: env(safe-area-inset-bottom); }
+         and move the button. Never dvh: it follows the toolbar. */
+      html.live { overflow: hidden; height: 100vh; height: 100svh; }
+      html.live body { margin-bottom: 0; }
       #captions-ja, #captions-en {
         display: none; flex-direction: column; justify-content: flex-end; overflow: hidden; line-height: 1.5;
-        position: relative; left: 50%; transform: translateX(-50%); box-sizing: content-box;
+        box-sizing: content-box; margin: 0;
       }
+      html.live #captions-ja, html.live #captions-en { position: absolute; left: 50%; transform: translateX(-50%); }
       #captions-ja.on, #captions-en.on { display: flex; }
-      #captions-ja { --lines: 3; width: min(calc(100vw - 2rem), 36em); height: calc(1.5em * var(--lines)); margin-top: 1.5rem;
-        font-size: clamp(1.05rem, min(2.2vw + 0.6rem, 4.2vh), 2.6rem); }
-      #captions-en { --lines: 2; width: min(calc(100vw - 2rem), 34em); height: calc(1.5em * var(--lines)); margin-top: 0.75rem; color: #555;
-        font-size: clamp(0.85rem, min(1.4vw + 0.5rem, 2.8vh), 1.7rem); }
+      #captions-ja { top: var(--ja-top, 0); height: var(--ja-h, 0); width: min(calc(100vw - 2rem), 36em);
+        font-size: clamp(1.05rem, min(2.2vw + 0.6rem, 4.2vh), 2.6rem); font-size: clamp(1.05rem, min(2.2vw + 0.6rem, 4.2svh), 2.6rem); }
+      #captions-en { top: var(--en-top, 0); height: var(--en-h, 0); width: min(calc(100vw - 2rem), 34em); color: #555;
+        font-size: clamp(0.85rem, min(1.4vw + 0.5rem, 2.8vh), 1.7rem); font-size: clamp(0.85rem, min(1.4vw + 0.5rem, 2.8svh), 1.7rem); }
       #captions-ja.clipped, #captions-en.clipped { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.2em); mask-image: linear-gradient(to bottom, transparent 0, #000 1.2em); }
       #captions-ja div, #captions-en div { transition: opacity 0.6s; overflow-wrap: anywhere; flex: none; }
       #captions-ja .old { color: #555; }
       #captions-en .old { color: #666; }
+      /* Japanese speech shown as said: starts with the marker (the cue), plus a subtle blue (AA on white). */
+      #captions-ja .said { color: #1a4a8a; }
+      #captions-ja .said.old { color: #4a6585; }
       #captions-ja .fading, #captions-en .fading { opacity: 0; }
-      @media (max-height: 700px) { html.live .hint { display: none; } }
-      @media (max-height: 500px) {
-        #captions-ja { --lines: 2; margin-top: 0.75rem; }
-        #captions-en { --lines: 1; margin-top: 0.25rem; }
-        html.live #status { margin-top: 0.75rem; }
-      }
       @media (prefers-reduced-motion: reduce) { #captions-ja div, #captions-en div { transition: none; } }
     </style>
   </head>

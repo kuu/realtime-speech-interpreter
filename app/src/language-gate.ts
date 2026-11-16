@@ -48,8 +48,28 @@ export interface LanguageGateOptions {
   jaMemoryMs?: number; // dynamic: how long a non-source result keeps the long threshold (default 60000)
   shortWords: number; // short-low-conf rule: max words (0 disables)
   shortMinConf: number; // short-low-conf rule: mean confidence below this is dropped
+  jaFillers?: readonly string[]; // Japanese filler patterns hidden from the as-said caption (config fillers.jaPatterns)
 }
 
+// Optional observer of Japanese speech (live captions, shown as said). Receives only STABLE words of results
+// that are Japanese and were never forwarded as English; the audio path (Translate, LLM, Polly) never sees them.
+export interface JapaneseSpeechTap {
+  // tokens carry the audio times (stream seconds) of the item when Transcribe gave them.
+  onSpeech(b: { resultId: string; tokens: { content: string; punct: boolean; start?: number; end?: number }[]; final: boolean; audioEnd: number }): void;
+  // Words of this result were published and the result turned out not to be Japanese (language flip).
+  onRetract(resultId: string): void;
+  // The result is final and has no more words (also called when the final adds nothing new).
+  onResultEnd?(resultId: string): void;
+  // The Transcribe stream ended: whatever the tap still holds must go out.
+  onStreamEnd?(): void;
+}
+// Stable non-punctuation items a Japanese partial needs before its words are shown (Japanese items are short
+// tokens; language flips happen at the start of a result, as for English).
+export const JA_SETTLE_ITEMS = 3;
+const JA_LANG = /^ja(-|$)/i;
+// A result tagged Japanese whose words contain no Japanese character (hiragana, katakana, kanji) is English
+// speech mis-tagged for a moment ("weseabugpvenand"); it is not shown until a Japanese character appears.
+const JA_CHAR = /[\u3040-\u30ff\u3400-\u9fff]/u;
 export interface ResultSink {
   onResult(r: TxResult, now: number): void;
   endOfStream(reason: "eof" | "error", now: number): void;
@@ -66,6 +86,9 @@ interface GateState {
   maxItems: number; // most items any source-language partial of this result had so far
   volatile: boolean; // a partial had fewer items than an earlier one before the result settled (dynamic mode)
   fwdCommitted: TxItem[]; // mirror of what the segmenter committed for this result (forwarded items)
+  jaOn: boolean; // Japanese words of this result were published (a retract is owed if it flips)
+  jaHw0: number; // Japanese audio already published when this result appeared (its items up to here are repeats)
+  jaEnd: number; // end of the audio already consumed by the Japanese tap (published or hidden fillers)
 }
 
 function items(r: TxResult): TxItem[] {
@@ -100,6 +123,7 @@ export class LanguageGate implements ResultSink {
   private open = new Map<string, GateState>();
   private prevFinalLang: string | null = null;
   private hw = -Infinity; // max EndTime of items committed to the segmenter (this stream)
+  private jaHw = -Infinity; // max EndTime of Japanese items published (this stream)
   private lastNonSourceAt = -Infinity; // wall time (ms) of the latest non-source result seen
   readonly stats = { results: 0, kept: 0, dropped: 0, droppedWords: 0, late: 0, carried: 0, repeats: 0, settledAfterJa: 0 };
 
@@ -107,6 +131,7 @@ export class LanguageGate implements ResultSink {
     private readonly opts: LanguageGateOptions,
     private readonly segmenter: Segmenter,
     private readonly t0: () => number,
+    private readonly jaTap?: JapaneseSpeechTap,
   ) {}
 
   private langOf(r: TxResult): string {
@@ -143,7 +168,7 @@ export class LanguageGate implements ResultSink {
     const id = r.ResultId ?? "default";
     let st = this.open.get(id);
     if (!st) {
-      st = { passed: false, last: null, sig: "", hw0: this.hw, repeats: false, maxItems: 0, volatile: false, fwdCommitted: [] };
+      st = { passed: false, last: null, sig: "", hw0: this.hw, repeats: false, maxItems: 0, volatile: false, fwdCommitted: [], jaOn: false, jaHw0: this.jaHw, jaEnd: -Infinity };
       this.open.set(id, st);
     }
     const lang = this.langOf(r);
@@ -154,7 +179,12 @@ export class LanguageGate implements ResultSink {
 
     if (r.IsPartial) {
       st.last = r;
-      if (!isSource) return;
+      if (!isSource) {
+        if (JA_LANG.test(lang)) this.showJapanese(id, st, raw, false);
+        else this.retractJapanese(id, st);
+        return;
+      }
+      if (raw.length > 0) this.retractJapanese(id, st);
       const fwd = this.fresh(st, raw);
       if (st.repeats) st.passed = true; // continuation of English already committed
       if (!st.passed) {
@@ -188,6 +218,7 @@ export class LanguageGate implements ResultSink {
     this.open.delete(id);
     this.stats.results++;
     if (isSource) {
+      if (raw.length > 0) this.retractJapanese(id, st);
       const fin = this.fresh(st, raw);
       const c = st.fwdCommitted;
       let segItems = fin;
@@ -230,6 +261,8 @@ export class LanguageGate implements ResultSink {
       return;
     }
     this.prevFinalLang = lang;
+    if (JA_LANG.test(lang)) this.showJapanese(id, st, raw, true);
+    else this.retractJapanese(id, st);
     if (st.passed) {
       this.segmenter.closeResult(id, lang, now);
       this.stats.late++;
@@ -239,6 +272,94 @@ export class LanguageGate implements ResultSink {
     }
   }
 
+  // Japanese speech as said: publish the stable words of a Japanese result that was never forwarded as English.
+  // The words are never sent to the segmenter, so nothing here can reach Translate, the LLM or Polly.
+  private showJapanese(id: string, st: GateState, all: TxItem[], final: boolean): void {
+    const tap = this.jaTap;
+    if (!tap || st.passed) return;
+    // Like English: the next result often re-transcribes audio the previous one already covered. Items whose
+    // midpoint is at or before the Japanese published so far (when this result appeared) are repeats; items of
+    // this result already consumed are found by time, so a re-tokenised final never repeats them.
+    const its = all.filter((it) => !isRepeat(it, st.jaHw0));
+    let n = 0;
+    while (n < its.length && (final || its[n].Stable === true)) n++;
+    if (!st.jaOn) {
+      if (!final && wordCount(its.slice(0, n)) < JA_SETTLE_ITEMS) return;
+      if (!its.slice(0, n).some((it) => JA_CHAR.test(it.Content ?? ""))) return;
+      st.jaOn = true;
+    }
+    const fillers = (this.opts.jaFillers ?? []).map((p) => p.trim()).filter(Boolean);
+    const isPunctJa = (it: TxItem | undefined) => !!it && isPunctItem(it);
+    const wordsOf = (p: string) => p.replace(/、$/, "");
+    const fillerAt = (i: number): boolean => {
+      const it = its[i];
+      if (isPunctItem(it)) return false;
+      const c = (it.Content ?? "").trim();
+      const next = its[i + 1];
+      const prevBreak = i === 0 || /^[。！？!?]$/.test(its[i - 1].Content ?? "");
+      for (const p of fillers) {
+        if (wordsOf(p) !== c) continue;
+        if (p.endsWith("、")) {
+          if (prevBreak && isPunctJa(next) && next.Content === "、") return true; // "つまり、" only at sentence start
+        } else if (final && next === undefined) {
+          return true; // a hesitation closing the result
+        } else if (isPunctJa(next) && /^[、。]$/.test(next.Content ?? "")) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const consumed = (it: TxItem) => typeof it.StartTime === "number" && typeof it.EndTime === "number" && (it.StartTime + it.EndTime) / 2 <= st.jaEnd;
+    let first = 0;
+    while (first < n && consumed(its[first])) first++;
+    let upto = n;
+    // A possible filler at the end of the stable prefix is held back until the next item shows what follows it.
+    if (!final && upto > first && !isPunctItem(its[upto - 1]) && fillers.some((p) => wordsOf(p) === (its[upto - 1].Content ?? "").trim())) upto--;
+    if (upto <= first) {
+      if (final) this.endJapanese(id);
+      return;
+    }
+    const tokens: { content: string; punct: boolean; start?: number; end?: number }[] = [];
+    let audioEnd = 0;
+    for (let i = first; i < upto; i++) {
+      const it = its[i];
+      if (typeof it.EndTime === "number") audioEnd = Math.max(audioEnd, it.EndTime);
+      if (fillerAt(i)) {
+        // drop the filler and the comma that followed it
+        if (i + 1 < upto && isPunctJa(its[i + 1]) && its[i + 1].Content === "、") {
+          i++;
+          if (typeof its[i].EndTime === "number") audioEnd = Math.max(audioEnd, its[i].EndTime as number);
+        }
+        continue;
+      }
+      tokens.push({ content: it.Content ?? "", punct: isPunctItem(it), start: it.StartTime, end: it.EndTime });
+    }
+    st.jaEnd = Math.max(st.jaEnd, audioEnd);
+    this.jaHw = Math.max(this.jaHw, audioEnd);
+    try {
+      tap.onSpeech({ resultId: id, tokens, final: final && upto >= its.length, audioEnd });
+    } catch (err) {
+      log.warn(`[langfilter] japanese tap error: ${String(err)}`);
+    }
+    if (final) this.endJapanese(id);
+  }
+  private endJapanese(id: string): void {
+    try {
+      this.jaTap?.onResultEnd?.(id);
+    } catch (err) {
+      log.warn(`[langfilter] japanese tap error: ${String(err)}`);
+    }
+  }
+  private retractJapanese(id: string, st: GateState): void {
+    if (!st.jaOn) return;
+    st.jaOn = false;
+    st.jaEnd = -Infinity;
+    try {
+      this.jaTap?.onRetract(id);
+    } catch (err) {
+      log.warn(`[langfilter] japanese tap error: ${String(err)}`);
+    }
+  }
   private forwardFinal(r: TxResult, raw: TxItem[], segItems: TxItem[], now: number): void {
     this.mark(segItems);
     this.segmenter.onResult(segItems === raw ? r : withItems(r, segItems), now);
@@ -249,7 +370,10 @@ export class LanguageGate implements ResultSink {
       if (!st.last) continue;
       this.stats.results++;
       const lang = this.langOf(st.last);
+      if (JA_LANG.test(lang)) this.showJapanese(id, st, items(st.last), true);
+      else if (lang !== this.opts.source) this.retractJapanese(id, st);
       if (lang === this.opts.source) {
+        this.retractJapanese(id, st);
         this.stats.kept++;
         // eof commits it, incl. unstable items (an unsettled result has no repeats)
         if (!st.passed) this.segmenter.onResult(st.last, now);
@@ -262,6 +386,11 @@ export class LanguageGate implements ResultSink {
       }
     }
     this.open.clear();
+    try {
+      this.jaTap?.onStreamEnd?.();
+    } catch (err) {
+      log.warn(`[langfilter] japanese tap error: ${String(err)}`);
+    }
     this.segmenter.endOfStream(reason, now);
   }
 
@@ -299,6 +428,7 @@ export function createResultSink(
   segmenter: Segmenter,
   opts: LanguageGateOptions,
   t0: () => number,
+  jaTap?: JapaneseSpeechTap,
 ): ResultSink {
-  return mode === "off" ? segmenter : new LanguageGate(opts, segmenter, t0);
+  return mode === "off" ? segmenter : new LanguageGate(opts, segmenter, t0, jaTap);
 }

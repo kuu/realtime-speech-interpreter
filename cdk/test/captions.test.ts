@@ -6,8 +6,13 @@ import { synthTemplate } from "./helpers";
 
 const CIDR = "203.0.113.10/32";
 
-function containerEnv(captions?: string): Record<string, string> {
-  const t = synthTemplate({ venueCidr: CIDR, eventFile: "none", ...(captions ? { captions } : {}) });
+function containerEnv(captions?: string, captionsJapaneseSpeech?: string): Record<string, string> {
+  const t = synthTemplate({
+    venueCidr: CIDR,
+    eventFile: "none",
+    ...(captions ? { captions } : {}),
+    ...(captionsJapaneseSpeech ? { captionsJapaneseSpeech } : {}),
+  });
   const defs = Object.values(t.findResources("AWS::ECS::TaskDefinition"))[0].Properties.ContainerDefinitions as Array<{
     Environment: Array<{ Name: string; Value: unknown }>;
   }>;
@@ -19,6 +24,22 @@ test("CAPTIONS env var follows the captions setting", () => {
   assert.equal(containerEnv("off").CAPTIONS, "off");
 });
 
+test("CAPTIONS_JA_SPEECH env var follows the captionsJapaneseSpeech setting; everything else is unchanged", () => {
+  assert.equal(containerEnv().CAPTIONS_JA_SPEECH, "on");
+  assert.equal(containerEnv(undefined, "off").CAPTIONS_JA_SPEECH, "off");
+  const on = containerEnv(undefined, "on");
+  const off = containerEnv(undefined, "off");
+  delete on.CAPTIONS_JA_SPEECH;
+  delete off.CAPTIONS_JA_SPEECH;
+  assert.deepEqual(off, on);
+});
+test("captionsJapaneseSpeech does not change the web assets (the page handles the events whenever they arrive)", () => {
+  const keys = (v: string): string[] => {
+    const t = synthTemplate({ venueCidr: CIDR, eventFile: "none", captionsJapaneseSpeech: v });
+    return Object.values(t.findResources("Custom::CDKBucketDeployment"))[0].Properties.SourceObjectKeys as string[];
+  };
+  assert.deepEqual(keys("on"), keys("off"));
+});
 test("captions=off leaves everything else in the container environment unchanged", () => {
   const on = containerEnv("on");
   const off = containerEnv("off");

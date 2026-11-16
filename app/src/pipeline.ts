@@ -132,8 +132,10 @@ export async function runPipeline(
         jaMemoryMs: lf.jaMemoryMs,
         shortWords: lf.shortWords,
         shortMinConf: lf.shortMinConf,
+        jaFillers: config.fillers.enabled ? config.fillers.jaPatterns : [],
       },
       () => t0,
+      captions?.japaneseTapFor(session, () => t0),
     );
     const ticker = setInterval(() => {
       try {

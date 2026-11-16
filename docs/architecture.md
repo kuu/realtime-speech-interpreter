@@ -107,13 +107,17 @@ changes. See [dictionaries.md](dictionaries.md).
 The listener page shows captions below the **Listen** button after the listener presses it. Before that the page is
 the page without captions: it does not connect to LiveKit. There is no toggle and no other control. Two lines roll:
 
-- **Japanese** (primary, larger): shown when the chunk's Japanese audio starts.
+- **Japanese** (primary, larger): the Japanese translation of the English speech, shown when the chunk's Japanese
+  audio starts, and Japanese speech (for example audience questions) shown **as said**: untranslated, on its own
+  line that starts with `― ` (full-width dash U+2015 and a space) in a subtle blue, one whole sentence at a time (a
+  question is never cut in two by a translation line). Both are interleaved in the order they are shown. As-said text is never translated and never spoken: the audio is unchanged.
 - **English source** (secondary, smaller, `#555` on white, contrast 7.5:1): shown as soon as the words are recognised,
   several seconds before the Japanese. `?source=off` in the page URL hides it. It is a URL option, not a setting.
 
 The deploy setting `captions` (`on` by default, env `CAPTIONS`, see [configuration.md](configuration.md)) turns both
 lines off. With `off` the app sends no data packets and `config.json` has `"captions": false`, so the page behaves as
-before captions existed.
+before captions existed. `captionsJapaneseSpeech` (`on` by default, env `CAPTIONS_JA_SPEECH`) controls only the
+as-said Japanese; `off` gives exactly the captions without it.
 
 ### Transport
 
@@ -124,19 +128,21 @@ Listener tokens stay subscribe-only (`canPublishData=false`); receiving data nee
 
 ### Event contract (schema v1)
 
-One versioned contract with two event types. The builders are in `app/src/caption-event.ts`, the parser is in
+One versioned contract with three event types. The builders are in `app/src/caption-event.ts`, the parser is in
 `app/web/captions.js`.
 
 ```json
 {"v":1,"type":"caption","id":"1-42","seq":57,"session":1,"channel":"ja","lang":"ja","text":"…","sourceLang":"en","sourceText":"…","speaker":null,"final":true,"startAt":1760000000000,"durationMs":3200}
 {"v":1,"type":"source","op":"append","id":"1-17","seq":58,"session":1,"resultId":"1a2b3c4d","channel":"en","lang":"en","text":"so today we are","stable":true,"boundary":false,"speaker":null,"audioEnd":12.34}
 {"v":1,"type":"source","op":"retract","seq":59,"session":1,"resultId":"1a2b3c4d","channel":"en","lang":"en"}
+{"v":1,"type":"speech","op":"append","id":"1-s4","seq":60,"session":1,"resultId":"9f4bdbdd","channel":"ja","lang":"ja","asSaid":true,"text":"すみません。質問です。","stable":true,"final":true,"boundary":true,"speaker":null,"audioEnd":8.25}
+{"v":1,"type":"speech","op":"retract","seq":61,"session":1,"resultId":"9f4bdbdd","channel":"ja","lang":"ja","asSaid":true}
 ```
 
 | Field | Meaning |
 |---|---|
 | `v` | Major schema version. Consumers ignore events with a `v` they do not know. |
-| `type` | `caption` (Japanese chunk) or `source` (English words). Unknown types are ignored. |
+| `type` | `caption` (Japanese chunk), `source` (English words) or `speech` (Japanese speech as said). Unknown types are ignored. |
 | `seq` | Increases across both types within one app run. |
 | `id`, `session` | `caption`: `<session>-<chunk number>` (as `[chunk N]` in the logs). `source`: `<session>-<batch number>`. |
 | `channel`, `lang` | `ja` / `en` today. Reserved for the two-channel bilingual mode (more `channel` values). |
@@ -146,6 +152,14 @@ One versioned contract with two event types. The builders are in `app/src/captio
 | `final` | Always `true`. `false` is reserved for later partial updates of the same `id`; the page ignores it today. |
 | `startAt`, `durationMs` | `caption` only: server time (ms) when the audio starts, and the audio length. Diagnostic. |
 | `op`, `resultId`, `boundary`, `stable`, `audioEnd` | `source` only: `append` or `retract`; the Transcribe result (first 8 characters, as in the logs); `boundary` = the batch ends a sentence; `stable` is always `true`; `audioEnd` = stream seconds of the last word (diagnostic). |
+
+`speech` was added after the first release of the contract and is additive: a page that predates it ignores the
+unknown `type`. The new page ignores a `speech` event unless `asSaid` is `true` and `channel` is `ja`. `speech`
+fields: `asSaid` (always `true`; the browser adds the display-only `― ` marker, it is not part of `text`), `final`
+(the batch ends the result), `boundary` (the batch ends a sentence), `speaker` (`null` until #8), `stable` (always
+`true`), `op: "retract"` as for `source`. Each `speech` append is one complete sentence (it ends with 。？！ and has
+`boundary: true`), except the rest of a sentence that had no end within the hold time or at the end of the stream
+(`boundary: false`); the page shows each sentence on its own line.
 
 Changes are additive only: new fields, new `type` or `channel` values. Consumers must ignore unknown fields. A change
 that breaks this needs `v: 2`.
@@ -185,22 +199,75 @@ run there were no late flips (`late=0`, `retracted=0`).
 Multi-word filler phrases (`you know`, `I mean`) are removed only from whole chunks before translation, so they can
 still appear in the early English line.
 
+**Japanese speech as said.** The language gate (`language-gate.ts`) sees every Transcribe result with its language
+tag. Results tagged Japanese used to be dropped. Now a `JapaneseSpeechTap` also receives the stable words of a
+Japanese result that was never forwarded as English: after 3 stable words (language flips happen near the start of a
+result), then each newly stable word, and the rest at the final. The words go only to the tap, never to the segmenter,
+so Translate, the LLM and Polly never see them. A result tagged Japanese whose words contain no Japanese character
+(English heard as Japanese for a moment) is not shown. Japanese fillers (`JA_FILLER_PATTERNS`: ええと, あの, …) are
+hidden only where it is safe: before 、 or 。, at the end of a result, and `つまり、` only at a sentence start; a
+possible filler at the end of the stable words waits for the next word, so `あの人` keeps its demonstrative. The
+publisher holds these words and sends one `speech` event per sentence: at 。？！, or the rest of an unfinished
+sentence 1 s after its result ended without a continuation (Transcribe often ends a result in the middle of a
+sentence; the next result then continues it, and both parts go out as one sentence), at the end of the stream, or 5 s
+after the first held word (`JA_HOLD_MAX_MS`, `JA_CARRY_MS` in `caption-publisher.ts`). A sentence therefore appears
+whole, which cannot happen while a translation line is shown in the middle of it. Held words of a result that
+flips to English are discarded. If a result flips to English after its Japanese was published, the app sends `speech` `retract` and the page removes
+those words (no duplicate with the translation that follows). A result already forwarded as English is never shown as
+Japanese. Measured on `qa-bilingual` (local): a sentence left the app a median 2.7 s (p90 3.0 s, n=6) after its last
+word was spoken, and a median 5.9 s after its first word (the sentence itself lasts that long). In a real Q&A slice
+with long, unpunctuated Japanese the median from the last word was 2.9 s (p90 5.0 s, n=17): sentences without a 。
+wait for the 1 s carry or the 5 s hold, so a long question can be shown as two lines.
+**Order.** As-said text has no audio to wait for and appears about 2-3 s after the last word of its sentence, while the
+Japanese translation of English speech appears with its voice, several seconds after the English was spoken. A
+question that follows an English answer would therefore land between two translated lines of that answer. The page
+prevents this: an as-said line waits for the open translated sentence to end, up to 3 s (see Page behaviour), so the
+answer is shown whole and the question after it. Measured on `qa-bilingual` (local, replayed through the page): 1 of 6
+as-said lines waited, for 0.2 s in one run and 1.1 s in another; the others were shown at once. A change of kind
+always starts a new line, so the two are never mixed in one line. Speaker labels with #8
+will make this easier to read.
 ### Page behaviour
 
 `app/web/captions.js` is a small pure module (no DOM access, unit-tested in `app/test/captions-assembler.test.ts`):
 
 - Japanese: chunks of one sentence merge into one line until `。？！`, 60 characters, or 6 s without a new chunk.
-  At most 3 lines. A line fades out 12 s after its last update.
-- English: batches join into lines that end at `.?!`, 90 characters, or 4 s of silence. At most 3 lines,
-  10 s before fading. A retract removes that result's words.
+  A line fades out 12 s after its last update. Each as-said sentence (`speech` event) starts a new line with its marker; a change
+  between translated and as-said text always starts a new line, and a retract removes the words of that result.
+  Only the rest of a sentence released early (no end within the hold time) joins the as-said line it continues, when
+  no other line came after it.
+  An as-said line that arrives while the newest translated line is still open (it does not end with `。？！` or a
+  closing bracket after them) waits in a queue (`SAID_QUEUE_MS` = 3 s). Queued lines are shown in order right after
+  the translated line that ends a sentence, after 3 s in the queue, or when no new translated text came for 3 s. A
+  retract removes a queued line. Translated lines are never held or reordered; with no open translated line an
+  as-said line is shown at once.
+  As-said lines start with `― ` and use `#1a4a8a` (8.8:1 on white; `#4a6585`, 6.0:1, when older). The marker carries
+  the meaning, the colour is a second cue. A line that wraps at the maximum length continues the same utterance
+  and does not repeat the `― `.
+- English: lines group by sentence across Transcribe results (a result often ends mid-sentence). Batches join
+  into one line that ends at `.?!`; a pause does not end it. The page wraps long lines itself, so the only length
+  limit is a safety limit of 240 characters (`EN_MAX_LINE_CHARS`) for a speaker who never ends a sentence: the line
+  is cut after the last comma, semicolon or colon within the limit, else at the last space. `boundary` is not used
+  to end a line, because it only says a sentence ended somewhere in the batch. At most 3 lines, 10 s before fading.
+  A retract removes exactly that result's words, also inside a joined line (a line break already made stays).
 - Text goes into the page with `textContent` only. A test fails if the page code contains `innerHTML` or similar.
 - Late joiners (and reconnects) see captions from the next words on. There is no history.
 
-Layout: once the first caption arrives, the page is exactly one viewport tall and does not scroll. Below the button
-are two areas with a fixed height (Japanese 3 lines, English 2 lines; on screens lower than 500 px 2 and 1 lines).
-New text is at the bottom, older text is cut off at the top with a soft fade, so long English never pushes the
-Japanese off screen. On screens lower than 700 px the "If you hear nothing" hint is hidden while captions run. The
-button does not move. Font sizes scale with `clamp()`, so the same page works on a phone and on a projected screen.
+Layout: when **Listen** is pressed the page becomes exactly one small viewport tall and does not scroll, and nothing
+moves afterwards. The heading, button, status line and hint are never hidden or moved. The page script measures once
+(`applyLayout` in `subscriber.js`, pure arithmetic in `computeLayout` in `captions.js`) and fixes both areas in px:
+- The **English** area is pinned near the bottom: 3 lines, 12 px above the bottom edge and above
+  `env(safe-area-inset-bottom)` (fewer lines when the screen is too short).
+- The **Japanese** area sits above it with a clear gap (at least 12 px), bottom-anchored, and takes the space down
+  from the hint in whole lines (at most 8). Older lines are cut off at the top with a soft fade.
+- Sizes come from the **small** viewport height (`100svh`, probed once; `100vh` only where `svh` is unknown, then the
+  smaller of it and the current height). The dynamic viewport unit is never used, so the Safari toolbar showing or
+  hiding changes neither the sizes nor the positions. The layout is measured again only when the width or the small
+  viewport height changes (rotation, window resize), never on scroll.
+- `?source=off`: no English area; the Japanese area keeps the same position and size. With `captions` off the page is
+  unchanged.
+Lines (Japanese / English), measured in headless Chrome: 390x844 8 / 3, 390x664 8 / 3, 844x390 2 / 1,
+1366x768 7 / 3, 1920x1080 8 / 3. The font sizes scale with `clamp()`, so the same page works on a phone and on a
+projected screen.
 The fade is turned off for `prefers-reduced-motion`. The Japanese area is `aria-live="polite"` for screen readers. The
 English area is not announced, as it changes several times a second.
 

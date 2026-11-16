@@ -8,14 +8,14 @@
 //
 // Live captions (config.json "captions": true): after Listen is pressed, the page also receives the caption
 // data packets of the same room (no extra connection, no extra button). Japanese lines appear when their audio
-// starts; the English source line appears as it is recognised (?source=off hides it). Everything is rendered
+// starts (Japanese speech is shown as said, on receipt, with a ― marker); the English source line appears as it is recognised (?source=off hides it). Everything is rendered
 // with textContent only. Before Listen is pressed the page does nothing.
 
 import {
   Room,
   RoomEvent,
 } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
-import { parseEvent, parseSourceOption, createAssembler, createSourceAssembler } from "./captions.js";
+import { parseEvent, parseSourceOption, createAssembler, createSourceAssembler, computeLayout } from "./captions.js";
 
 // Client-side delay (ms) applied to Japanese captions. The caption packet leaves the app when the chunk's
 // first sample leaves the app's audio queue; the audio still passes the browser's jitter buffer and decoder.
@@ -56,8 +56,58 @@ async function getConnectionInfo() {
   throw new Error("No connection info (config.json or window.LIVEKIT_* required)");
 }
 
+// ---- Captions layout: measured once when Listen is pressed, fixed afterwards ----
+// Sizes come from the SMALL viewport height (svh), which does not change when the mobile browser's toolbar shows
+// or hides, so nothing moves while reading. Re-measured only when the width or the svh changes (rotation, window
+// resize), never on scroll or toolbar changes.
+function measureSvh() {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;left:0;top:0;width:0;box-sizing:border-box;height:100vh;height:100svh;padding-top:env(safe-area-inset-bottom,0px)";
+  document.body.appendChild(probe);
+  const h = probe.offsetHeight;
+  const inset = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+  probe.remove();
+  // Without svh support (old browsers) 100vh is the LARGE viewport; use the smaller of it and the current height.
+  const supported = window.CSS && CSS.supports && CSS.supports("height", "100svh");
+  return { svh: supported ? h : Math.min(h, window.innerHeight), safeBottom: inset };
+}
+function applyLayout() {
+  const root = document.documentElement;
+  window.scrollTo(0, 0);
+  const { svh, safeBottom } = measureSvh();
+  const ja = document.getElementById("captions-ja");
+  const en = document.getElementById("captions-en");
+  const hint = document.querySelector(".hint");
+  const L = computeLayout({
+    svh,
+    safeBottom,
+    hintBottom: hint.getBoundingClientRect().bottom,
+    jaFont: parseFloat(getComputedStyle(ja).fontSize),
+    enFont: parseFloat(getComputedStyle(en).fontSize),
+  });
+  const set = (k, v) => root.style.setProperty(k, `${Math.round(v * 100) / 100}px`);
+  set("--ja-top", L.jaTop);
+  set("--ja-h", L.jaHeight);
+  set("--en-top", L.enTop);
+  set("--en-h", L.enHeight);
+  root.dataset.layout = `${root.clientWidth}x${svh}`;
+  return { w: root.clientWidth, svh };
+}
+function enterLiveLayout() {
+  document.documentElement.classList.add("live");
+  let last = applyLayout();
+  let timer = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const now = measureSvh().svh;
+      if (document.documentElement.clientWidth !== last.w || now !== last.svh) last = applyLayout();
+    }, 150);
+  });
+}
 // ---- Captions (plain text only: textContent, no markup is ever parsed) ----
 function initCaptions() {
+  enterLiveLayout();
   const showSource = parseSourceOption(window.location.search);
   const ja = createAssembler();
   const en = createSourceAssembler();
@@ -70,7 +120,7 @@ function initCaptions() {
     for (const b of blocks) {
       b.asm.tick(now);
       const model = b.asm.model(now);
-      const key = model.map((l) => `${l.id}\u0000${l.state}\u0000${l.text}`).join("\u0001");
+      const key = model.map((l) => `${l.id}\u0000${l.state}\u0000${l.said ? 1 : 0}\u0000${l.shown}`).join("\u0001");
       if (key === b.key) continue;
       b.key = key;
       const seen = new Set();
@@ -81,8 +131,9 @@ function initCaptions() {
           node = document.createElement("div");
           b.nodes.set(l.id, node);
         }
-        if (node.textContent !== l.text) node.textContent = l.text;
-        node.className = l.state;
+        // l.shown = the text, with the display-only ― marker in front of Japanese shown as said
+        if (node.textContent !== l.shown) node.textContent = l.shown;
+        node.className = l.said ? `${l.state} said` : l.state;
         if (b.el.children[i] !== node) b.el.insertBefore(node, b.el.children[i] || null);
       });
       for (const [id, node] of b.nodes) {
@@ -93,7 +144,6 @@ function initCaptions() {
       }
       if (model.length > 0) {
         // Both areas appear together (fixed heights), so nothing moves when the second language arrives.
-        document.documentElement.classList.add("live");
         for (const o of blocks) o.el.classList.add("on");
       }
       // Soft fade at the top only when older text is actually clipped.
@@ -107,7 +157,11 @@ function initCaptions() {
     if (topic !== CAPTION_TOPIC || !participant || participant.identity !== CAPTION_SENDER) return;
     const ev = parseEvent(payload);
     if (!ev) return;
-    if (ev.kind === "caption") {
+    if (ev.kind === "speech") {
+      // Japanese speech as said: no audio to wait for, shown on receipt.
+      ja.push(ev, Date.now());
+      render();
+    } else if (ev.kind === "caption") {
       const accept = () => {
         ja.push(ev, Date.now());
         render();

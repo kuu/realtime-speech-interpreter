@@ -30,7 +30,7 @@ src/
   audio-sink.ts    sink interface + FileAudioSink (local tests)
   livekit-sink.ts  headless LiveKit publisher (PCM → Opus track, caption data packets)
   caption-event.ts caption event schema v1 (builders; the contract is in docs/architecture.md)
-  caption-publisher.ts sends captions (Japanese at play start, English from the segmenter tap); CAPTIONS=on|off
+  caption-publisher.ts sends captions (Japanese at play start, English from the segmenter tap, Japanese speech as said from the language gate); CAPTIONS=on|off, CAPTIONS_JA_SPEECH=on|off
   corrections.ts   post-recognition correction map
   log.ts           leveled logger
   tools/make-token.ts  LiveKit token generator

@@ -83,6 +83,10 @@ venue audio --SRT--> Fargate app --audio--> Amazon Transcribe  (English text)
 - The text comes from speech recognition and a language model, so the page treats it as untrusted: it is inserted
   with `textContent` only, never as HTML (`app/test/captions-assembler.test.ts` checks this). The page accepts caption
   packets only on topic `captions` and only from the participant `publisher-app`.
+- With `captionsJapaneseSpeech=on` (default) Japanese speech (what the language filter classifies as Japanese, for
+  example audience questions) is now sent to listeners too, as said, untranslated. Before, it was dropped and never
+  left the app. `-c captionsJapaneseSpeech=off` stops it and keeps the other captions. As-said text follows the same
+  rules (`textContent` only, topic and sender checks); the page ignores `speech` events that are not `asSaid` Japanese.
 - `?source=off` hides the English line. It is a display option, not a protection: the English packets are still sent.
 - The English line can show words for a few seconds that are later withdrawn (a result that Transcribe finally tags
   as Japanese). The app retracts them; see [architecture.md](architecture.md#captions).

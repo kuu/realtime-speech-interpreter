@@ -488,7 +488,8 @@ export const config = {
     // App-side pronunciation readings: known Latin terms are wrapped in SSML <sub alias=...> before
     // Polly (polly-readings.ts). off = revert switch (today's text, byte for byte).
     readings: pollyReadings(process.env),
-    // Default: assets/polly-readings.csv in the app root (next to dist/ in the image, next to src/ in the repo).
+    // Default: assets/polly-readings.csv in the app root (next to dist/ in the image; the Docker build copies it from the
+    // dictionary folder). Local runs set POLLY_READINGS_FILE.
     readingsFile:
       str("POLLY_READINGS_FILE", "").trim() || fileURLToPath(new URL("../assets/polly-readings.csv", import.meta.url)),
   },

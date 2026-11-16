@@ -18,7 +18,7 @@ LIST="$TMP/files.lst"
 if git rev-parse --git-dir >/dev/null 2>&1; then
   git ls-files -co --exclude-standard -z | while IFS= read -r -d '' f; do if [ -f "$f" ]; then printf "%s\0" "$f"; fi; done > "$LIST"
 else
-  find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/cdk.out/*' -not -path './e2e/runs/*' -not -path './samples/out/*' -not -name cdk.context.json -not -name .DS_Store -print0 | sed -z 's|^\./||' > "$LIST"
+  find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*' -not -path '*/cdk.out/*' -not -path './e2e/runs/*' -not -path './samples/out/*' -not -path './dictionaries/local/*' -not -name cdk.context.json -not -name .DS_Store -print0 | sed -z 's|^\./||' > "$LIST"
 fi
 tar --null -T "$LIST" -cf "$TMP/tree.tar"
 mkdir "$TMP/x"

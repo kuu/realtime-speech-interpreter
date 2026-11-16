@@ -1,15 +1,19 @@
 # Roadmap
 
-Five features are planned. Each section below is written so it can be pasted into a GitHub issue.
+Five features were planned. Each section below was written so it can be pasted into a GitHub issue. Feature 1 is done; the others are open.
 The order is a suggestion: 1 and 4 are small and independent; 2 and 3 share a "who is speaking" and "which language"
-model; 5 changes the ingest path and the security model. None of this is implemented yet.
+model; 5 changes the ingest path and the security model. Feature 1 is implemented; 2 to 5 are not.
 
 Component names refer to files in `app/src/` (for example `pipeline.ts`, `language-gate.ts`, `chunk-player.ts`,
 `livekit-sink.ts`) and the listener page in `app/web/`.
 
 ---
 
-## 1. Dictionary builder
+## 1. Dictionary builder (done)
+
+**Status.** Implemented: `node dictionaries/build.mjs` with `generate`, `suggest`, `merge` and an optional
+`--suggest-with-bedrock`, from one `terms.csv` source. See [dictionaries.md](dictionaries.md). The text below is the
+original plan.
 
 **Problem.** Building the Transcribe vocabulary, Translate terminology and Polly readings by hand (see
 [dictionaries.md](dictionaries.md)) is slow and is the main customization step for each event.

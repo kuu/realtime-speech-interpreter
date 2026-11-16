@@ -1,0 +1,6 @@
+2026-01-01T10:00:00.000Z INFO   app started
+2026-01-01T10:00:05.100Z INFO   [chunk 1] COMMIT reason=pause mode=clause words=9 result=abc12345 audio=0.00-3.20s commitLagMs=210 queueDepth=0 en="we are moving the stream through Aurora Live today"
+2026-01-01T10:00:06.200Z INFO   [chunk 1] SYNTH translateMs=300 synthMs=200 level=0 rate=100 readings=0 pcmBytes=64000 audioMs=2000 ja="..." [corrected: fertilization -> verticalization]
+2026-01-01T10:00:15.100Z INFO   [chunk 2] COMMIT reason=pause mode=clause words=8 result=abc12345 audio=3.20-6.00s commitLagMs=190 queueDepth=0 en="the verticalization work needs a quokkaform encoder"
+2026-01-01T10:00:16.200Z INFO   [chunk 2] SYNTH translateMs=300 synthMs=200 level=0 rate=100 readings=0 pcmBytes=64000 audioMs=2000 ja="..." [corrected: fertilization -> verticalization, fertilize -> verticalize]
+2026-01-01T10:00:25.100Z INFO   [chunk 3] COMMIT reason=pause mode=clause words=8 result=abc12345 audio=6.00-9.00s commitLagMs=180 queueDepth=0 en="then Maria Lindqvist explains the quokkaform settings"

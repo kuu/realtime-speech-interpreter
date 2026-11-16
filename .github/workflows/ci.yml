@@ -52,6 +52,15 @@ jobs:
       - run: npx cdk synth -q -c venueCidr=203.0.113.10/32
         working-directory: cdk
 
+  app-image:
+    name: App image builds with the example dictionary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cdk synth does not build the image; this exercises COPY --from=dictionary in app/Dockerfile.
+      - run: docker build --build-context dictionary=dictionaries/example -t simul-app-ci app
+      - name: The image carries the example readings
+        run: docker run --rm --entrypoint cat simul-app-ci /app/assets/polly-readings.csv | cmp - dictionaries/example/polly-readings.csv
   repo-checks:
     name: Dictionaries, e2e unit tests, publish check, links
     runs-on: ubuntu-latest
@@ -65,7 +74,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: node dictionaries/validate.mjs
+      - run: node dictionaries/validate.mjs dictionaries/example
+      - name: Generated dictionary files match terms.csv
+        run: node dictionaries/build.mjs generate --check --dir dictionaries/example
+      - name: Dictionary builder tests
+        run: node --test "dictionaries/test/*.test.mjs"
       - name: e2e/lib unit tests (no AWS)
         run: python3 -m unittest discover -s e2e/lib -p 'test_*.py'
       - run: node scripts/check-diagram.mjs

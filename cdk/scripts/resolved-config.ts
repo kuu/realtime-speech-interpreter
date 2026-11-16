@@ -26,6 +26,8 @@ try {
     transcribeVocabularyName: cfg.transcribeVocabularyName,
     translateTerminologyName: cfg.translateTerminologyName,
     sourceLanguage: cfg.sourceLanguage,
+    dictionaryDir: cfg.dictionaryDir,
+    dictionaryDirSource: cfg.dictionaryDirSource,
   });
 } catch (err) {
   out.ok = false;

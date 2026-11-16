@@ -341,7 +341,7 @@ tracked and contains no real secrets.
 
 ## Polly pronunciation readings
 `POLLY_READINGS=on|off` (default `on`, case-insensitive; a bad value logs a WARN and uses `on`) and
-`POLLY_READINGS_FILE` (default `assets/polly-readings.csv`, bundled in the image). Known Latin terms
+`POLLY_READINGS_FILE` (default `assets/polly-readings.csv` inside the image, which the Docker build copies from the dictionary folder; for a local `npm start` set it, e.g. `POLLY_READINGS_FILE=../dictionaries/example/polly-readings.csv`). Known Latin terms
 (`term,reading` rows) are wrapped as `<sub alias="katakana">TERM</sub>` right before Polly (`src/polly-readings.ts`).
 The product name is never altered in text: the term stays unchanged as the `<sub>` element text and in every log, context and validator; only the alias changes how Polly pronounces it.
 Matching is case-sensitive, longest term first, and a term must not touch `[A-Za-z0-9]` on either side.

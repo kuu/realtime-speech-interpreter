@@ -208,7 +208,7 @@ Fewer split sentences and a steadier Japanese tone. Three parts, each with its o
 
 What needs which step:
 
-- The vocabulary rows for `launch`, `launched`, `launches`, `launching` in `dictionaries/transcribe-vocabulary.txt` take effect only after you run `cd cdk && ./scripts/dictionaries.sh` yourself. This work did not run it.
+- The vocabulary rows for `launch`, `launched`, `launches`, `launching` in the generated `transcribe-vocabulary.txt` (source: `terms.csv`) take effect only after you run `cd cdk && ./scripts/dictionaries.sh` yourself. This work did not run it.
 - The corrections, segmentation and formality changes ship with the app image, so they need `cdk deploy`. Nothing has been deployed.
 
 ## Latency presets
@@ -367,24 +367,29 @@ so networks that allow only 443 won't get audio; ask those attendees to use mobi
 
 ## Polly pronunciation readings
 Polly misreads some Latin-script names (MediaPackage, MediaConnect, AVC, HEVC, SCTE-35, ...). With
-`pollyReadings=on` (default) the app wraps known terms from `../app/assets/polly-readings.csv`
+`pollyReadings=on` (default) the app wraps known terms from the generated `polly-readings.csv` of your dictionary folder
 in SSML `<sub alias="katakana">TERM</sub>` just before Polly. The product name is never altered in text: the term stays unchanged as the `<sub>` element text and in every log, context and validator; only the alias changes how Polly pronounces it.
 | Context key | App env var | Default | Meaning |
 |---|---|---|---|
 | `pollyReadings` | `POLLY_READINGS` | `on` | `on` or `off` (revert switch: Polly input identical to before) |
 The readings file ships in the image (`POLLY_READINGS_FILE` defaults to `/app/assets/polly-readings.csv`; not a CDK key).
-No IAM change. To add or change a reading: edit the CSV, run `node ../dictionaries/validate.mjs`, redeploy.
+No IAM change. To add or change a reading: edit `terms.csv`, run `node ../dictionaries/build.mjs generate`, redeploy.
 ```
 npx cdk deploy -c venueCidr=<cidr> -c pollyReadings=off   # revert
 ```
 Log: `SYNTH ... readings=N ...` (N = terms substituted in that chunk; `ja="..."` stays the original text) and a startup line `pollyReadings=on file=... entries=80`.
 ## Dictionaries
 
-Source files: `../dictionaries/transcribe-vocabulary.txt` (Phrase/SoundsLike/DisplayAs,
-tab-separated) and `translate-terminology.csv` (`en,ja`). To update, edit them and run:
+Source file: `terms.csv` in your dictionary folder (`dictionaries/local/`, else `dictionaries/example/`, or the
+folder named by `dictionaryDir`). `node ../dictionaries/build.mjs generate` writes `transcribe-vocabulary.txt`
+(Phrase/SoundsLike/DisplayAs, tab-separated) and `translate-terminology.csv` (`en,ja`) from it; do not edit them by
+hand. To update, regenerate and run:
 ```
+./scripts/dictionaries.sh --dry-run        # prints the folder used, the S3 key, sizes and sha256; no AWS call
 ./scripts/dictionaries.sh --restart-app
 ```
+The stack also copies the folder's `polly-readings.csv` into the app image (a Docker build context named
+`dictionary`, hashed into the image asset), so `cdk synth` and `cdk deploy` need the generated files to exist.
 The script creates a private bucket `simul-translation-dict-<account>-<region>` (Block Public
 Access on), uploads the vocabulary, creates/updates the Transcribe vocabulary and waits for
 `READY`, imports the terminology (OVERWRITE), and with `--restart-app` forces a new ECS

@@ -17,6 +17,8 @@ cdk.context.json
 *.token
 .publish.token
 .subscribe.token
+# Your own dictionary (see docs/dictionaries.md); never committed
+dictionaries/local/
 # Local publish-check patterns (real values; never published)
 scripts/forbidden-patterns.local.txt
 # E2E runs and Python caches

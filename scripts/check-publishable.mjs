@@ -91,7 +91,7 @@ function listFiles() {
     const acc = [];
     // Without git there is no .gitignore handling: skip what .gitignore lists for generated or local files.
     const skip = new Set([".git", "node_modules", "dist", "cdk.out", ".cdk.staging", "cdk.context.json", "__pycache__", ".DS_Store", ".env"]);
-    const skipPath = new Set(["e2e/runs", "samples/out"]);
+    const skipPath = new Set(["e2e/runs", "samples/out", "dictionaries/local"]);
     const walk = (d) => {
       for (const e of readdirSync(join(root, d), { withFileTypes: true })) {
         if (skip.has(e.name)) continue;
@@ -112,8 +112,15 @@ const report = (where, h) => {
   console.log(`${where}:${h.line}: [${h.what}] ${JSON.stringify(h.text)}`);
 };
 
+// dictionaries/local/ is the user's own dictionary: gitignored, never published. Any file git would publish
+// from there (tracked, or untracked because .gitignore was changed) is a finding.
+const LOCAL_DICT = "dictionaries/local/";
 if (!historyOnly) {
   const files = listFiles();
+  for (const f of files.filter((x) => x.startsWith(LOCAL_DICT))) {
+    findings++;
+    console.log(`${f}: [your own dictionary] files under ${LOCAL_DICT} must not be tracked or published (git rm --cached; check .gitignore)`);
+  }
   let scanned = 0;
   for (const f of files) {
     const p = join(root, f);
@@ -147,6 +154,16 @@ if (!noHistory) {
       for (const h of scanText(c.slice(0, nl) + "\n" + body, false)) report(`history ${commit.slice(0, 12)}`, h);
     }
     console.log(`check-publishable: scanned ${n} commit(s) in the history`);
+    try {
+      const names = execFileSync("git", ["log", "--all", "--name-only", "--format=", "--", LOCAL_DICT], { cwd: root, maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "ignore"] })
+        .toString("utf8").split("\n").filter(Boolean);
+      for (const f of new Set(names)) {
+        findings++;
+        console.log(`history: [your own dictionary] ${f} was committed at some point; ${LOCAL_DICT} must never be in the history`);
+      }
+    } catch {
+      // no commits yet
+    }
   }
 }
 

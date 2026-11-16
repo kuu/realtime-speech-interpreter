@@ -1,14 +1,7 @@
-# Polly pronunciation readings: term,reading (UTF-8). Source of truth for the app (POLLY_READINGS).
+# Polly pronunciation readings: term,reading (UTF-8). Generated from terms.csv by node dictionaries/build.mjs; do not edit by hand.
 # The app wraps each exact, case-sensitive Latin-script term in SSML <sub alias="reading">term</sub> just before Amazon Polly.
-# Reading: katakana, long-vowel mark, spaces, digits, hyphen-style words only (no " < > &). Longest term wins.
-# Validate: node dictionaries/validate.mjs   (also run by npm test in repos/app)
-# Lines starting with # are comments. The header row "term,reading" must be the first non-comment line.
-# DECIDED (user, native Japanese speaker): every SCTE is read スカティ, so SCTE-35 / SCTE 35 -> スカティ さんじゅうご and
-# SCTE-104 / SCTE 104 -> スカティ ひゃくよん. EBU -> イービーユー, ARIB -> アライブ.
-# ST 2110 and ST 2022-7: the user's intended spelling is にぃ (hiragana: エスティーにぃいちいちぜろ and
-# エスティーにぃぜろにぃにぃダッシュセブン). In hiragana Polly ends an accent phrase after に (pitch falls to ~175 Hz, then
-# resets), which sounds like a pause. The same sounds in katakana (ニィ) give the same visemes with no break, so the rows
-# below use katakana ニィ. The product term in the text is never changed; only this alias is.
+# Reading: katakana, long-vowel mark, spaces, digits only (no " < > &). Longest term wins.
+# Validate: node dictionaries/validate.mjs. Lines starting with # are comments; the header row term,reading comes first.
 term,reading
 AWS Elemental MediaConnect,AWS エレメンタル メディアコネクト
 AWS Elemental MediaConvert,AWS エレメンタル メディアコンバート

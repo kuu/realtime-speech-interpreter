@@ -10,6 +10,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CDK_DIR="$SCRIPT_DIR/../cdk"
+ROOT="$SCRIPT_DIR/.."
 SKIP_AWS=false
 CARGS=()
 while [[ $# -gt 0 ]]; do
@@ -69,7 +70,7 @@ RC=""
 if [[ -d "$CDK_DIR/node_modules" ]] && command -v node >/dev/null 2>&1; then
   RC="$(cd "$CDK_DIR" && node_modules/.bin/ts-node scripts/resolved-config.ts ${CARGS[@]+"${CARGS[@]}"} 2>/dev/null | tail -1)"
 fi
-REGION="" ENGINE="" MODEL="" VOCAB="" TERM="" CIDRS=""
+REGION="" ENGINE="" MODEL="" VOCAB="" TERM="" CIDRS="" DDIR="" DSRC=""
 if [[ -z "$RC" ]]; then
   fail "could not read the configuration (see the missing tools above)" "cd cdk && npm ci"
 else
@@ -80,6 +81,8 @@ else
     VOCAB="$(printf '%s' "$RC" | jget transcribeVocabularyName)"
     TERM="$(printf '%s' "$RC" | jget translateTerminologyName)"
     CIDRS="$(printf '%s' "$RC" | jget venueCidrs)"
+    DDIR="$(printf '%s' "$RC" | jget dictionaryDir)"
+    DSRC="$(printf '%s' "$RC" | jget dictionaryDirSource)"
     EVF="$(printf '%s' "$RC" | jget eventFile)"
     pass "configuration is valid (profile $(printf '%s' "$RC" | jget profile), region $REGION, engine $ENGINE, event file: ${EVF:-none})"
   else
@@ -110,6 +113,23 @@ if [[ -n "$CIDRS" ]]; then
   done
 fi
 
+echo "== Dictionary"
+if [[ -n "$DDIR" ]]; then
+  if [[ "$DSRC" == "example" ]]; then
+    warn "using the example dictionaries (AWS Elemental Media Services); build your own with node dictionaries/build.mjs" "node dictionaries/build.mjs init   (see docs/dictionaries.md)"
+  else
+    pass "dictionary dir: $DDIR ($DSRC)"
+  fi
+  if [[ -f "$DDIR/terms.csv" ]] && command -v node >/dev/null 2>&1; then
+    if node "$ROOT/dictionaries/build.mjs" generate --check --dir "$DDIR" >/dev/null 2>&1; then
+      pass "generated dictionary files match terms.csv"
+    else
+      warn "the generated dictionary files in $DDIR are out of date or invalid" "node dictionaries/build.mjs generate --dir $DDIR"
+    fi
+  fi
+else
+  warn "dictionary folder not resolved (configuration could not be read)"
+fi
 echo "== AWS"
 if $SKIP_AWS; then
   warn "AWS checks skipped (--skip-aws)"
@@ -157,7 +177,7 @@ else
         fi
       fi
       # Dictionaries
-      DICT_FIX="cd cdk && ./scripts/dictionaries.sh   (creates both from dictionaries/; it writes to AWS, so run it yourself)"
+      DICT_FIX="cd cdk && ./scripts/dictionaries.sh   (creates both from your dictionary folder; it writes to AWS, so run it yourself; --dry-run shows what it would send)"
       if [[ -n "$VOCAB" ]]; then
         VS="$(aws transcribe get-vocabulary --vocabulary-name "$VOCAB" --region "$REGION" --query VocabularyState --output text 2>/dev/null)"
         if [[ "$VS" == "READY" ]]; then pass "Transcribe vocabulary '$VOCAB' is READY"

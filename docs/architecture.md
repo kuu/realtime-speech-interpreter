@@ -81,6 +81,8 @@ for audio only. LiveKit publishes audio-only from a server SDK and plays it in t
 **OBS and SRT for ingest.** Event teams already know OBS. SRT survives packet loss on venue networks and
 supports a passphrase. The Network Load Balancer gives static IPs, so the venue can allow-list them.
 
+**Browser microphone input (planned, not built).** A second input next to SRT, for venues without an audio line out: a Chrome or Edge page captures the microphone and publishes it to a separate LiveKit ingest room; the app subscribes and feeds the same PCM queue and pipeline. One input is active per session. The design and its security model are in [security.md](security.md#browser-microphone-input-planned-not-built) (issue #10).
+
 **Language filter.** Rooms with a moderator or questions in Japanese would otherwise be transcribed as English-looking
 words and translated into nonsense. Transcribe identifies the language of every result and the app drops results that
 are not the source language. Short low-confidence English fragments inside Japanese speech are dropped too.

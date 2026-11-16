@@ -30,6 +30,6 @@ node scripts/check-links.mjs
   version, the CDK CLI then no longer matches ("Cloud assembly schema version mismatch"), and synth fails.
   To fix the warnings, upgrade `aws-cdk-lib` and `aws-cdk` together in one change, then check that
   `npx cdk synth` still works and review `npx cdk diff` before deploying.
-- Feature ideas: see [docs/roadmap.md](docs/roadmap.md) and open an issue before a large change.
+- Feature ideas: see [GitHub Issues](https://github.com/kuu/realtime-speech-interpreter/issues) and open an issue before a large change.
 
 By contributing you agree that your contribution is licensed under the MIT License (see `LICENSE`).

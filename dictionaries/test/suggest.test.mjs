@@ -58,7 +58,7 @@ test("markdown syntax, links and code fences are ignored", () => {
   assert.deepEqual(it, [{ line: 4, text: "real FooBar line" }]);
 });
 test("the log: COMMIT en= text and [corrected: a -> b] are parsed with line numbers", () => {
-  const log = readFileSync(join(FIX, "rehearsal.log"), "utf8");
+  const log = readFileSync(join(FIX, "rehearsal-log.txt"), "utf8");
   const l = logItems(log, "app.log");
   assert.equal(l.items.length, 3);
   assert.equal(l.items[0].source, "app.log:2");
@@ -110,7 +110,7 @@ test("an existing proposal is not overwritten without --force", () => {
 });
 test("--from-log: corrected words get a note with what was heard and how often", () => {
   const d = makeDict("");
-  const r = build(["suggest", "--from-log", join(FIX, "rehearsal.log"), "--dir", d]);
+  const r = build(["suggest", "--from-log", join(FIX, "rehearsal-log.txt"), "--dir", d]);
   assert.equal(r.status, 0, r.all);
   const rows = proposal(d).slice(1).map((x) => x.cells);
   const v = rows.find((c) => c[0] === "verticalization");

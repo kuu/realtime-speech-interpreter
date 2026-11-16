@@ -9,7 +9,7 @@ This is a personal, unofficial open-source project. It is not an AWS product, it
 supported by Amazon Web Services, and AWS Support will not help with it. AWS, Amazon Transcribe, Amazon Translate,
 Amazon Polly, Amazon Bedrock and AWS Fargate are trademarks of Amazon.com, Inc. or its affiliates.
 
-![Architecture: venue, SRT, Fargate app, Transcribe, Translate or Bedrock, Polly, LiveKit, listener browsers](docs/architecture.svg)
+![Architecture: venue, SRT, Fargate app, Transcribe, Translate or Bedrock, Polly, LiveKit, listener browsers](docs/architecture.drawio.svg)
 
 Details of the diagram: [docs/architecture.md](docs/architecture.md).
 
@@ -229,11 +229,11 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Be
 (cd app && npm run build && npm run typecheck && npm test)
 (cd cdk && npm test)
 node dictionaries/validate.mjs
-node --test scripts/render-architecture.test.mjs
+node scripts/check-diagram.mjs
 ./scripts/check-publishable.sh
 ```
 
-If you change the diagram, edit `docs/architecture.model.json` and run `node scripts/render-architecture.mjs`.
+If you change the diagram, edit `docs/architecture.drawio.svg` in draw.io and run `scripts/export-diagram.sh` (see [docs/architecture.md](docs/architecture.md)).
 Do not commit account IDs, IP addresses, secrets or recordings.
 
 ## License

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Rewrites the <mxfile> metadata of draw.io files (.drawio and .svg exported with
-# "Include a copy of my diagram"): host becomes app.diagrams.net, and the agent, etag and
+# Rewrites the <mxfile> metadata of draw.io files (.drawio and .drawio.svg / .svg exported with
+# "Include a copy of my diagram"): host becomes app.diagrams.net (also for host="Electron" from draw.io Desktop), and the agent, etag and
 # modified attributes are removed. Files are edited in place. No dependencies except python3.
 #
-#   scripts/scrub-drawio.sh docs/architecture.svg docs/architecture.drawio
+#   scripts/scrub-drawio.sh docs/architecture.drawio.svg
 set -euo pipefail
 if [ "$#" -eq 0 ]; then
   echo "usage: $0 FILE.drawio|FILE.svg [...]" >&2

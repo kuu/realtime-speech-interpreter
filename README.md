@@ -227,7 +227,6 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 | [docs/security.md](docs/security.md) | Exposure, secrets, IAM, privacy, consent |
 | [docs/cost.md](docs/cost.md) | Billed resources, cost per hour, idle cost, how to stop paying |
 | [docs/e2e-testing.md](docs/e2e-testing.md) | Test harness and metrics |
-| [docs/roadmap.md](docs/roadmap.md) | Planned features, written as issues |
 
 ## Roadmap
 

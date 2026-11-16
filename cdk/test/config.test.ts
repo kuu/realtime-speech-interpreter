@@ -135,6 +135,12 @@ test("a missing eventFile that was asked for is an error", () => {
   assert.throws(() => cfgFor({ eventFile: "/nonexistent/event.json" }), /does not exist/);
 });
 
+test("captionsJapaneseSpeech: default on, -c captionsJapaneseSpeech=off, junk is rejected", () => {
+  assert.equal(cfgFor({}).captionsJapaneseSpeech, "on");
+  assert.equal(cfgFor({ captionsJapaneseSpeech: "off" }).captionsJapaneseSpeech, "off");
+  assert.equal(cfgFor({ captionsJapaneseSpeech: "OFF" }).captionsJapaneseSpeech, "off");
+  assert.throws(() => cfgFor({ captionsJapaneseSpeech: "maybe" }), /captionsJapaneseSpeech must be "on" or "off"/);
+});
 test("captions: default on, -c captions=off, junk is rejected", () => {
   assert.equal(cfgFor({}).captions, "on");
   assert.equal(cfgFor({ captions: "off" }).captions, "off");

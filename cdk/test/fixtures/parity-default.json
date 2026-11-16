@@ -657,6 +657,10 @@
           "Value": "on"
         },
         {
+          "Name": "CAPTIONS_JA_SPEECH",
+          "Value": "on"
+        },
+        {
           "Name": "LIVEKIT_URL",
           "Value": {
             "Fn::Join": [

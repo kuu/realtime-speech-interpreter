@@ -212,6 +212,7 @@ Extra context keys that are not in `cdk.json`:
 | `pollySampleRate` | `POLLY_SAMPLE_RATE` | `16000` | Polly output sample rate (Hz). |
 | `pollyReadings` | `POLLY_READINGS` | `on` | `on` or `off` (revert switch: Polly input identical to before) |
 | `captions` | `CAPTIONS` | `on` | `on` = live captions below the Listen button, after a listener presses Listen: Japanese in sync with the voice and the English source line as it is recognised. `off` = no caption data is sent and the page is exactly the page without captions. Not an event-file key: set it with `-c captions=off` or under `advanced`. See [Captions](architecture.md#captions). |
+| `captionsJapaneseSpeech` | `CAPTIONS_JA_SPEECH` | `on` | `on` = Japanese speech (what the language filter classifies as Japanese, for example audience questions) is also shown in the Japanese caption area, as said, untranslated and marked with `―`. Its audio behaviour does not change: it is never translated and never spoken. `off` = exactly the captions without it. Needs `captions=on`. Not an event-file key: set it with `-c captionsJapaneseSpeech=off` or under `advanced`. See [Captions](architecture.md#captions) and [Security](security.md). |
 
 ### LiveKit and listeners
 

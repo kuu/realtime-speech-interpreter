@@ -84,6 +84,7 @@ export interface StackConfig {
   pollySampleRate: number;
   pollyReadings: string;
   captions: string;
+  captionsJapaneseSpeech: string;
   roomName: string;
   publisherTokenTtl: string;
   listenerTokenTtlSec: number;
@@ -249,6 +250,7 @@ export function loadConfig(scope: Construct): StackConfig {
     pollySampleRate: ctxNum("pollySampleRate"),
     pollyReadings: ctxStr("pollyReadings").trim().toLowerCase(),
     captions: ctxStr("captions").trim().toLowerCase(),
+    captionsJapaneseSpeech: ctxStr("captionsJapaneseSpeech").trim().toLowerCase(),
     roomName: ctxStr("roomName"),
     publisherTokenTtl: ctxStr("publisherTokenTtl"),
     listenerTokenTtlSec: ctxNum("listenerTokenTtlSec"),
@@ -369,6 +371,9 @@ export function loadConfig(scope: Construct): StackConfig {
   }
   if (cfg.pollyReadings !== "on" && cfg.pollyReadings !== "off") throw new Error('pollyReadings must be "on" or "off"');
   if (cfg.captions !== "on" && cfg.captions !== "off") throw new Error('captions must be "on" or "off"');
+  if (cfg.captionsJapaneseSpeech !== "on" && cfg.captionsJapaneseSpeech !== "off") {
+    throw new Error('captionsJapaneseSpeech must be "on" or "off"');
+  }
   if (cfg.llmGlossary !== "full" && cfg.llmGlossary !== "off") throw new Error('llmGlossary must be "full" or "off"');
   if (cfg.llmParallelFallback !== "on" && cfg.llmParallelFallback !== "off") {
     throw new Error('llmParallelFallback must be "on" or "off"');

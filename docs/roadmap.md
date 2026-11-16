@@ -75,6 +75,10 @@ source as it is recognised (`?source=off` hides it). Data goes as reliable LiveK
 tokens still cannot publish. The deploy setting `captions` (default `on`) turns it off. The event schema has `channel`
 and `speaker` fields for items 2 and 3. Details: [architecture.md](architecture.md#captions).
 
+**Accessible captions (issue #12), first step: done.** Japanese speech is shown as said (`― ` marker, untranslated,
+never spoken) in the Japanese area, interleaved with the translations; `captionsJapaneseSpeech` turns it off. The
+caption areas now have fixed positions (Japanese large and bottom-anchored under the hint, English pinned near the
+bottom). Speaker labels ("Speaker 1", "Audience") come later with #8: the events already carry `speaker`.
 **Not built, on purpose.** A toggle and a size setting on the page: the page keeps only the **Listen** button. The
 on-page machine-translation notice from [security.md](security.md) is still open.
 

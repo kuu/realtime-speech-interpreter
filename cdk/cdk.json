@@ -94,6 +94,7 @@
     "pollySampleRate": 16000,
     "pollyReadings": "on",
     "captions": "on",
+    "captionsJapaneseSpeech": "on",
     "roomName": "translation",
     "publisherTokenTtl": "6h",
     "listenerTokenTtlSec": 21600,

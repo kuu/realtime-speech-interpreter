@@ -52,30 +52,30 @@ export function derivePhrase(display) {
 }
 
 /** Parse and validate terms.csv text. Returns { rows, notices }. Throws TermsError listing every problem. */
-export function parseTerms(text) {
+export function parseTerms(text, label = "terms.csv") {
   let table;
   try {
     table = parseCsv(text);
   } catch (e) {
-    throw new TermsError([`terms.csv: ${e.message}`]);
+    throw new TermsError([`${label}: ${e.message}`]);
   }
   const notices = [];
   const errors = [];
-  if (table.length === 0) throw new TermsError(["terms.csv:1: file is empty (needs a header row)"]);
+  if (table.length === 0) throw new TermsError([`${label}:1: file is empty (needs a header row)`]);
   const header = table[0].cells.map((c) => c.trim());
   const known = new Set(COLUMNS);
   header.forEach((h) => {
     if (RESERVED_COLUMNS.includes(h)) notices.push(`column "${h}" is reserved for the reverse direction and is ignored`);
-    else if (!known.has(h)) errors.push(`terms.csv:1: unknown column "${h}"`);
+    else if (!known.has(h)) errors.push(`${label}:1: unknown column "${h}"`);
   });
-  if (!header.includes("en")) errors.push('terms.csv:1: missing required column "en"');
-  if (new Set(header).size !== header.length) errors.push("terms.csv:1: duplicate column name");
+  if (!header.includes("en")) errors.push(`${label}:1: missing required column "en"`);
+  if (new Set(header).size !== header.length) errors.push(`${label}:1: duplicate column name`);
   if (errors.length) throw new TermsError(errors);
 
   const rows = [];
   for (const { line, cells } of table.slice(1)) {
     if (cells.every((c) => c.trim() === "")) continue;
-    const err = (m) => errors.push(`terms.csv:${line}: ${m}`);
+    const err = (m) => errors.push(`${label}:${line}: ${m}`);
     if (cells.length > header.length) err(`${cells.length} cells but the header has ${header.length}`);
     const r = Object.fromEntries(COLUMNS.map((c) => [c, ""]));
     header.forEach((h, i) => {
@@ -123,7 +123,7 @@ export function parseTerms(text) {
     const aliasOnly = r.transcribe_en === "y" && !r.translate_en_ja && !r.polly_ja && !r.ja && !r.reading;
     if (!aliasOnly) {
       errors.push(
-        `terms.csv:${r._line}: duplicate en "${r.en}" (first on line ${firstByEn.get(r.en)._line}); only alias rows (transcribe_en=y, no ja, no reading) may repeat an en`,
+        `${label}:${r._line}: duplicate en "${r.en}" (first on line ${firstByEn.get(r.en)._line}); only alias rows (transcribe_en=y, no ja, no reading) may repeat an en`,
       );
     }
   }
@@ -134,7 +134,7 @@ export function parseTerms(text) {
       const k = keyOf(r);
       if (k === undefined) continue;
       const key = ci ? k.toLowerCase() : k;
-      if (seen.has(key)) errors.push(`terms.csv:${r._line}: duplicate ${label} "${k}" (first on line ${seen.get(key)})`);
+      if (seen.has(key)) errors.push(`${label}:${r._line}: duplicate ${label} "${k}" (first on line ${seen.get(key)})`);
       else seen.set(key, r._line);
     }
   };

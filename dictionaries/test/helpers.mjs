@@ -23,7 +23,18 @@ export function makeDict(body, { header = HEADER } = {}) {
   return dir;
 }
 export function build(args, { env = {}, input, cwd } = {}) {
-  const r = spawnSync("node", [BUILD, ...args], { encoding: "utf8", env: { ...process.env, DICTIONARY_DIR: "", DICT_DIR: "", ...env }, input, cwd });
+  const r = spawnSync(process.execPath, [BUILD, ...args], { encoding: "utf8", env: { ...process.env, DICTIONARY_DIR: "", DICT_DIR: "", ...env }, input, cwd });
   return { status: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
 }
 export { mkdirSync, writeFileSync };
+
+export const FIX = join(HERE, "fixtures");
+/** Write an executable shell script into a fresh bin dir; returns the dir. */
+export function stubBin(name, script) {
+  const bin = tmp("stub-bin-");
+  const f = join(bin, name);
+  writeFileSync(f, `#!/bin/sh\n${script}\n`);
+  chmodSync(f, 0o755);
+  return bin;
+}
+import { chmodSync } from "node:fs";

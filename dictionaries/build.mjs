@@ -7,12 +7,17 @@
 //   node dictionaries/build.mjs init     [--empty]
 //   node dictionaries/build.mjs suggest  --from FILE [--from FILE ...] [--from-log LOG] [--dir D] ...
 //   node dictionaries/build.mjs merge    [--dir D] [--yes]
+import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { askBedrock, buildRequest, costUsd, defaultModelId, defaultRegion, estimateCost, formatUsd, pricesFor } from "./lib/bedrock.mjs";
+import { parseCsv, serializeCsv } from "./lib/csv.mjs";
 import { REPO_ROOT, resolveDictionaryDir, settingFromEnv } from "./lib/dir.mjs";
-import { OUTPUT_FILES, TERMS_HEADER, TermsError, parseTerms } from "./lib/terms.mjs";
+import { extractCandidates, loadStoplist, logItems, textItems } from "./lib/extract.mjs";
+import { COLUMNS, OUTPUT_FILES, TERMS_HEADER, TermsError, derivePhrase, parseTerms } from "./lib/terms.mjs";
 import { validateDictionaryDir } from "./validate.mjs";
 
 const out = (s) => process.stdout.write(s + "\n");
@@ -151,7 +156,212 @@ function cmdInit(argv) {
   return 0;
 }
 
-const COMMANDS = { generate: cmdGenerate, where: cmdWhere, init: cmdInit };
+// ---------- suggest ----------
+async function confirm(question) {
+  if (!process.stdin.isTTY) return false;
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    return /^y(es)?$/i.test((await rl.question(question)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+/** Items from one --from file. Returns { items, problem } where problem is a message when the file was skipped. */
+function readInput(file) {
+  if (!existsSync(file)) return { problem: `${file}: file not found` };
+  if (/\.pdf$/i.test(file)) {
+    const r = spawnSync("pdftotext", ["-layout", file, "-"], { encoding: "utf8", maxBuffer: 1 << 28 });
+    if (r.error) {
+      const hint = r.error.code === "ENOENT" ? "pdftotext is not installed (macOS: brew install poppler; Debian/Ubuntu: apt install poppler-utils)" : r.error.message;
+      return { problem: `${file}: skipped, ${hint}. Export the text yourself (.txt or .md) and pass that.` };
+    }
+    if (r.status !== 0) return { problem: `${file}: pdftotext failed (${(r.stderr || "").trim().split("\n").pop()})` };
+    const items = [];
+    r.stdout.split("\f").forEach((page, p) => {
+      for (const it of textItems(page)) items.push({ source: `${file}:p${p + 1}:${it.line}`, text: it.text });
+    });
+    return { items };
+  }
+  const buf = readFileSync(file);
+  if (buf.subarray(0, 8000).includes(0)) return { problem: `${file}: skipped, binary file (give .txt, .md or .pdf)` };
+  const markdown = /\.(md|markdown)$/i.test(file);
+  return { items: textItems(buf.toString("utf8"), { markdown }).map((it) => ({ source: `${file}:${it.line}`, text: it.text })) };
+}
+
+function knownTerms(dir) {
+  const f = join(dir, "terms.csv");
+  const known = new Set();
+  if (!existsSync(f)) return known;
+  const { rows } = parseTerms(readFileSync(f, "utf8"));
+  for (const r of rows) for (const v of [r.en, r.phrase, r.display_as, r._display]) if (v) known.add(v.toLowerCase());
+  return known;
+}
+
+function proposalRow(c) {
+  const r = Object.fromEntries(COLUMNS.map((k) => [k, ""]));
+  r.en = c.term;
+  r.source = c.source;
+  const notes = [c.kind === "corrected" ? c.note : `${c.kind}; ${c.count} occurrence${c.count === 1 ? "" : "s"}`];
+  if (c.kind !== "corrected" && c.also.length) notes.push(`also ${c.also.join(", ")}`);
+  try {
+    derivePhrase(c.term);
+    r.transcribe_en = "y";
+  } catch {
+    notes.push("Transcribe: add a phrase (spell numbers out), then set transcribe_en=y");
+  }
+  r.notes = notes.join("; ");
+  return r;
+}
+
+async function cmdSuggest(argv) {
+  const o = parseArgs(argv, {
+    from: "list", "from-log": "list", dir: undefined, root: undefined, out: undefined, force: "bool", wordlist: "list",
+    "suggest-with-bedrock": "bool", model: undefined, region: undefined, "max-terms": undefined,
+  });
+  if (o.from.length === 0 && o["from-log"].length === 0) throw new Error("give at least one --from FILE or --from-log LOG");
+  const root = o.root ? resolve(o.root) : REPO_ROOT;
+  const { dir } = targetDir(o, { write: !o.out });
+  const known = knownTerms(dir);
+  const stoplist = loadStoplist(o.wordlist);
+  const items = [];
+  const corrections = [];
+  let readable = 0;
+  for (const f of o.from) {
+    const r = readInput(f);
+    if (r.problem) errOut(`warning: ${r.problem}`);
+    else {
+      readable++;
+      items.push(...r.items);
+    }
+  }
+  for (const f of o["from-log"]) {
+    if (!existsSync(f)) {
+      errOut(`warning: ${f}: file not found`);
+      continue;
+    }
+    readable++;
+    const l = logItems(readFileSync(f, "utf8"), f);
+    items.push(...l.items);
+    corrections.push(...l.corrections);
+  }
+  if (readable === 0) {
+    errOut("error: none of the inputs could be read; nothing written");
+    return 1;
+  }
+  const cands = extractCandidates(items, { stoplist, known });
+  // Words the app's corrections.ts replaced: propose the corrected form, note what was heard.
+  const byTo = new Map();
+  for (const c of corrections) {
+    const k = c.to.toLowerCase();
+    if (known.has(k)) continue;
+    const e = byTo.get(k) ?? { term: c.to, from: new Map(), count: 0, source: c.source };
+    e.count++;
+    e.from.set(c.from, (e.from.get(c.from) ?? 0) + 1);
+    byTo.set(k, e);
+  }
+  for (const [k, e] of byTo) {
+    const heard = [...e.from].map(([w, n]) => `"${w}" ${n} time${n === 1 ? "" : "s"}`).join(", ");
+    const note = `corrected; heard as ${heard}`;
+    const at = cands.findIndex((c) => c.term.toLowerCase() === k);
+    const entry = { term: e.term, kind: "corrected", count: e.count, source: e.source, also: [], note, score: 95 + Math.min(e.count, 10) };
+    if (at >= 0) cands.splice(at, 1);
+    cands.push(entry);
+  }
+  cands.sort((a, b) => b.score - a.score || (a.order ?? 1e9) - (b.order ?? 1e9));
+  const rows = cands.map((c) => ({ c, row: proposalRow(c) }));
+
+  const outFile = o.out ? resolve(o.out) : join(dir, "terms.proposed.csv");
+  if (existsSync(outFile) && !o.force) {
+    if (!(await confirm(`${outFile} exists. Overwrite? [y/N] `))) {
+      errOut(`error: ${outFile} already exists. Review it and run merge, or pass --force to overwrite.`);
+      return 1;
+    }
+  }
+  if (o["suggest-with-bedrock"] && rows.length) await bedrockFill(rows, o, root);
+  writeFileSync(outFile, serializeCsv([COLUMNS, ...rows.map(({ row }) => COLUMNS.map((k) => row[k]))]));
+  out(`${rows.length} candidate term${rows.length === 1 ? "" : "s"} written to ${outFile} (terms.csv was not changed)`);
+  const shown = rows.slice(0, 25);
+  const w = Math.max(4, ...shown.map(({ row }) => row.en.length));
+  for (const { c, row } of shown) out(`  ${row.en.padEnd(w)}  ${c.kind.padEnd(14)} x${String(c.count).padEnd(3)} ${row.source}`);
+  if (rows.length > shown.length) out(`  ... and ${rows.length - shown.length} more in the file`);
+  out("Next: open the file, fill ja / reading, set the flags you want, delete rows you do not need, then: node dictionaries/build.mjs merge");
+  return 0;
+}
+
+async function bedrockFill(rows, o, root) {
+  const n = Math.max(1, Number(o["max-terms"] ?? 50));
+  if (!Number.isInteger(n)) throw new Error("--max-terms must be a whole number");
+  const subset = rows.slice(0, n);
+  const modelId = defaultModelId({ model: o.model, root });
+  const region = defaultRegion({ region: o.region });
+  const terms = subset.map(({ row }) => ({ term: row.en }));
+  const est = estimateCost(buildRequest(terms), terms.length, modelId, root);
+  errOut(
+    `Bedrock suggestions for ${terms.length} term(s) with ${modelId} in ${region}: ` +
+      `about ${est.inputTokens} input tokens and up to ${est.outputTokens} output tokens, ${formatUsd(est.usd)}.`,
+  );
+  const { suggestions, usage } = askBedrock(terms, { modelId, region });
+  const pr = pricesFor(modelId, root);
+  errOut(`Bedrock usage: ${usage.inputTokens} input and ${usage.outputTokens} output tokens, ${formatUsd(costUsd(usage.inputTokens, usage.outputTokens, pr))}.`);
+  let filled = 0;
+  for (const { row } of subset) {
+    const s = suggestions.get(row.en);
+    if (!s || (!s.ja && !s.reading)) continue;
+    if (s.ja) row.ja = s.ja;
+    if (s.reading) row.reading = s.reading;
+    row.notes = `UNVERIFIED (bedrock ${modelId}); ${row.notes}`;
+    filled++;
+  }
+  errOut(`${filled} of ${terms.length} term(s) got a suggestion. Check every one before you merge; flags stay as they were.`);
+}
+
+// ---------- merge ----------
+async function cmdMerge(argv) {
+  const o = parseArgs(argv, { dir: undefined, root: undefined, proposed: undefined, yes: "bool" });
+  const { dir } = targetDir(o, { write: true });
+  const termsFile = join(dir, "terms.csv");
+  const propFile = o.proposed ? resolve(o.proposed) : join(dir, "terms.proposed.csv");
+  if (!existsSync(propFile)) throw new Error(`no proposal at ${propFile}. Run suggest first.`);
+  const current = readTerms(dir);
+  const known = new Set();
+  for (const r of current.rows) for (const v of [r.en, r.phrase, r.display_as, r._display]) if (v) known.add(v.toLowerCase());
+
+  // Read the proposal leniently: drop rows with an empty en, then validate with the same rules as terms.csv.
+  const table = parseCsv(readFileSync(propFile, "utf8"));
+  if (table.length === 0) throw new Error(`${propFile} is empty`);
+  const head = table[0].cells.map((c) => c.trim());
+  const enAt = head.indexOf("en");
+  if (enAt < 0) throw new Error(`${propFile} has no "en" column`);
+  const kept = table.slice(1).filter((r) => (r.cells[enAt] ?? "").trim() !== "");
+  const proposal = parseTerms(serializeCsv([head, ...kept.map((r) => r.cells)]), "terms.proposed.csv");
+  const fresh = proposal.rows.filter((r) => !known.has(r.en.toLowerCase()));
+  const dropped = proposal.rows.length - fresh.length;
+  if (fresh.length === 0) {
+    out(`Nothing to merge (${dropped} already in terms.csv, ${table.length - 1 - kept.length} empty row(s) dropped).`);
+    return 0;
+  }
+  // Append in the column order of terms.csv.
+  const existingText = readFileSync(termsFile, "utf8");
+  const termsHead = parseCsv(existingText)[0].cells.map((c) => c.trim());
+  const add = fresh.map((r) => termsHead.map((h) => (r[h] === null || r[h] === undefined ? "" : String(r[h]))));
+  const next = (existingText.endsWith("\n") ? existingText : existingText + "\n") + serializeCsv(add);
+  parseTerms(next); // the merged file must be valid; throws with line numbers otherwise
+  out(`Rows to append to ${termsFile} (${fresh.length}${dropped ? `, ${dropped} already known and skipped` : ""}):`);
+  for (const r of fresh.slice(0, 20)) out(`  + ${r.en}${r.ja ? `  ->  ${r.ja}` : ""}${r.reading ? `  (${r.reading})` : ""}`);
+  if (fresh.length > 20) out(`  ... and ${fresh.length - 20} more`);
+  if (!o.yes && !(await confirm(`Append ${fresh.length} rows to terms.csv? [y/N] `))) {
+    errOut(process.stdin.isTTY ? "Not merged." : "Not merged: no terminal to confirm on. Run again in a terminal, or pass --yes.");
+    return 1;
+  }
+  const stage = join(dir, ".terms.csv.tmp");
+  writeFileSync(stage, next);
+  renameSync(stage, termsFile);
+  out(`Appended ${fresh.length} rows. Now run: node dictionaries/build.mjs generate${dir === join(REPO_ROOT, "dictionaries", "local") ? "" : ` --dir ${dir}`}`);
+  return 0;
+}
+
+const COMMANDS = { generate: cmdGenerate, where: cmdWhere, init: cmdInit, suggest: cmdSuggest, merge: cmdMerge };
 
 export async function main(argv) {
   const [cmd, ...rest] = argv;

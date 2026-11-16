@@ -14,6 +14,7 @@ import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { loadConfig } from "./config";
+import { readingsHash } from "./dictionary-dir";
 import { buildLiveKitUserData } from "./livekit-user-data";
 
 export class SimulTranslationStack extends cdk.Stack {
@@ -191,6 +192,11 @@ export class SimulTranslationStack extends cdk.Stack {
       containerName: "app",
       image: ecs.ContainerImage.fromAsset(path.resolve(__dirname, "..", cfg.appPath), {
         platform: Platform.LINUX_ARM64,
+        // The Polly readings come from the resolved dictionary folder (see app/Dockerfile).
+        buildContexts: { dictionary: cfg.dictionaryDir },
+        // buildContexts hashes only the path; add the file content so a changed dictionary makes a new image.
+        extraHash: readingsHash(path.join(cfg.dictionaryDir, "polly-readings.csv")),
+        invalidation: { buildContexts: false },
       }),
       logging: ecs.LogDrivers.awsLogs({ logGroup: appLogGroup, streamPrefix: "app" }),
       stopTimeout: cdk.Duration.seconds(10),

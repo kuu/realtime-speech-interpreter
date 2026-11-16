@@ -93,6 +93,7 @@
     "pollyEngine": "neural",
     "pollySampleRate": 16000,
     "pollyReadings": "on",
+    "dictionaryDir": "",
     "captions": "on",
     "captionsJapaneseSpeech": "on",
     "roomName": "translation",

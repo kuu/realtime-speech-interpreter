@@ -1,5 +1,6 @@
 import { Construct } from "constructs";
 import { buildResolver } from "./event-config";
+import { resolveDictionary } from "./dictionary-dir";
 
 // Every configurable value comes from cdk.json "context", config/event.json or a profile (override with -c key=value).
 // Values passed with -c arrive as strings, so numbers are parsed and validated here.
@@ -83,6 +84,9 @@ export interface StackConfig {
   pollyEngine: string;
   pollySampleRate: number;
   pollyReadings: string;
+  /** Resolved dictionary folder (absolute). Its polly-readings.csv is copied into the app image. */
+  dictionaryDir: string;
+  dictionaryDirSource: string;
   captions: string;
   captionsJapaneseSpeech: string;
   roomName: string;
@@ -145,6 +149,10 @@ export function resolveRegion(scope: Construct): string {
   return v === undefined || v === null || String(v) === "" ? "ap-northeast-1" : String(v);
 }
 
+function dictionaryFields(setting: string): { dictionaryDir: string; dictionaryDirSource: string } {
+  const r = resolveDictionary(setting);
+  return { dictionaryDir: r.dir, dictionaryDirSource: r.source };
+}
 export function loadConfig(scope: Construct): StackConfig {
   const resolver = buildResolver((k) => scope.node.tryGetContext(k));
   const latencyPreset = resolver.profile;
@@ -249,6 +257,7 @@ export function loadConfig(scope: Construct): StackConfig {
     pollyEngine: ctxStr("pollyEngine"),
     pollySampleRate: ctxNum("pollySampleRate"),
     pollyReadings: ctxStr("pollyReadings").trim().toLowerCase(),
+    ...dictionaryFields(ctxStr("dictionaryDir", true)),
     captions: ctxStr("captions").trim().toLowerCase(),
     captionsJapaneseSpeech: ctxStr("captionsJapaneseSpeech").trim().toLowerCase(),
     roomName: ctxStr("roomName"),

@@ -34,7 +34,7 @@ test("every event.json key is documented", () => {
 });
 
 test("docs list no key that no longer exists", () => {
-  const valid = new Set<string>([...knownContextKeys(), ...keysReadByCode(), ...EVENT_KEYS, ...profileNames(), "dictionaries.transcribeVocabulary", "dictionaries.translateTerminology"]);
+  const valid = new Set<string>([...knownContextKeys(), ...keysReadByCode(), ...EVENT_KEYS, ...profileNames(), "dictionaries.transcribeVocabulary", "dictionaries.translateTerminology", "dictionaries.dir"]);
   const stale = [...docKeys].filter((k) => !valid.has(k));
   assert.deepEqual(stale, [], `documented but unknown: ${stale.join(", ")}`);
 });

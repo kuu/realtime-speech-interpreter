@@ -155,13 +155,14 @@ export function eventToContext(ev: unknown, path: string): Layer {
     const d = e.dictionaries as Record<string, unknown>;
     if (typeof d !== "object" || d === null || Array.isArray(d)) fail(path, '"dictionaries" must be an object');
     for (const k of Object.keys(d)) {
-      if (k !== "transcribeVocabulary" && k !== "translateTerminology") {
-        fail(path, `unknown key "dictionaries.${k}" (use transcribeVocabulary, translateTerminology)`);
+      if (k !== "transcribeVocabulary" && k !== "translateTerminology" && k !== "dir") {
+        fail(path, `unknown key "dictionaries.${k}" (use transcribeVocabulary, translateTerminology, dir)`);
       }
       if (typeof d[k] !== "string") fail(path, `"dictionaries.${k}" must be a string ("" disables it)`);
     }
     if (d.transcribeVocabulary !== undefined) out.transcribeVocabularyName = d.transcribeVocabulary;
     if (d.translateTerminology !== undefined) out.translateTerminologyName = d.translateTerminology;
+    if (d.dir !== undefined) out.dictionaryDir = d.dir;
   }
   if (e.expectedListeners !== undefined) {
     const n = e.expectedListeners;

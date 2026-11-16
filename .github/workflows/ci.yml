@@ -52,6 +52,15 @@ jobs:
       - run: npx cdk synth -q -c venueCidr=203.0.113.10/32
         working-directory: cdk
 
+  app-image:
+    name: App image builds with the example dictionary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cdk synth does not build the image; this exercises COPY --from=dictionary in app/Dockerfile.
+      - run: docker build --build-context dictionary=dictionaries/example -t simul-app-ci app
+      - name: The image carries the example readings
+        run: docker run --rm --entrypoint cat simul-app-ci /app/assets/polly-readings.csv | cmp - dictionaries/example/polly-readings.csv
   repo-checks:
     name: Dictionaries, e2e unit tests, publish check, links
     runs-on: ubuntu-latest

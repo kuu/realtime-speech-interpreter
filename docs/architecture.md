@@ -218,10 +218,13 @@ Japanese. Measured on `qa-bilingual` (local): a sentence left the app a median 2
 word was spoken, and a median 5.9 s after its first word (the sentence itself lasts that long). In a real Q&A slice
 with long, unpunctuated Japanese the median from the last word was 2.9 s (p90 5.0 s, n=17): sentences without a 。
 wait for the 1 s carry or the 5 s hold, so a long question can be shown as two lines.
-**Order.** Lines appear in the order they are shown. As-said text has no audio to wait for and appears about 2-3 s
-after the last word of its sentence, while the Japanese translation of English speech appears with its voice, several seconds after the
-English was spoken. A question that follows an English answer can therefore appear between two translated lines of that
-answer; a change of kind always starts a new line, so the two are never mixed in one line. Speaker labels with #8
+**Order.** As-said text has no audio to wait for and appears about 2-3 s after the last word of its sentence, while the
+Japanese translation of English speech appears with its voice, several seconds after the English was spoken. A
+question that follows an English answer would therefore land between two translated lines of that answer. The page
+prevents this: an as-said line waits for the open translated sentence to end, up to 3 s (see Page behaviour), so the
+answer is shown whole and the question after it. Measured on `qa-bilingual` (local, replayed through the page): 1 of 6
+as-said lines waited, for 0.2 s in one run and 1.1 s in another; the others were shown at once. A change of kind
+always starts a new line, so the two are never mixed in one line. Speaker labels with #8
 will make this easier to read.
 ### Page behaviour
 
@@ -232,6 +235,11 @@ will make this easier to read.
   between translated and as-said text always starts a new line, and a retract removes the words of that result.
   Only the rest of a sentence released early (no end within the hold time) joins the as-said line it continues, when
   no other line came after it.
+  An as-said line that arrives while the newest translated line is still open (it does not end with `。？！` or a
+  closing bracket after them) waits in a queue (`SAID_QUEUE_MS` = 3 s). Queued lines are shown in order right after
+  the translated line that ends a sentence, after 3 s in the queue, or when no new translated text came for 3 s. A
+  retract removes a queued line. Translated lines are never held or reordered; with no open translated line an
+  as-said line is shown at once.
   As-said lines start with `― ` and use `#1a4a8a` (8.8:1 on white; `#4a6585`, 6.0:1, when older). The marker carries
   the meaning, the colour is a second cue. A line that wraps at the maximum length continues the same utterance
   and does not repeat the `― `.

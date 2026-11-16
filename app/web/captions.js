@@ -206,6 +206,9 @@ class Lines {
   }
 }
 
+const JA_SENTENCE_END = /[。？！?!]["')」』”]*$/;
+// An as-said line waits at most this long (ms) for the translated sentence it would interrupt.
+export const SAID_QUEUE_MS = 3000;
 const JA_DEFAULTS = { maxLines: 3, maxLineChars: 60, lineGapMs: 6000, lineTtlMs: 12000, fadeMs: 600 };
 // English lines group by sentence: a pause does not close a line (only a sentence end or the maximum length does;
 // an idle line expires after lineTtlMs), because Transcribe results end in the middle of sentences.
@@ -220,28 +223,52 @@ const EN_DEFAULTS = { maxLines: 3, maxLineChars: EN_MAX_LINE_CHARS, lineGapMs: 1
  * starts a new line, and a retract removes the words of that result.
  */
 export function createAssembler(opts = {}, showSpeech = true) {
-  const store = new Lines({ ...JA_DEFAULTS, ...opts }, "ja", false, /[。？！?!]["')」』”]*$/);
+  const { queueMs = SAID_QUEUE_MS, ...rest } = opts;
+  const store = new Lines({ ...JA_DEFAULTS, ...rest }, "ja", false, JA_SENTENCE_END);
   let key = "";
+  let transAt = -Infinity; // time of the newest translation text
+  let queue = []; // as-said events waiting for an open translated sentence to end: { ev, at }
+  // The newest translated line is still open: its text does not end with 。？！ (or ?!) and closing brackets.
+  const translationOpen = () => {
+    for (let i = store.lines.length - 1; i >= 0; i--) {
+      const l = store.lines[i];
+      if (l.kind === "") return !JA_SENTENCE_END.test(l.text);
+    }
+    return false;
+  };
+  const placeSaid = (ev, now) => {
+    if (key !== "" && key !== "said") {
+      const l = store.lines[store.lines.length - 1];
+      if (l) l.closed = true;
+    }
+    key = "said";
+    // A sentence event starts a new line with its own marker. Only the rest of a sentence that the server released
+    // early (it had no end within the hold time) joins the as-said line it continues: same result, line not ended.
+    const last = store.lines[store.lines.length - 1];
+    if (last && last.closed && !last.closedByLength && last.kind === "said" && last.segs.length > 0 &&
+        last.segs[last.segs.length - 1].resultId === ev.resultId && !JA_SENTENCE_END.test(last.text)) last.closed = false;
+    store.add(ev.text, ev.resultId, now, ev.boundary, "said");
+  };
+  const release = (n, now) => {
+    for (const q of queue.splice(0, n)) placeSaid(q.ev, now);
+  };
   return {
     /** @param {ParsedEvent | null} ev */
     push(ev, now) {
       if (ev && ev.kind === "speech") {
         if (!showSpeech) return false;
         if (ev.op === "retract") {
+          queue = queue.filter((q) => q.ev.resultId !== ev.resultId);
           store.retract(ev.resultId);
           return true;
         }
-        if (key !== "" && key !== "said") {
-          const l = store.lines[store.lines.length - 1];
-          if (l) l.closed = true;
+        // A translated sentence is still being shown (its voice-synced lines arrive later than the as-said words):
+        // the as-said line waits, in order, until that sentence ends, a timeout, or no new translated text for a while.
+        if (queue.length > 0 || (translationOpen() && now - transAt < queueMs)) {
+          queue.push({ ev, at: now });
+          return true;
         }
-        key = "said";
-        // A sentence event starts a new line with its own marker. Only the rest of a sentence that the server released
-        // early (it had no end within the hold time) joins the as-said line it continues: same result, line not ended.
-        const last = store.lines[store.lines.length - 1];
-        if (last && last.closed && !last.closedByLength && last.kind === "said" && last.segs.length > 0 &&
-            last.segs[last.segs.length - 1].resultId === ev.resultId && !/[。？！?!]["')」』”]*$/.test(last.text)) last.closed = false;
-        store.add(ev.text, ev.resultId, now, ev.boundary, "said");
+        placeSaid(ev, now);
         return true;
       }
       if (!ev || ev.kind !== "caption" || (ev.channel !== "ja" && ev.channel !== "")) return false;
@@ -252,13 +279,25 @@ export function createAssembler(opts = {}, showSpeech = true) {
       }
       key = k;
       store.add(ev.text, null, now, false);
+      transAt = now;
+      if (queue.length > 0 && !translationOpen()) release(queue.length, now);
       return true;
     },
-    tick: (now) => store.tick(now),
+    tick(now) {
+      if (queue.length > 0) {
+        // Everything up to the last line whose wait is over goes out, to keep the order.
+        let n = 0;
+        queue.forEach((q, i) => {
+          if (now - q.at >= queueMs) n = i + 1;
+        });
+        if (now - transAt >= queueMs) n = queue.length;
+        if (n > 0) release(n, now);
+      }
+      store.tick(now);
+    },
     model: (now) => store.model(now),
   };
 }
-
 /**
  * English source assembler: appends word batches, closes lines at sentence ends, and removes all words of a
  * result when it is retracted. A retract for an unknown resultId is a no-op.

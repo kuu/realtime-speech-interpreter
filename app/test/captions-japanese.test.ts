@@ -39,11 +39,11 @@ test("old pages ignore the new event type: the English assembler and caption pat
 });
 test("a change between translated and as-said Japanese always starts a new line, both ways", () => {
   const a = createAssembler();
-  push(a, cap("翻訳の最初の部分、"), 0); // unfinished sentence
+  push(a, cap("翻訳の最初の部分です。"), 0); // finished sentence: nothing to wait for
   push(a, say("質問です", {}), 100);
   push(a, cap("翻訳の続き"), 200); // back to translated: new line again
   const model = a.model(200);
-  assert.deepEqual(model.map((l: any) => [l.said, l.text]), [[false, "翻訳の最初の部分、"], [true, "質問です"], [false, "翻訳の続き"]]);
+  assert.deepEqual(model.map((l: any) => [l.said, l.text]), [[false, "翻訳の最初の部分です。"], [true, "質問です"], [false, "翻訳の続き"]]);
 });
 test("as-said: sentence grouping inside one source; results merge until 。？！ closes the line", () => {
   const a = createAssembler();
@@ -194,4 +194,120 @@ test("as-said: each sentence event is a new line with its marker; the rest of a 
   push(a, say("の続き。", { resultId: "q3", boundary: true }), 7400);
   const t = a.model(7400).map((l: any) => l.shown);
   assert.deepEqual(t.slice(-3), ["\u2015 途中", "翻訳です。", "\u2015 の続き。"]);
+});
+
+// ---- as-said lines wait for an open translated sentence (SAID_QUEUE_MS) ----
+const lines = (a: any, now: number) => a.model(now).map((l: any) => l.shown);
+const Q = "\u2015 ";
+test("queue: an as-said line is placed after the translated sentence it would interrupt", () => {
+  const a = createAssembler();
+  push(a, cap("視聴者には低い解像度が見えますが、"), 0); // open
+  push(a, say("最後に、日本語の字幕には対応していますか。", { resultId: "q1", boundary: true }), 100);
+  assert.deepEqual(lines(a, 100), ["視聴者には低い解像度が見えますが、"], "held, not shown");
+  push(a, cap("しかし、流れは止まりません。"), 1500);
+  assert.deepEqual(lines(a, 1500), ["視聴者には低い解像度が見えますが、しかし、流れは止まりません。", Q + "最後に、日本語の字幕には対応していますか。"]);
+});
+test("queue: released by the timeout (SAID_QUEUE_MS from when it was queued) while translated text keeps arriving", () => {
+  const a = createAssembler();
+  assert.equal(m.SAID_QUEUE_MS, 3000);
+  push(a, cap("途中の翻訳、"), 0);
+  push(a, say("質問です。", { resultId: "q1", boundary: true }), 100);
+  push(a, cap("まだ途中、"), 1500);
+  push(a, cap("さらに途中、"), 3000); // the sentence is still open
+  a.tick(3099);
+  assert.deepEqual(lines(a, 3099), ["途中の翻訳、まだ途中、さらに途中、"], "2.999 s after it was queued");
+  a.tick(3100);
+  assert.deepEqual(lines(a, 3100), ["途中の翻訳、まだ途中、さらに途中、", Q + "質問です。"]);
+});
+test("queue: released when the area has had no new translated text for the hold time", () => {
+  const a = createAssembler();
+  push(a, cap("途中の翻訳、"), 0);
+  push(a, say("質問です。", { resultId: "q1", boundary: true }), 1000);
+  a.tick(2999);
+  assert.deepEqual(lines(a, 2999), ["途中の翻訳、"]);
+  a.tick(3000); // 3.0 s since the last translated text (queued only 2.0 s ago)
+  assert.deepEqual(lines(a, 3000), ["途中の翻訳、", Q + "質問です。"]);
+});
+test("queue: a line arriving after a long translation silence is placed at once", () => {
+  const a = createAssembler();
+  push(a, cap("途中の翻訳、"), 0);
+  push(a, say("質問です。", { resultId: "q1", boundary: true }), 3500);
+  assert.deepEqual(lines(a, 3500), ["途中の翻訳、", Q + "質問です。"]);
+});
+test("queue: two questions keep their order (FIFO), and release together after the sentence", () => {
+  const a = createAssembler();
+  push(a, cap("答えの前半、"), 0);
+  push(a, say("一つ目の質問です。", { resultId: "q1", boundary: true }), 100);
+  push(a, say("二つ目の質問です。", { resultId: "q2", boundary: true }), 200);
+  assert.deepEqual(lines(a, 200), ["答えの前半、"]);
+  push(a, cap("答えの後半です。"), 1000);
+  assert.deepEqual(lines(a, 1000), ["答えの前半、答えの後半です。", Q + "一つ目の質問です。", Q + "二つ目の質問です。"]);
+});
+test("queue: a timeout releases the lines up to the expired one, in order; a later one keeps waiting", () => {
+  const a = createAssembler();
+  push(a, cap("答えの前半、"), 0);
+  push(a, cap("さらに、"), 2000);
+  push(a, say("一つ目です。", { resultId: "q1", boundary: true }), 2100);
+  push(a, say("二つ目です。", { resultId: "q2", boundary: true }), 4000);
+  a.tick(5100); // q1 queued 3.0 s ago; q2 only 1.1 s ago; translation text 3.1 s ago -> idle releases all
+  assert.deepEqual(lines(a, 5100), ["答えの前半、さらに、", Q + "一つ目です。", Q + "二つ目です。"]);
+  const b = createAssembler();
+  push(b, cap("答えの前半、"), 0);
+  push(b, say("一つ目です。", { resultId: "q1", boundary: true }), 100);
+  push(b, cap("さらに、"), 2000);
+  push(b, say("二つ目です。", { resultId: "q2", boundary: true }), 2900);
+  b.tick(3100); // q1 is 3.0 s old; the translation is 1.1 s old; q2 stays queued
+  assert.deepEqual(lines(b, 3100), ["答えの前半、さらに、", Q + "一つ目です。"]);
+  b.tick(5000); // q2 is 2.1 s old, translation text 3.0 s ago -> idle
+  assert.deepEqual(lines(b, 5000), ["答えの前半、さらに、", Q + "一つ目です。", Q + "二つ目です。"]);
+});
+test("queue: a retract removes a queued line (and only that one)", () => {
+  const a = createAssembler();
+  push(a, cap("答えの前半、"), 0);
+  push(a, say("誤認識です。", { resultId: "flip", boundary: true }), 100);
+  push(a, say("本当の質問です。", { resultId: "q2", boundary: true }), 200);
+  push(a, unsay("flip"), 300);
+  push(a, cap("答えの後半です。"), 1000);
+  assert.deepEqual(lines(a, 1000), ["答えの前半、答えの後半です。", Q + "本当の質問です。"]);
+});
+test("queue: no queue when the newest translated line is closed, or there is none", () => {
+  const a = createAssembler({ maxLines: 20 });
+  push(a, say("最初の質問です。", { resultId: "q0", boundary: true }), 0);
+  assert.deepEqual(lines(a, 0), [Q + "最初の質問です。"], "no translation yet");
+  push(a, cap("答えです。"), 100);
+  push(a, say("次の質問ですか？", { resultId: "q1", boundary: true }), 200);
+  assert.deepEqual(lines(a, 200), [Q + "最初の質問です。", "答えです。", Q + "次の質問ですか？"]);
+  push(a, cap("答えは「はい。」"), 300); // closing bracket after the sentence end: closed
+  push(a, say("別の質問です。", { resultId: "q2", boundary: true }), 400);
+  assert.equal(lines(a, 400).length, 5, "placed at once");
+  push(a, cap("開いた翻訳、"), 500);
+  push(a, say("三つ目の質問です。", { resultId: "q3", boundary: true }), 600);
+  assert.deepEqual(lines(a, 600).slice(-1), ["開いた翻訳、"], "an open translated line queues it");
+});
+test("queue: translation lines are never held or reordered", () => {
+  const a = createAssembler();
+  push(a, cap("前半、"), 0);
+  push(a, say("質問です。", { resultId: "q1", boundary: true }), 10);
+  push(a, cap("中間、"), 20);
+  assert.deepEqual(lines(a, 20), ["前半、中間、"], "shown at once");
+  push(a, cap("終わりです。"), 30);
+  push(a, cap("次の文です。"), 40);
+  assert.deepEqual(lines(a, 40), ["前半、中間、終わりです。", Q + "質問です。", "次の文です。"]);
+});
+test("queue: the screenshot sequence gives the translated answer whole, then the question", () => {
+  const a = createAssembler();
+  push(a, cap("視聴者には低い解像度が見えますが、"), 61000);
+  push(a, say("最後に、日本語の字幕には対応していますか。", { resultId: "q1", boundary: true }), 63000);
+  push(a, cap("しかし、流れは止まりません。"), 64500);
+  assert.deepEqual(lines(a, 64500), ["視聴者には低い解像度が見えますが、しかし、流れは止まりません。", Q + "最後に、日本語の字幕には対応していますか。"]);
+});
+test("queue: ?source=off and the English area are unaffected; showSpeech=false ignores as-said lines", () => {
+  const e = createSourceAssembler();
+  push(e, JSON.stringify({ v: 1, type: "source", op: "append", resultId: "r1", channel: "en", text: "Hello", boundary: false }), 0);
+  assert.equal(e.model(0).length, 1);
+  const a = createAssembler({}, false);
+  push(a, cap("途中、"), 0);
+  assert.equal(push(a, say("質問です。", { boundary: true }), 10), false);
+  a.tick(10000);
+  assert.equal(a.model(10000).length <= 1, true);
 });

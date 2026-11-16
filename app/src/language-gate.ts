@@ -54,9 +54,14 @@ export interface LanguageGateOptions {
 // Optional observer of Japanese speech (live captions, shown as said). Receives only STABLE words of results
 // that are Japanese and were never forwarded as English; the audio path (Translate, LLM, Polly) never sees them.
 export interface JapaneseSpeechTap {
-  onSpeech(b: { resultId: string; tokens: { content: string; punct: boolean }[]; final: boolean; audioEnd: number }): void;
+  // tokens carry the audio times (stream seconds) of the item when Transcribe gave them.
+  onSpeech(b: { resultId: string; tokens: { content: string; punct: boolean; start?: number; end?: number }[]; final: boolean; audioEnd: number }): void;
   // Words of this result were published and the result turned out not to be Japanese (language flip).
   onRetract(resultId: string): void;
+  // The result is final and has no more words (also called when the final adds nothing new).
+  onResultEnd?(resultId: string): void;
+  // The Transcribe stream ended: whatever the tap still holds must go out.
+  onStreamEnd?(): void;
 }
 // Stable non-punctuation items a Japanese partial needs before its words are shown (Japanese items are short
 // tokens; language flips happen at the start of a result, as for English).
@@ -310,8 +315,11 @@ export class LanguageGate implements ResultSink {
     let upto = n;
     // A possible filler at the end of the stable prefix is held back until the next item shows what follows it.
     if (!final && upto > first && !isPunctItem(its[upto - 1]) && fillers.some((p) => wordsOf(p) === (its[upto - 1].Content ?? "").trim())) upto--;
-    if (upto <= first) return;
-    const tokens: { content: string; punct: boolean }[] = [];
+    if (upto <= first) {
+      if (final) this.endJapanese(id);
+      return;
+    }
+    const tokens: { content: string; punct: boolean; start?: number; end?: number }[] = [];
     let audioEnd = 0;
     for (let i = first; i < upto; i++) {
       const it = its[i];
@@ -324,12 +332,20 @@ export class LanguageGate implements ResultSink {
         }
         continue;
       }
-      tokens.push({ content: it.Content ?? "", punct: isPunctItem(it) });
+      tokens.push({ content: it.Content ?? "", punct: isPunctItem(it), start: it.StartTime, end: it.EndTime });
     }
     st.jaEnd = Math.max(st.jaEnd, audioEnd);
     this.jaHw = Math.max(this.jaHw, audioEnd);
     try {
       tap.onSpeech({ resultId: id, tokens, final: final && upto >= its.length, audioEnd });
+    } catch (err) {
+      log.warn(`[langfilter] japanese tap error: ${String(err)}`);
+    }
+    if (final) this.endJapanese(id);
+  }
+  private endJapanese(id: string): void {
+    try {
+      this.jaTap?.onResultEnd?.(id);
     } catch (err) {
       log.warn(`[langfilter] japanese tap error: ${String(err)}`);
     }
@@ -370,6 +386,11 @@ export class LanguageGate implements ResultSink {
       }
     }
     this.open.clear();
+    try {
+      this.jaTap?.onStreamEnd?.();
+    } catch (err) {
+      log.warn(`[langfilter] japanese tap error: ${String(err)}`);
+    }
     this.segmenter.endOfStream(reason, now);
   }
 

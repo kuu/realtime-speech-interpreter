@@ -236,6 +236,11 @@ export function createAssembler(opts = {}, showSpeech = true) {
           if (l) l.closed = true;
         }
         key = "said";
+        // A sentence event starts a new line with its own marker. Only the rest of a sentence that the server released
+        // early (it had no end within the hold time) joins the as-said line it continues: same result, line not ended.
+        const last = store.lines[store.lines.length - 1];
+        if (last && last.closed && !last.closedByLength && last.kind === "said" && last.segs.length > 0 &&
+            last.segs[last.segs.length - 1].resultId === ev.resultId && !/[。？！?!]["')」』”]*$/.test(last.text)) last.closed = false;
         store.add(ev.text, ev.resultId, now, ev.boundary, "said");
         return true;
       }

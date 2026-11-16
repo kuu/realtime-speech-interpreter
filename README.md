@@ -126,7 +126,7 @@ After **Listen** is pressed, captions appear below the button: the Japanese line
 source line as it is recognised. Listeners without earphones can mute the phone and read. `ListenerUrl?source=off`
 hides the English line (no visible switch). `-c captions=off` at deploy time turns both lines off and keeps the page
 as it was. Japanese speech (for example audience questions) is shown as said, untranslated, on lines that start
-with `―`; it is never translated or spoken (`-c captionsJapaneseSpeech=off` turns only that off).
+with `―`, one whole sentence at a time; it is never translated or spoken (`-c captionsJapaneseSpeech=off` turns only that off).
 
 ## Costs
 

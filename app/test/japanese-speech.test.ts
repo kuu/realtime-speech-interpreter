@@ -221,18 +221,20 @@ function fakeTransport() {
 }
 const tk = (content: string, punct = false) => ({ content, punct });
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-test("publisher: speech events carry lang ja, asSaid, channel ja, speaker null, stable, seq order, retract after pending words", async () => {
+const tt = (content: string, start: number, end: number, punct = false) => ({ content, punct, start, end });
+test("publisher: speech events carry lang ja, asSaid, channel ja, speaker null, stable, seq order; a sentence goes out whole at its end", async () => {
   const f = fakeTransport();
   const p = new CaptionPublisher(f.transport, true, 20);
   const tap = p.japaneseTapFor(1, () => Date.now())!;
   tap.onSpeech({ resultId: "abcdef0123", tokens: [tk("今日"), tk("は")], final: false, audioEnd: 1 });
+  await wait(30);
+  assert.equal(f.sent.length, 0, "no sentence end yet: held");
   tap.onSpeech({ resultId: "abcdef0123", tokens: [tk("皆さん"), tk("。", true)], final: false, audioEnd: 2 });
-  assert.equal(f.sent.length, 1, "the sentence end flushes immediately");
   tap.onSpeech({ resultId: "abcdef0123", tokens: [tk("次")], final: false, audioEnd: 3 });
-  tap.onRetract("abcdef0123"); // pending words go out first, then the retract
+  tap.onRetract("abcdef0123"); // "次" was never published; the sentence was
   await wait(60);
   const evs = f.sent.map((s) => s.ev);
-  assert.deepEqual(evs.map((e) => [e.type, e.op]), [["speech", "append"], ["speech", "append"], ["speech", "retract"]]);
+  assert.deepEqual(evs.map((e) => [e.type, e.op]), [["speech", "append"], ["speech", "retract"]]);
   assert.equal(evs[0].text, "今日は皆さん。");
   assert.equal(evs[0].boundary, true);
   for (const e of evs) {
@@ -241,9 +243,91 @@ test("publisher: speech events carry lang ja, asSaid, channel ja, speaker null, 
   }
   assert.equal(evs[0].speaker, null);
   assert.equal(evs[0].stable, true);
-  assert.deepEqual(evs.map((e) => e.seq), [1, 2, 3]);
-  assert.equal(p.stats.speech, 3, "packets sent, like source (retract included)");
+  assert.deepEqual(evs.map((e) => e.seq), [1, 2]);
+  assert.equal(p.stats.speech, 2, "packets sent, like source (retract included)");
   assert.equal(p.stats.speechRetracted, 1);
+});
+test("sentence hold: several sentences in one batch are published one event each; the rest waits", async () => {
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20);
+  const tap = p.japaneseTapFor(1, () => Date.now())!;
+  tap.onSpeech({ resultId: "r1xxxxxx", tokens: [tk("はい"), tk("。", true), tk("では"), tk("質問"), tk("です"), tk("か"), tk("？", true), tk("次"), tk("は")], final: false, audioEnd: 3 });
+  await wait(20);
+  assert.deepEqual(f.sent.map((s) => [s.ev.text, s.ev.boundary]), [["はい。", true], ["では質問ですか？", true]]);
+  tap.onSpeech({ resultId: "r1xxxxxx", tokens: [tk("どう"), tk("？", true)], final: true, audioEnd: 4 });
+  await wait(20);
+  assert.deepEqual(f.sent.map((s) => s.ev.text), ["はい。", "では質問ですか？", "次はどう？"]);
+  assert.deepEqual(f.sent.map((s) => s.ev.final), [false, false, true]);
+});
+test("sentence hold: a result that ends mid-sentence waits for the next result to continue it; otherwise the rest goes out after the carry time", async () => {
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20, true, 8000, 50);
+  const tap = p.japaneseTapFor(1, () => Date.now())!;
+  // Transcribe finalises the first result in the middle of the question; the next result continues it
+  tap.onSpeech({ resultId: "a1xxxxxx", tokens: [tk("ライブ"), tk("配信"), tk("は")], final: true, audioEnd: 1 });
+  tap.onResultEnd!("a1xxxxxx");
+  await wait(20);
+  assert.equal(f.sent.length, 0, "held for the continuation");
+  tap.onSpeech({ resultId: "b1xxxxxx", tokens: [tk("どう"), tk("です"), tk("か"), tk("？", true)], final: false, audioEnd: 2 });
+  await wait(20);
+  assert.deepEqual(f.sent.map((s) => [s.ev.text, s.ev.resultId]), [["ライブ配信はどうですか？", "b1xxxxxx"]]);
+  // nothing continues: the rest is published as it is after the carry time
+  tap.onSpeech({ resultId: "c1xxxxxx", tokens: [tk("終わり"), tk("の")], final: true, audioEnd: 3 });
+  tap.onResultEnd!("c1xxxxxx");
+  await wait(20);
+  assert.equal(f.sent.length, 1);
+  await wait(80);
+  assert.deepEqual(f.sent.map((s) => s.ev.text), ["ライブ配信はどうですか？", "終わりの"]);
+  assert.equal(f.sent[1].ev.final, true);
+});
+test("sentence hold: the end of the stream and close() release what is held", async () => {
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20);
+  const tap = p.japaneseTapFor(1, () => Date.now())!;
+  tap.onSpeech({ resultId: "c1xxxxxx", tokens: [tk("途中")], final: false, audioEnd: 3 });
+  tap.onStreamEnd!();
+  tap.onSpeech({ resultId: "d1xxxxxx", tokens: [tk("最後")], final: false, audioEnd: 4 });
+  p.close();
+  await wait(20);
+  assert.deepEqual(f.sent.map((s) => s.ev.text), ["途中", "最後"]);
+});
+test("sentence hold: a sentence with no end is published after the hold time (counted from its first word)", async () => {
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20, true, 60);
+  const tap = p.japaneseTapFor(1, () => Date.now())!;
+  tap.onSpeech({ resultId: "t1xxxxxx", tokens: [tk("モバイル"), tk("回線")], final: false, audioEnd: 1 });
+  await wait(30);
+  tap.onSpeech({ resultId: "t1xxxxxx", tokens: [tk("が"), tk("弱い")], final: false, audioEnd: 2 }); // does not restart the timer
+  assert.equal(f.sent.length, 0);
+  await wait(60);
+  assert.deepEqual(f.sent.map((s) => [s.ev.text, s.ev.boundary]), [["モバイル回線が弱い", false]]);
+  tap.onSpeech({ resultId: "t1xxxxxx", tokens: [tk("会場"), tk("も"), tk("。", true)], final: false, audioEnd: 3 });
+  assert.equal(f.sent.length, 2);
+});
+test("sentence hold: flip before anything was published sends nothing; flip after publishing retracts once", async () => {
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20);
+  const tap = p.japaneseTapFor(1, () => Date.now())!;
+  tap.onSpeech({ resultId: "x1xxxxxx", tokens: [tk("あ"), tk("そう")], final: false, audioEnd: 1 });
+  tap.onRetract("x1xxxxxx");
+  p.close();
+  await wait(20);
+  assert.equal(f.sent.length, 0);
+  tap.onSpeech({ resultId: "y1xxxxxx", tokens: [tk("はい"), tk("。", true), tk("そう")], final: false, audioEnd: 1 });
+  tap.onRetract("y1xxxxxx");
+  tap.onRetract("y1xxxxxx");
+  p.close();
+  await wait(20);
+  assert.deepEqual(f.sent.map((s) => [s.ev.op, s.ev.text]), [["append", "はい。"], ["retract", undefined]]);
+});
+test("sentence hold: the first-word and last-word delays are measured from the audio times", () => {
+  const f = fakeTransport();
+  const p = new CaptionPublisher(f.transport, true, 20);
+  const t0 = Date.now() - 10_000;
+  const tap = p.japaneseTapFor(1, () => t0)!;
+  tap.onSpeech({ resultId: "z1xxxxxx", tokens: [tt("質問", 2, 3), tt("です", 3, 4), tt("。", 4, 4.2, true)], final: false, audioEnd: 4.2 });
+  assert.equal(p.stats.speechLagN, 1);
+  assert.ok(Math.abs(p.stats.speechLagSum - 5800) < 300, String(p.stats.speechLagSum)); // 10 s - 4.2 s from the last word
 });
 test("publisher: English and Japanese buffers never mix (a switch flushes)", async () => {
   const f = fakeTransport();
@@ -252,7 +336,7 @@ test("publisher: English and Japanese buffers never mix (a switch flushes)", asy
   const ja = p.japaneseTapFor(1, () => Date.now())!;
   en.onWords({ resultId: "e1111111", tokens: [{ content: "hello", punct: false, filler: false }], audioStart: 0, audioEnd: 1, now: 0 });
   ja.onSpeech({ resultId: "j1111111", tokens: [tk("質問")], final: false, audioEnd: 2 });
-  p.close();
+  p.close(); // held Japanese words are released at shutdown
   await wait(20);
   assert.deepEqual(f.sent.map((s) => [s.ev.type, s.ev.text]), [["source", "hello"], ["speech", "質問"]]);
 });
@@ -314,4 +398,33 @@ test("audio path: Translate/LLM and Polly see only the English text; Japanese sp
   assert.ok(translated.every((t) => /[A-Za-z]/.test(t)));
   const speech = sink.data.filter((d) => d.ev.type === "speech").map((d) => d.ev.text).join("");
   assert.equal(speech, "これは日本語の質問ですか。");
+});
+test("end to end: a translation line between the batches of a question does not split it (one as-said line)", async () => {
+  const f = fakeTransport();
+  const pub = new CaptionPublisher(f.transport, true, 5);
+  const seg = new Segmenter(MERGE, () => {});
+  const gate = new LanguageGate(GATE, seg, () => Date.now(), pub.japaneseTapFor(1, () => Date.now()));
+  const asm: any = (await import(new URL("../web/captions.js", import.meta.url).href)).createAssembler();
+  const parse: any = (await import(new URL("../web/captions.js", import.meta.url).href)).parseEvent;
+  let fed = 0;
+  const feed = async (now: number) => {
+    await wait(10);
+    for (; fed < f.sent.length; fed++) asm.push(parse(JSON.stringify(f.sent[fed].ev)), now);
+  };
+  quiet(() => {
+    gate.onResult(partial("q9", "ja-JP", "モバイル 回線 が 弱い 会場", 5), 0); // stable words, no sentence end
+  });
+  await feed(0);
+  assert.equal(f.sent.length, 0, "held");
+  pub.sendCaption({ session: 1, chunkSeq: 1, text: "はい、可能です。", sourceText: "Yes.", startAt: Date.now(), durationMs: 1000 }); // voice-synced translation arrives
+  await feed(100);
+  quiet(() => {
+    gate.onResult(partial("q9", "ja-JP", "モバイル 回線 が 弱い 会場 も 安定 して 視聴 できます か ？", 12), 200);
+    gate.onResult(final("q9", "ja-JP", "モバイル 回線 が 弱い 会場 も 安定 して 視聴 できます か ？"), 300);
+  });
+  await feed(300);
+  const said = asm.model(300).filter((l: any) => l.said);
+  assert.deepEqual(said.map((l: any) => l.text), ["モバイル回線が弱い会場も安定して視聴できますか？"]);
+  assert.deepEqual(asm.model(300).map((l: any) => l.said), [false, true]);
+  assert.equal(f.sent.filter((s) => s.ev.type === "speech").length, 1);
 });

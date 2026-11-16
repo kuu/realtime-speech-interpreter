@@ -26,10 +26,11 @@ export interface CaptionTransport {
 
 const SENTENCE_END = new Set([".", "?", "!"]);
 export const SOURCE_FLUSH_MS = 250;
+export const JA_HOLD_MAX_MS = 8000;
+export const JA_CARRY_MS = 2000;
 
 interface Buffered {
-  kind: "source" | "speech"; // English source words | Japanese speech as said
-  final: boolean; // speech: the batch ends its result
+  kind: "source";
   session: number;
   resultId: string;
   text: string;
@@ -44,6 +45,7 @@ export class CaptionPublisher {
   private speechN = 0;
   private buf: Buffered | null = null;
   private timer: NodeJS.Timeout | null = null;
+  private readonly holds = new Set<() => void>(); // one per Japanese tap: publishes what it still holds
   private lastWarnAt = Number.NEGATIVE_INFINITY;
   readonly stats = {
     caption: 0, source: 0, retracted: 0, failed: 0, lagSum: 0, lagMax: 0, lagN: 0,
@@ -56,6 +58,10 @@ export class CaptionPublisher {
     private readonly flushMs = SOURCE_FLUSH_MS,
     // CAPTIONS_JA_SPEECH: also publish Japanese speech as said (language-gate tap). false = no such events at all.
     readonly japaneseSpeech = true,
+    // Longest a Japanese sentence is held for its end (counted from its first held word).
+    private readonly jaHoldMs = JA_HOLD_MAX_MS,
+    // How long the unfinished rest of a sentence waits after its result ended, for the next result to continue it.
+    private readonly jaCarryMs = JA_CARRY_MS,
   ) {}
 
   // True when events will actually be published (enabled and the sink has a data channel).
@@ -105,56 +111,125 @@ export class CaptionPublisher {
     };
   }
 
-  // Tap for one LanguageGate: Japanese speech shown as said. undefined (nothing to wire) when captions are off,
-  // there is no data channel, or CAPTIONS_JA_SPEECH=off. Words are already stable and filler-filtered.
+  // Tap for one LanguageGate: Japanese speech shown as said, one whole sentence per event. undefined (nothing to wire)
+  // when captions are off, there is no data channel, or CAPTIONS_JA_SPEECH=off. Words are already stable and
+  // filler-filtered. They are held until a sentence end (。？！?!), the end of their result, the end of the stream, or
+  // jaHoldMs after the first held word; so a translation line that arrives in between cannot cut a sentence in two.
   japaneseTapFor(session: number, t0: () => number): JapaneseSpeechTap | undefined {
     if (!this.active || !this.japaneseSpeech) return undefined;
+    interface Held { resultId: string; text: string; firstBase: number; lastEnd: number; timer: NodeJS.Timeout; ended: boolean; grace: NodeJS.Timeout | null }
+    let held: Held | null = null;
+    const published = new Set<string>(); // results with words on the wire (a retract is owed if they flip)
+    const emit = (resultId: string, text: string, boundary: boolean, final: boolean, firstBase: number, lastEnd: number): void => {
+      if (text === "") return;
+      this.flush(); // English words buffered earlier go out first
+      const now = Date.now();
+      published.add(resultId);
+      this.speechSentence(session, resultId, text, boundary, final, lastEnd, now - (t0() + lastEnd * 1000), now - firstBase);
+    };
+    const release = (final: boolean): void => {
+      const h = held;
+      if (!h) return;
+      held = null;
+      clearTimeout(h.timer);
+      if (h.grace) clearTimeout(h.grace);
+      emit(h.resultId, h.text, /[。？！?!]["')」』”]*$/.test(h.text), final, h.firstBase, h.lastEnd);
+    };
+    // The result ended without a sentence end: Transcribe often finalises a result in the middle of a sentence and the
+    // next result continues it, so the rest is kept for jaCarryMs before it is published as it is.
+    const endResult = (): void => {
+      const h = held;
+      if (!h || h.ended) return;
+      h.ended = true;
+      h.grace = setTimeout(() => release(true), this.jaCarryMs);
+      h.grace.unref?.();
+    };
+    this.holds.add(() => release(false));
     return {
       onSpeech: (b) => {
-        let text = "";
-        let boundary = false;
-        for (const t of b.tokens) {
-          text += t.content;
-          if (t.punct) boundary = /[。？！?!]/.test(t.content);
-          else boundary = false;
+        const id = b.resultId.slice(0, 8);
+        if (held && held.resultId !== id) {
+          if (!held.ended) release(false); // another result began while this one is still open: do not mix them
+          else {
+            // the next result continues the unfinished sentence of the one that just ended
+            if (held.grace) clearTimeout(held.grace);
+            held.grace = null;
+            held.ended = false;
+            held.resultId = id;
+          }
         }
-        if (text === "") return;
-        this.appendBuffered("speech", session, b.resultId.slice(0, 8), text, boundary, b.audioEnd, t0() + b.audioEnd * 1000, b.final);
+        let n = 0;
+        for (const t of b.tokens) {
+          n++;
+          if (!held) {
+            const start = typeof t.start === "number" ? t0() + t.start * 1000 : Date.now();
+            const timer = setTimeout(() => release(false), this.jaHoldMs);
+            timer.unref?.();
+            held = { resultId: id, text: "", firstBase: start, lastEnd: b.audioEnd, timer, ended: false, grace: null };
+          }
+          held.text += t.content;
+          if (typeof t.end === "number") held.lastEnd = t.end;
+          if (t.punct && /[。？！?!]/.test(t.content)) {
+            // the sentence is complete: publish it whole
+            release(n === b.tokens.length && b.final);
+          }
+        }
+        if (b.final) endResult();
+      },
+      onResultEnd: (resultId) => {
+        if (held && held.resultId === resultId.slice(0, 8)) endResult();
+        published.delete(resultId.slice(0, 8));
+      },
+      onStreamEnd: () => {
+        release(false);
+        published.clear();
       },
       onRetract: (resultId) => {
+        const id = resultId.slice(0, 8);
+        if (held && held.resultId === id) {
+          clearTimeout(held.timer);
+          if (held.grace) clearTimeout(held.grace);
+          held = null; // never published: simply dropped
+        }
+        if (!published.delete(id)) return;
         this.flush();
         this.stats.speechRetracted++;
-        this.send(buildSpeechRetract({ session, seq: ++this.seq, resultId: resultId.slice(0, 8) }), "speech");
+        this.send(buildSpeechRetract({ session, seq: ++this.seq, resultId: id }), "speech");
       },
     };
   }
+  private speechSentence(session: number, resultId: string, text: string, boundary: boolean, final: boolean, audioEnd: number, lagLast: number, lagFirst: number): void {
+    const seq = ++this.seq;
+    this.stats.speechLagSum += lagLast;
+    this.stats.speechLagN++;
+    this.stats.speechLagMax = Math.max(this.stats.speechLagMax, lagLast);
+    log.debug(`[speech] seq=${seq} resultId=${resultId} audioEnd=${audioEnd.toFixed(2)} lagLastMs=${Math.round(lagLast)} lagFirstMs=${Math.round(lagFirst)} final=${final} text="${text}"`);
+    this.send(buildSpeechAppend({ session, n: ++this.speechN, seq, resultId, text, boundary, final, audioEnd }), "speech");
+  }
   private appendSource(session: number, resultId: string, text: string, boundary: boolean, audioEnd: number, lagBase: number): void {
-    this.appendBuffered("source", session, resultId, text, boundary, audioEnd, lagBase, false);
+    this.appendBuffered("source", session, resultId, text, boundary, audioEnd, lagBase);
   }
   private appendBuffered(
-    kind: "source" | "speech",
+    kind: "source",
     session: number,
     resultId: string,
     text: string,
     boundary: boolean,
     audioEnd: number,
     lagBase: number,
-    final: boolean,
   ): void {
     const cur = this.buf;
     if (cur && (cur.kind !== kind || cur.session !== session || cur.resultId !== resultId)) this.flush();
     if (this.buf) {
       const b = this.buf;
-      b.text += (kind === "speech" || /^[.,?!;:]/.test(text) ? "" : " ") + text;
-      // source: any sentence end in the batch; speech: the batch's last token decides (it closes the line)
-      b.boundary = kind === "speech" ? boundary : b.boundary || boundary;
-      b.final = b.final || final;
+      b.text += (/^[.,?!;:]/.test(text) ? "" : " ") + text;
+      b.boundary = b.boundary || boundary; // any sentence end in the batch
       b.audioEnd = audioEnd;
       b.lagBase = lagBase;
     } else {
-      this.buf = { kind, final, session, resultId, text, boundary, audioEnd, lagBase };
+      this.buf = { kind, session, resultId, text, boundary, audioEnd, lagBase };
     }
-    if (boundary || final) {
+    if (boundary) {
       this.flush();
     } else if (!this.timer) {
       this.timer = setTimeout(() => this.flush(), this.flushMs);
@@ -179,26 +254,6 @@ export class CaptionPublisher {
     this.buf = null;
     const seq = ++this.seq;
     const lag = Date.now() - b.lagBase;
-    if (b.kind === "speech") {
-      this.stats.speechLagSum += lag;
-      this.stats.speechLagN++;
-      this.stats.speechLagMax = Math.max(this.stats.speechLagMax, lag);
-      log.debug(`[speech] seq=${seq} resultId=${b.resultId} audioEnd=${b.audioEnd.toFixed(2)} lagMs=${Math.round(lag)} final=${b.final} text="${b.text}"`);
-      this.send(
-        buildSpeechAppend({
-          session: b.session,
-          n: ++this.speechN,
-          seq,
-          resultId: b.resultId,
-          text: b.text,
-          boundary: b.boundary,
-          final: b.final,
-          audioEnd: b.audioEnd,
-        }),
-        "speech",
-      );
-      return;
-    }
     this.stats.lagSum += lag;
     this.stats.lagN++;
     this.stats.lagMax = Math.max(this.stats.lagMax, lag);
@@ -218,6 +273,7 @@ export class CaptionPublisher {
   }
   // Flush and stop timers (shutdown).
   close(): void {
+    for (const release of this.holds) release();
     this.flush();
   }
 

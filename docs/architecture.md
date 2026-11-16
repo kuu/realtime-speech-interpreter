@@ -109,8 +109,8 @@ the page without captions: it does not connect to LiveKit. There is no toggle an
 
 - **Japanese** (primary, larger): the Japanese translation of the English speech, shown when the chunk's Japanese
   audio starts, and Japanese speech (for example audience questions) shown **as said**: untranslated, on its own
-  line that starts with `― ` (full-width dash U+2015 and a space) in a subtle blue. Both are interleaved in the order
-  they are shown. As-said text is never translated and never spoken: the audio is unchanged.
+  line that starts with `― ` (full-width dash U+2015 and a space) in a subtle blue, one whole sentence at a time (a
+  question is never cut in two by a translation line). Both are interleaved in the order they are shown. As-said text is never translated and never spoken: the audio is unchanged.
 - **English source** (secondary, smaller, `#555` on white, contrast 7.5:1): shown as soon as the words are recognised,
   several seconds before the Japanese. `?source=off` in the page URL hides it. It is a URL option, not a setting.
 
@@ -157,7 +157,9 @@ One versioned contract with three event types. The builders are in `app/src/capt
 unknown `type`. The new page ignores a `speech` event unless `asSaid` is `true` and `channel` is `ja`. `speech`
 fields: `asSaid` (always `true`; the browser adds the display-only `― ` marker, it is not part of `text`), `final`
 (the batch ends the result), `boundary` (the batch ends a sentence), `speaker` (`null` until #8), `stable` (always
-`true`), `op: "retract"` as for `source`.
+`true`), `op: "retract"` as for `source`. Each `speech` append is one complete sentence (it ends with 。？！ and has
+`boundary: true`), except the rest of a sentence that had no end within the hold time or at the end of the stream
+(`boundary: false`); the page shows each sentence on its own line.
 
 Changes are additive only: new fields, new `type` or `channel` values. Consumers must ignore unknown fields. A change
 that breaks this needs `v: 2`.
@@ -205,13 +207,19 @@ so Translate, the LLM and Polly never see them. A result tagged Japanese whose w
 (English heard as Japanese for a moment) is not shown. Japanese fillers (`JA_FILLER_PATTERNS`: ええと, あの, …) are
 hidden only where it is safe: before 、 or 。, at the end of a result, and `つまり、` only at a sentence start; a
 possible filler at the end of the stable words waits for the next word, so `あの人` keeps its demonstrative. The
-publisher sends batches like the English words (250 ms coalescing, sentence end or final flushes at once).
-If a result flips to English after its Japanese was published, the app sends `speech` `retract` and the page removes
+publisher holds these words and sends one `speech` event per sentence: at 。？！, or the rest of an unfinished
+sentence 2 s after its result ended without a continuation (Transcribe often ends a result in the middle of a
+sentence; the next result then continues it, and both parts go out as one sentence), at the end of the stream, or 8 s
+after the first held word (`JA_HOLD_MAX_MS`, `JA_CARRY_MS` in `caption-publisher.ts`). A sentence therefore appears
+whole, which cannot happen while a translation line is shown in the middle of it. Held words of a result that
+flips to English are discarded. If a result flips to English after its Japanese was published, the app sends `speech` `retract` and the page removes
 those words (no duplicate with the translation that follows). A result already forwarded as English is never shown as
-Japanese. Measured on `qa-bilingual` (local): a batch left the app a median 2.4 s (p90 3.3 s) after its last word; the
-last words of a question 2.1-3.1 s after the speaker stopped (the Japanese stable-word delay of Transcribe).
+Japanese. Measured on `qa-bilingual` (local): a sentence left the app a median 2.6 s (p90 3.7 s, n=6) after its last
+word was spoken, and a median 6.2 s after its first word (the sentence itself lasts that long). In a real Q&A slice
+with long, unpunctuated Japanese the median from the last word was 4.2 s (p90 7.9 s, n=13): most sentences there wait
+for the hold time.
 **Order.** Lines appear in the order they are shown. As-said text has no audio to wait for and appears about 2-3 s
-after the words, while the Japanese translation of English speech appears with its voice, several seconds after the
+after the last word of its sentence, while the Japanese translation of English speech appears with its voice, several seconds after the
 English was spoken. A question that follows an English answer can therefore appear between two translated lines of that
 answer; a change of kind always starts a new line, so the two are never mixed in one line. Speaker labels with #8
 will make this easier to read.
@@ -220,8 +228,10 @@ will make this easier to read.
 `app/web/captions.js` is a small pure module (no DOM access, unit-tested in `app/test/captions-assembler.test.ts`):
 
 - Japanese: chunks of one sentence merge into one line until `。？！`, 60 characters, or 6 s without a new chunk.
-  A line fades out 12 s after its last update. As-said words (`speech` events) merge the same way, but a change
+  A line fades out 12 s after its last update. Each as-said sentence (`speech` event) starts a new line with its marker; a change
   between translated and as-said text always starts a new line, and a retract removes the words of that result.
+  Only the rest of a sentence released early (no end within the hold time) joins the as-said line it continues, when
+  no other line came after it.
   As-said lines start with `― ` and use `#1a4a8a` (8.8:1 on white; `#4a6585`, 6.0:1, when older). The marker carries
   the meaning, the colour is a second cue. A line that wraps at the maximum length continues the same utterance
   and does not repeat the `― `.

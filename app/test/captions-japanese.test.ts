@@ -169,3 +169,29 @@ test("translated line after a wrapped as-said line is not a continuation", () =>
   push(a, cap("翻訳です。"), 10);
   assert.deepEqual(a.model(10).map((l: any) => l.shown), ["\u2015 あいうえおかきくけこ", "翻訳です。"]);
 });
+test("as-said: a translation line arriving while a question is held does not split it (whole sentence = one line)", () => {
+  const a = createAssembler();
+  // server order: the translation of the previous answer is played, then the whole question is published
+  push(a, cap("はい、可能です。"), 0);
+  push(a, say("モバイル回線が弱い会場も安定して視聴できますか？", { resultId: "q1", boundary: true }), 100);
+  const m = a.model(100);
+  assert.deepEqual(m.map((l: any) => l.shown), ["はい、可能です。", "\u2015 モバイル回線が弱い会場も安定して視聴できますか？"]);
+  push(a, cap("次の翻訳です。"), 200);
+  assert.equal(a.model(200).filter((l: any) => l.said).length, 1);
+});
+test("as-said: each sentence event is a new line with its marker; the rest of a sentence released early joins its line", () => {
+  const a = createAssembler();
+  push(a, say("はい。", { resultId: "q1", boundary: true }), 0);
+  push(a, say("では質問です。", { resultId: "q1", boundary: true }), 10);
+  assert.deepEqual(a.model(10).map((l: any) => l.shown), ["\u2015 はい。", "\u2015 では質問です。"]);
+  push(a, say("モバイル回線が弱い会場", { resultId: "q2" }), 20); // released by the hold time, no sentence end
+  a.tick(7000); // the quiet gap would have closed the line
+  push(a, say("も安定して視聴できますか？", { resultId: "q2", boundary: true }), 7100);
+  assert.deepEqual(a.model(7100).map((l: any) => l.shown).slice(2), ["\u2015 モバイル回線が弱い会場も安定して視聴できますか？"]);
+  // but not after a translation line, and not for another result
+  push(a, say("途中", { resultId: "q3" }), 7200);
+  push(a, cap("翻訳です。"), 7300);
+  push(a, say("の続き。", { resultId: "q3", boundary: true }), 7400);
+  const t = a.model(7400).map((l: any) => l.shown);
+  assert.deepEqual(t.slice(-3), ["\u2015 途中", "翻訳です。", "\u2015 の続き。"]);
+});

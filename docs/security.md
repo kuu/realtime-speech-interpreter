@@ -69,7 +69,7 @@ during the build.
 - SRT stays the primary input. One input is active per session, never two.
 - Supported: Chrome and Edge, desktop (Windows and Mac). Safari and Firefox are unsupported until tested.
 
-**Proposed narrowing, owner to confirm (question 13):** this design adds mobile browsers to the unsupported list. It
+**Proposed narrowing, owner to confirm (question 12):** this design adds mobile browsers to the unsupported list. It
 keeps Edge on Mac in scope and in the 60-minute test matrix. Drop it from the matrix only if the owner says so.
 
 ### Threat model change
@@ -286,8 +286,10 @@ and holds no secret: `https://<distribution>/publish.html`.
   reload asks again.
 - `<meta name="referrer" content="no-referrer">` and `noindex`.
 - **No third-party script.** The listener page imports `livekit-client` from a CDN today. The publisher page must serve a
-  pinned copy of `livekit-client` from its own origin (copied from the npm package at deploy time, the version pinned in
-  the lockfile, and its SHA-256 recorded in a test so a changed file fails the build), because a script that can read the field can steal both the code
+  pinned copy of `livekit-client` from its own origin (proposed: an exact-version `livekit-client` devDependency in
+  `cdk/package.json`, pinned by `cdk/package-lock.json`; the CDK site deployment copies its browser bundle from
+  `cdk/node_modules/livekit-client/dist/` into the site bucket, and its SHA-256 is recorded in a test so a changed file
+  fails the build), because a script that can read the field can steal both the code
   and the microphone. It also gets its own CloudFront response headers policy with a `Content-Security-Policy`
   (`default-src 'self'`, `connect-src 'self'` plus both `https://<livekit-host>` and `wss://<livekit-host>`, because livekit-client also calls
   the signalling host over HTTPS; no inline script; whether `worker-src` or `blob:` is needed for the level meter is
@@ -490,7 +492,7 @@ Automated (run in `cdk/test` and `app/test`, no AWS needed unless said):
 Manual, before the feature is announced:
 
 - **60-minute background test on a Mac and on a Windows laptop**: Chrome and Edge on each (Edge on Mac is the same
-  laptop and one more run; drop it only if the owner decides so, question 13). The
+  laptop and one more run; drop it only if the owner decides so, question 12). The
   speaker opens the page, starts a talk recording, opens a PowerPoint deck full screen on the HDMI output and runs
   it for 60 minutes with the page in the background, on mains power. A reference tone or a counting voice is played
   at the microphone. Pass: the app log shows no gap longer than 1 second in the received audio, no `no publisher`

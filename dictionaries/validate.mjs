@@ -1,22 +1,21 @@
 #!/usr/bin/env node
-// Validate the Transcribe custom vocabulary and the Translate custom terminology
+// Validate the Transcribe custom vocabulary, the Translate custom terminology and the Polly readings
 // before running cdk/scripts/dictionaries.sh. No dependencies; no AWS calls.
 //
-//   node dictionaries/validate.mjs [dir]
+//   node dictionaries/validate.mjs [dir] [readingsFile]
 //
-// Exits 1 and prints every problem found if either file breaks the rules.
+// dir defaults to the resolved dictionary directory (DICTIONARY_DIR, else dictionaries/local, else
+// dictionaries/example). readingsFile defaults to <dir>/polly-readings.csv.
+// Exits 1 and prints every problem found if a file breaks the rules.
 // Rules: summarised from the Transcribe custom-vocabulary table docs and the
 // Translate custom-terminology docs.
 import { readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const dir = process.argv[2] ?? dirname(fileURLToPath(import.meta.url));
-// Polly readings live in the app image build context: app/assets/polly-readings.csv
-const READINGS = process.argv[3] ?? join(dir, "..", "app", "assets", "polly-readings.csv");
-const VOCAB = join(dir, "transcribe-vocabulary.txt");
-const TERMS = join(dir, "translate-terminology.csv");
-
+import { resolveDictionaryDir, settingFromEnv } from "./lib/dir.mjs";
+let VOCAB = "";
+let TERMS = "";
+let READINGS = "";
 const VOCAB_MAX_BYTES = 51200; // Transcribe: 50 KB per vocabulary file
 const VOCAB_MAX_LINE = 256; // Transcribe: max chars per entry
 const TERM_MAX_FIELD_BYTES = 200; // Translate: max source/target term length (bytes)
@@ -275,16 +274,41 @@ function validateReadings() {
   }
   return { entries: terms.size };
 }
-const v = validateVocabulary();
-const t = validateTerminology();
-const r = validateReadings();
-console.log(`transcribe-vocabulary.txt: ${v.entries} entries, ${v.size} bytes`);
-console.log(`translate-terminology.csv: ${t.entries} entries, ${t.size} bytes`);
-console.log(`polly-readings.csv: ${r.entries} entries`);
-for (const w of warnings) console.warn(`WARN ${w}`);
-if (errors.length) {
-  console.error(`\nFAILED: ${errors.length} problem(s)`);
-  for (const e of errors) console.error(`  ${e}`);
-  process.exit(1);
+/** Validate the three generated files in `dir`. Returns { errors, warnings, counts }. */
+export function validateDictionaryDir(dir, readingsFile) {
+  VOCAB = join(dir, "transcribe-vocabulary.txt");
+  TERMS = join(dir, "translate-terminology.csv");
+  READINGS = readingsFile ?? join(dir, "polly-readings.csv");
+  errors.length = 0;
+  warnings.length = 0;
+  const counts = {};
+  for (const [key, fn] of [["vocabulary", validateVocabulary], ["terminology", validateTerminology], ["readings", validateReadings]]) {
+    try {
+      counts[key] = fn();
+    } catch (e) {
+      err(key, 0, `cannot read file: ${e.message}`);
+      counts[key] = { entries: 0, size: 0 };
+    }
+  }
+  return { errors: [...errors], warnings: [...warnings], counts };
 }
-console.log("OK: all files pass validation");
+function main() {
+  let dir = process.argv[2];
+  if (!dir) {
+    const r = resolveDictionaryDir({ setting: settingFromEnv() });
+    dir = r.dir;
+    console.log(`Validating ${dir} (${r.source})`);
+  }
+  const { errors: errs, warnings: warns, counts } = validateDictionaryDir(dir, process.argv[3]);
+  console.log(`transcribe-vocabulary.txt: ${counts.vocabulary.entries} entries, ${counts.vocabulary.size} bytes`);
+  console.log(`translate-terminology.csv: ${counts.terminology.entries} entries, ${counts.terminology.size} bytes`);
+  console.log(`polly-readings.csv: ${counts.readings.entries} entries`);
+  for (const w of warns) console.warn(`WARN ${w}`);
+  if (errs.length) {
+    console.error(`\nFAILED: ${errs.length} problem(s)`);
+    for (const e of errs) console.error(`  ${e}`);
+    process.exit(1);
+  }
+  console.log("OK: all files pass validation");
+}
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();

@@ -18,7 +18,7 @@ import { pollyReadings } from "../src/config.js";
 
 const ASSET = fileURLToPath(new URL("../assets/polly-readings.csv", import.meta.url));
 const VALIDATE = fileURLToPath(new URL("../../dictionaries/validate.mjs", import.meta.url));
-const DICT_DIR = fileURLToPath(new URL("../../dictionaries", import.meta.url));
+const DICT_DIR = fileURLToPath(new URL("../../dictionaries/example", import.meta.url));
 
 const R = createReadings([
   { term: "MediaPackage", reading: "メディアパッケージ" },

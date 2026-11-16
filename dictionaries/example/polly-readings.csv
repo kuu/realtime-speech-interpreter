@@ -1,0 +1,87 @@
+# Polly pronunciation readings: term,reading (UTF-8). Generated from terms.csv by node dictionaries/build.mjs; do not edit by hand.
+# The app wraps each exact, case-sensitive Latin-script term in SSML <sub alias="reading">term</sub> just before Amazon Polly.
+# Reading: katakana, long-vowel mark, spaces, digits only (no " < > &). Longest term wins.
+# Validate: node dictionaries/validate.mjs. Lines starting with # are comments; the header row term,reading comes first.
+term,reading
+AWS Elemental MediaConnect,AWS エレメンタル メディアコネクト
+AWS Elemental MediaConvert,AWS エレメンタル メディアコンバート
+AWS Elemental MediaLive,AWS エレメンタル メディアライブ
+AWS Elemental MediaPackage,AWS エレメンタル メディアパッケージ
+AWS Elemental MediaTailor,AWS エレメンタル メディアテイラー
+AWS Elemental MediaStore,AWS エレメンタル メディアストア
+MediaConnect,メディアコネクト
+MediaConvert,メディアコンバート
+MediaLive,メディアライブ
+MediaPackage,メディアパッケージ
+MediaTailor,メディアテイラー
+MediaStore,メディアストア
+Elemental,エレメンタル
+Link HD,リンク エイチディー
+Elemental Link,エレメンタル リンク
+Elemental Live,エレメンタル ライブ
+Elemental Inference,エレメンタル インファレンス
+MediaLive Anywhere,メディアライブ エニウェア
+MediaPackage v2,メディアパッケージ ブイツー
+MediaPackage v1,メディアパッケージ ブイワン
+AVC,エーブイシー
+HEVC,エイチイーブイシー
+H.264,エイチ にーろくよん
+H.265,エイチ にーろくご
+AV1,エーブイワン
+SRT,エスアールティー
+RIST,リスト
+RTMP,アールティーエムピー
+RTP,アールティーピー
+UDP,ユーディーピー
+Zixi,ジクシー
+HLS,エイチエルエス
+LL-HLS,エルエル エイチエルエス
+DASH,ダッシュ
+MPEG-DASH,エムペグ ダッシュ
+MPEG-TS,エムペグ ティーエス
+MPEG,エムペグ
+CMAF,シーマフ
+DRM,ディーアールエム
+SPEKE,スピーク
+SCTE-35,スカティ さんじゅうご
+SCTE 35,スカティ さんじゅうご
+SCTE-104,スカティ ひゃくよん
+SCTE 104,スカティ ひゃくよん
+SCTE,スカティ
+EBU,イービーユー
+ARIB,アライブ
+SSAI,エスエスエーアイ
+SGAI,エスジーエーアイ
+ABR,エービーアール
+VOD,ブイオーディー
+OTT,オーティーティー
+CDN,シーディーエヌ
+SDI,エスディーアイ
+NDI,エヌディーアイ
+SMPTE,シンプティ
+ST 2110,エスティーニィイチイチゼロ
+ST 2022-7,エスティーニィゼロニィニィダッシュセブン
+HDR,エイチディーアール
+SDR,エスディーアール
+UHD,ユーエイチディー
+4K,フォーケー
+ID3,アイディー スリー
+M3U8,エムスリーユーエイト
+AAC,エーエーシー
+Dolby Vision,ドルビー ビジョン
+Widevine,ワイドバイン
+FairPlay,フェアプレイ
+PlayReady,プレイレディ
+Multiview,マルチビュー
+Multi-view,マルチビュー
+CloudFront,クラウドフロント
+CloudWatch,クラウドウォッチ
+CloudFormation,クラウドフォーメーション
+EventBridge,イベントブリッジ
+Bedrock,ベッドロック
+VPC,ブイピーシー
+EC2,イーシーツー
+SigV4,シグ ブイフォー
+SDK,エスディーケー
+API,エーピーアイ
+SAM,サム

@@ -413,6 +413,20 @@ export const config = {
   //   sleep    = revert: sleep(frameMs) after each frame (drifts ~1 %, +2.5 s after 4 min)
   input: {
     pacing: oneOf("INPUT_PACING", "absolute", ["absolute", "sleep"] as const),
+    // Which live input runs: the SRT listener or the browser microphone page. Exactly one, never both.
+    source: oneOf("INPUT_SOURCE", "srt", ["srt", "browser"] as const),
+  },
+  // Browser microphone input (INPUT_SOURCE=browser). Silence level and seconds are provisional
+  // (to be set after the live measurement).
+  ingest: {
+    room: str("INGEST_ROOM", `${process.env.LIVEKIT_ROOM || "translation"}-ingest`),
+    notAfterParam: str("INGEST_NOT_AFTER_PARAM", ""),
+    sessionGraceSec: safeNum("INGEST_SESSION_GRACE_SEC", 60, 10, 600),
+    silenceDb: safeNum("INGEST_SILENCE_DB", -60, -120, 0),
+    silenceSec: safeNum("INGEST_SILENCE_SEC", 30, 5, 600),
+    maxQueueMs: 500,
+    levelLogSec: 5,
+    notAfterPollSec: 60,
   },
 
   // Playback of synthesized chunks. Chunks play in order and are never cut mid-playback;

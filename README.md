@@ -23,7 +23,7 @@ Details of the diagram: [docs/architecture.md](docs/architecture.md).
 | Round table or fireside chat, several speakers | **Planned** | Needs speaker detection and a different voice per speaker. |
 | Q&A in two directions with two channels | **Planned** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. |
 | Captions on the listener page | **Supported** | After **Listen** is pressed, Japanese captions appear below the button in time with the voice, and the English source as it is recognised; Japanese speech is shown as said with a `―` marker. See below. |
-| Browser microphone as input (`getUserMedia`) | **Planned** | For venues with no audio line out, or no PC to run OBS. |
+| Browser microphone as input (`getUserMedia`) | **Optional** (`-c inputSource=browser`), live tests pending | For venues with no audio line out, or no PC to run OBS. See [security.md](docs/security.md#browser-microphone-input). |
 | Dictionary builder (easier than editing files) | **Idea** | A tool that suggests terms from slides or a transcript. |
 | Voice that follows the speaker | **Idea** | Depends on speaker detection. |
 

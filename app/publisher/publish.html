@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Speaker microphone</title>
+    <link rel="stylesheet" href="./publisher.css" />
+  </head>
+  <body>
+    <h1>Speaker microphone</h1>
+    <p id="intro">Enter the event code you received from the operator, then press Start.</p>
+    <div id="entry">
+      <label for="code">Event code</label>
+      <input id="code" type="password" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+      <button id="start" type="button">Start</button>
+    </div>
+    <p id="state" role="status">Waiting for the code.</p>
+    <div id="live" hidden>
+      <label for="mic">Microphone</label>
+      <select id="mic"></select>
+      <label for="level">Level</label>
+      <meter id="level" min="-80" max="0" value="-80"></meter>
+    </div>
+    <p id="warning" role="alert"></p>
+    <p class="hint">Keep this tab open while you speak. You can start your slides.</p>
+    <script type="module" src="./publisher.js"></script>
+  </body>
+</html>

@@ -442,3 +442,31 @@ aws transcribe delete-vocabulary --vocabulary-name simul-translation --region ap
 aws translate delete-terminology --name simul-translation --region ap-northeast-1
 aws s3 rb s3://simul-translation-dict-<ACCOUNT_ID>-ap-northeast-1 --force --region ap-northeast-1
 ```
+
+## Browser microphone input (optional, off by default)
+
+`-c inputSource=browser` deploys the publisher page (`/publish`), its token endpoint and the event code secret.
+Settings: [configuration.md](../docs/configuration.md#browser-microphone-input). Design and security:
+[security.md](../docs/security.md#browser-microphone-input).
+
+**Off by default is checked.** With no browser setting the synthesized template must equal the one of `origin/main`:
+
+```bash
+cdk/scripts/synth-parity.sh          # optional argument: another base ref
+```
+
+It exports the base ref with `git archive` (the repository is not touched), synthesizes both trees, sorts the JSON keys,
+replaces the 64-hex asset hashes with `<hash>` and compares. It prints the hashes that changed so you can see that only
+the app image moved. `cdk/test/browser-input.test.ts` also checks that `inputSource=srt` equals the default template.
+
+### Operator command
+
+```bash
+node cdk/scripts/publisher-code.mjs --ends-at 2026-11-06T09:00:00Z [--disconnect] [--dry-run]
+```
+
+Generates a new event code, stores it, sets the event end time (UTC, `Z` suffix, in the future) and prints the
+publisher URL and the code once. Running it again rotates the code; a connected publisher stays unless you add
+`--disconnect`. `--dry-run` validates and prints the plan without any AWS call. Env: `AWS_REGION` (default
+`ap-northeast-1`), `STACK_NAME` (default `SimulTranslation`). The code is never an argument and is not written to a
+file or a log. The stack must be deployed with `-c inputSource=browser`.

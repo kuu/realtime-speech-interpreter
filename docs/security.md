@@ -10,6 +10,7 @@ this repository. It is not a security audit. Review it against your own requirem
 | Listener page (CloudFront, HTTPS) | Anyone with the URL | Attendees open it on their phones. | Static files in a private S3 bucket (Origin Access Control), HTTPS only, security response headers. |
 | `/token` (CloudFront to Lambda function URL) | Anyone with the URL | The page needs a token to join the room. | The function URL requires IAM auth, so only CloudFront can call it. The Lambda issues **subscribe-only** tokens. |
 | LiveKit host: TCP 443, TCP 7881, UDP 50000-60000 | Internet | Browsers anywhere must reach signaling and media. | A token is required to join. Port 7880 (plain signaling), 22 and 80 are not open. TLS ends in Caddy (Let's Encrypt). |
+| `/publish` and `/publisher-token` (only with `inputSource=browser`) | Anyone with the URL can open the page; only a holder of the event code gets a publish token | Speakers open the page in a desktop browser and type the code. | Event code in Secrets Manager, constant-time compare, reserved-concurrency throttle, 1 s delay on a wrong code, event end time, publish-only microphone token for one fixed identity in a separate ingest room. See [Browser microphone input](#browser-microphone-input). |
 | SRT ingest: UDP 9000 on the Network Load Balancer | **Venue IP only** | OBS sends the audio here. | Security groups on the load balancer and the task allow only `venueCidr`. SRT passphrase (AES). |
 
 Anyone who has the listener URL can listen. There is no login. Do not publish the URL if the content is not public.
@@ -23,6 +24,9 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
 - Listener tokens expire after `listenerTokenTtlSec` (default 21600 s, 6 hours). A listener must reload the page after
   that. The app's publisher token has its own lifetime (`publisherTokenTtl`, default 6 h).
 - The token endpoint accepts `GET` and `HEAD` only.
+- With `inputSource=browser`, a second function (`cdk/lambda/publisher-token/`) mints the only publishing token for
+  browsers: identity `browser-publisher`, room `<roomName>-ingest`, microphone only, no data, no subscribe. The listener
+  function does not contain or reach that code.
 
 ## Secrets
 
@@ -32,6 +36,9 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
   reads its secret at boot with its instance role. The boot script does not print it. The token Lambda reads it with
   its function role.
 - Nothing in the repository holds a secret. `scripts/check-publishable.mjs` scans for keys and account IDs before a release.
+- With `inputSource=browser` the event code is in its own secret (`PublisherCodeSecret`). Only the publisher function
+  and the operator's own identity can read it; the app task role cannot. The event end time is an SSM String parameter
+  (`/simul-translation/publisher-not-after`) that the operator command writes and the app and the publisher function read.
 - Get the SRT passphrase with the `GetSrtPassphraseCommand` stack output. Treat it like a password and do not paste it
   into chat or tickets. To rotate it, rotate the secret in Secrets Manager, restart the app task (`--force-new-deployment`) and
   update the encoder.
@@ -43,9 +50,539 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
 | App task role | `transcribe:StartStreamTranscription`, `translate:TranslateText`, `polly:SynthesizeSpeech` (these actions have no useful resource scoping). With `translateEngine=llm` also `bedrock:InvokeModel` on the one inference profile and its destination foundation models in `ap-northeast-1` and `ap-northeast-3`, and `translate:GetTerminology` on one terminology. |
 | LiveKit instance role | `AmazonSSMManagedInstanceCore` (shell access through Systems Manager, no SSH), read of the LiveKit secret, write to its log group. IMDSv2 is required. The disk is encrypted. |
 | Token Lambda | Read of the LiveKit secret, write to its log group. |
+| Publisher token Lambda (`inputSource=browser`) | Read of the code secret and the LiveKit secret, `ssm:GetParameter` on the end-time parameter, write to its log group. No wildcard resources. |
+| App task role, additionally with `inputSource=browser` | `ssm:GetParameter` on the end-time parameter only. It cannot read the code secret. |
+| Operator (your own identity) | For `cdk/scripts/publisher-code.mjs`: `cloudformation:DescribeStacks`, `secretsmanager:PutSecretValue` on the code secret, `ssm:PutParameter` on the end-time parameter, and for `--disconnect` `secretsmanager:GetSecretValue` on the LiveKit secret. |
 
 The Fargate task and the LiveKit host sit in public subnets without a NAT gateway. Security groups are the boundary:
 the app accepts SRT and the health check from the load balancer only.
+
+## Browser microphone input
+
+**Status: implemented; live tests pending (see "Live tests after deploy").** Setting names, file names and commands are those of the code.
+It answers the security questions of [issue #10](https://github.com/kuu/realtime-speech-interpreter/issues/10).
+Claims marked **(unverified)** have not been tested yet and are on the live-test list at the end of this section.
+Values marked **provisional** are placeholders until the live measurement.
+
+### Scenario and decisions already made
+
+- Each speaker plugs their own laptop into the room projector over HDMI. The operator asks the speaker to open one URL
+  in a desktop browser during the talk. The speaker then presents PowerPoint full screen; the page keeps
+  capturing the microphone in the background.
+- **One shared event code** for the whole event (not one link per speaker). The URL is short and holds no secret,
+  because it may be shown on the projector. The page has one password-type field. The code is typed there and sent to
+  the token endpoint, which answers with a short-lived publish token only if the code matches.
+- **One publisher at a time, newest wins.** A new publisher disconnects the previous one. The previous speaker does
+  nothing.
+- The code lives in Secrets Manager. The operator runs one command (`cdk/scripts/publisher-code.mjs`) that generates
+  the code, stores it, and sets the **event end time** (UTC). The code stops working at that end time. The operator
+  hands URL and code to speakers in Slack.
+- SRT stays the primary input. One input is active per session, never two (`INPUT_SOURCE=srt|browser`).
+- Supported: popular desktop browsers (Chrome, Edge, Firefox and Safari on Mac, and on Windows where the browser
+  exists). Phone browsers are not supported and nothing in the code detects them.
+
+### Decisions (owner)
+
+The owner answered the open questions of the design. These are decisions, not proposals.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Keep SRT hardware (NLB, Elastic IPs) in `browser` mode | Yes. Switching back is one deploy. |
+| 2 | Is a deploy acceptable to switch `INPUT_SOURCE` during an event | Yes. |
+| 3 | AWS WAF rate rule per IP | No. The reserved-concurrency throttle is the control. |
+| 4 | CloudWatch alarm and SNS topic | No. The operator tails the log. |
+| 5 | Code in page memory | Kept in memory only. Expiry is the **event end time**, configurable by the operator command (`--ends-at`). There is no separate page timer. The 60-second stale-page reconnect bound below stays (an interpretation: it stops a stale tab from kicking the newest speaker). |
+| 6 | `--disconnect` by default | No. It is opt-in. |
+| 7 | Start time as well | No. End time only. |
+| 8 | Audio constraints default | Decide after measuring. `browserAudioProcessing` default `all` is **provisional**. |
+| 9 | Silence threshold and wording | Decide after measuring. `-60` dBFS and `30` s are **provisional**. |
+| 10 | Short URL `/publish` | Yes. |
+| 11 | How the code reaches speakers | Slack. |
+| 12 | Browsers | Popular desktop browsers. No phones. |
+
+### Threat model change
+
+| Today | With browser input |
+|---|---|
+| Only the app publishes audio. Only an SRT sender from `venueCidr` with the passphrase can feed it. | A browser anywhere on the internet can feed the app, if it knows the event code. |
+| The token endpoint can only mint subscribe-only tokens. | A second endpoint can mint a token that publishes audio. It must never be reachable with listener credentials or without the code. |
+| The venue IP allowlist protects the input. | **It does not apply to browsers.** The only gate is the event code. |
+
+What a holder of the code can do: send any audio into the speech pipeline. It is transcribed, translated and spoken to
+all listeners, and shown as captions. They cannot publish raw audio to listeners, cannot send captions, cannot read
+anything. The remaining risk is content injection, bounded by the controls in this section (rotation, removing the
+publisher, the event end time, switching back to SRT).
+
+Assets and boundaries:
+
+| Asset | Who may touch it | Control |
+|---|---|---|
+| Listener room | Listeners (subscribe only), the app (publish) | Unchanged. Listener tokens stay subscribe-only. |
+| Ingest room (new) | One browser publisher, the app (subscribe) | Separate room, see below. Listeners have no token for it. |
+| Event code | Operator, speakers, the publish-token Lambda | Secrets Manager, read only by that Lambda and the operator. |
+| LiveKit API secret | Unchanged | Not used by the browser. The Lambda signs tokens; the browser only receives them. |
+
+### Separate ingest room
+
+The browser publisher joins `<roomName>-ingest`, not the listener room `roomName`. Reasons:
+
+- A listener token names one room (`video.room`). It cannot join the ingest room, so listeners can never subscribe to
+  the speaker's raw microphone track. In one shared room, any listener with `canSubscribe` could.
+- The publisher token names the ingest room only. The code holder cannot join the listener room, so they cannot send
+  data packets there or pose as `publisher-app` (the page accepts captions only from that identity).
+- The app keeps its existing connection to the listener room (`publisher-app`, publish only, unchanged) and adds a
+  second connection to the ingest room (`ingest-app`, subscribe only).
+
+Config validation must reject a `roomName` that makes the two names equal or that collides with an existing room.
+
+### Token grants
+
+All grants are fixed in code. No field of the request chooses a room, identity, grant or lifetime.
+
+| | Listener token (unchanged) | Browser publisher token (new) | App ingest token (new, in the app) |
+|---|---|---|---|
+| Room | `roomName` | `<roomName>-ingest` | `<roomName>-ingest` |
+| Identity | `listener-<random uuid>` | **`browser-publisher`** (fixed) | `ingest-app` (fixed) |
+| `roomJoin` | true | true | true |
+| `canPublish` | **false** | true | false |
+| `canPublishSources` | not set | **`["microphone"]`** | not set |
+| `canPublishData` | false | **false** | false |
+| `canSubscribe` | true | **false** | true |
+| `canUpdateOwnMetadata` | false | false | false |
+| Other grants (`roomAdmin`, `roomCreate`, `roomList`, `roomRecord`, `ingressAdmin`, `hidden`, `recorder`) | not set | not set | not set |
+| Lifetime | `listenerTokenTtlSec` (6 h) | **10 minutes** (`browserInputTokenTtlSec`) | `publisherTokenTtl` |
+| Who mints it | Listener token Lambda | **A separate publish-token Lambda** | The app, with the API secret it already holds |
+
+Notes:
+
+- `canPublishSources` is a LiveKit grant field. Whether the pinned server version (`livekitImage`, v1.13.11)
+  enforces it for a client that tries to publish a camera or screen track **is unverified**; a test must try it.
+- The publish-token Lambda is a **separate function** with its own function URL and CloudFront behavior. The listener
+  Lambda keeps no code that can mint a publishing token, and does not get permission to read the event code secret.
+  Both functions can read the LiveKit API secret (they sign with it), so a code-execution bug in either would be
+  serious. Splitting limits what a bug in the listener path exposes and what a flood on one path does to the other.
+- The 10-minute lifetime covers the join. A token is checked when the participant connects. Whether a connected
+  participant stays connected after the token expires, and whether the client can reconnect with the token the server
+  hands out during the session, **is unverified**. The design does not rely on it: see "Expiry, event end and
+  rotation".
+
+### Endpoint
+
+`POST /publisher-token`, behind the same CloudFront distribution (no new public hostname, no CORS).
+
+- Request: `Content-Type: application/json`, body `{"code":"..."}`, at most 256 bytes. Every request that is not a valid,
+  in-limit JSON body with a matching code (wrong content type, body over 256 bytes, bad JSON, missing field, wrong
+  code) gets `401 {"error":"invalid"}`. The code is in the body, never in the URL or a header, so it does not appear in CloudFront
+  access logs, browser history or referrers.
+- The CloudFront behavior allows `POST`, disables caching, forwards no cookies and no query string.
+- A function URL behind CloudFront OAC needs, for `POST`, the SHA-256 of the body in the `x-amz-content-sha256` header
+  ([AWS documentation](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html)).
+  The page computes it with `crypto.subtle` (available because the page is on HTTPS).
+- The function URL keeps `AWS_IAM`: only CloudFront can call it, as for `/token`.
+- Success: `200 {"token":"...","url":"wss://...","expiresAt":"..."}`. Failure: always the same status and body.
+
+| Case | Status | Body |
+|---|---|---|
+| Wrong code, wrong content type, body over 256 bytes, malformed JSON, missing field | `401` | `{"error":"invalid"}` |
+| After the event end time (checked before the code, so it does not depend on the code) | `403` | `{"error":"not available"}` |
+| Throttled by Lambda | `429` (from the platform) | platform default |
+| Server error (secret unreadable, code too short, end-time parameter missing, unreadable or not valid ISO 8601; fail closed, no token) | `500` | `{"error":"internal error"}` |
+
+The page treats `401` as "wrong code", `403` as "closed", `429` and `5xx` as "try again" with a jittered retry, and
+shows plain text for each. It never reveals more than the server did.
+
+### The event code
+
+- **Format:** 12 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (31 characters, no `0 O 1 I L`), shown in groups of
+  four (`ABCD-EFGH-JKMN`). That is about 59 bits (31^12). The Lambda ignores case, spaces and hyphens when it compares.
+- **Minimum:** the Lambda refuses to use a code shorter than 10 characters (about 50 bits) and returns `500`, so a weak
+  hand-set value fails closed. The rotate command rejects short values too.
+- **Generated, never chosen:** the stack creates the secret with Secrets Manager's generator, using that alphabet and
+  length. The rotate command generates the next one the same way.
+- **Stored** in its own secret (`PublisherCodeSecret`), JSON `{"code":"..."}`. The code is stored in clear because the
+  operator must be able to read it back on the day. Only the publish-token Lambda and the operator's IAM identity can
+  read it. **The app task role cannot read it** (a template assertion checks this). It is not an environment variable
+  and not in the template.
+- **The event end time is not in the secret.** It lives in an SSM String parameter (`/simul-translation/publisher-not-after`,
+  ISO 8601 UTC), which holds no code and may be read by the publish-token Lambda, the app task role and the operator.
+  The Lambda reads it on every attempt, like the secret.
+- The Lambda reads the secret on **every attempt** (no cache), so a rotation takes effect on the next request. At
+  $0.05 per 10,000 calls this is negligible even under attack.
+
+### Brute-force protection
+
+The endpoint is public, so assume someone finds it and tries codes.
+
+1. **Entropy.** 59 bits. At a generous 1,000 attempts per second, exhausting the space takes about 2.5 × 10^7 years (half that on average).
+   The throttle below makes the real rate far lower.
+2. **Throttle.** The publish-token Lambda gets a small **reserved concurrency** (`browserInputConcurrency`,
+   default 5). Excess requests get `429` from the platform. Reserved concurrency is also a cap: this function can never
+   use more than its share, and it cannot starve the listener Lambda. **Rule: `inputSource=browser` refuses to deploy
+   without this throttle.** A new account often has a quota of 10 concurrent executions, and Lambda keeps at least 100
+   unreserved, so the reservation can be refused (**unverified** for current quotas). Then the deploy fails, and the
+   documented fix is to request a Lambda concurrency quota increase in Service Quotas and deploy again. Setting
+   `browserInputConcurrency` to 0 to skip the throttle is not allowed. An AWS WAF rate rule was considered and
+   rejected by the owner (decision 3). The failure delay (item 3) is per invocation, not per client, so the
+   concurrency cap is the only control that bounds the whole internet.
+3. **Failure delay.** A wrong code holds the invocation for about 1 second before it answers. With 5 slots that is at
+   most about 5 wrong attempts per second for the whole internet. A correct code answers at once.
+4. **Generic answers.** One status and one body for every kind of wrong request (table above). No hint about length,
+   prefix, case or format.
+5. **Constant-time comparison.** Hash the normalized input and the stored code with SHA-256, then compare the two
+   32-byte digests with `crypto.timingSafeEqual`. Hashing first makes both inputs the same length, so length does not
+   leak. Do not use `===`.
+6. **Logging without the code.** The function logs the outcome (`ok`, `bad_code`, `closed`, `malformed`), the viewer
+   address, and a timestamp. The address is the leftmost value of `x-forwarded-for`, which the existing origin request
+   policy (`ALL_VIEWER_EXCEPT_HOST_HEADER`) already forwards; the build checks this against the policy actually used for
+   the new behavior, and adds `CloudFront-Viewer-Address` to it if the header is missing. It never logs the body, the submitted code, a prefix or the length,
+   and never prints the stored code. A test feeds a known code through the handler and fails if the string, or a
+   substring of four characters or more, appears in any `console` output. The viewer address is personal data; it
+   follows the log retention (`logRetentionDays`).
+7. **Visibility of guessing.** The `bad_code` outcome lines can be counted in CloudWatch Logs
+   (`aws logs tail /simul-translation/publisher-token --filter-pattern bad_code`). No metric filter or alarm is created (decision 4).
+
+Accepted residual risk: an attacker who saturates the slots with wrong guesses makes real speakers see `429` for as
+long as the flood lasts. That is a denial of service on the browser path only; SRT and listeners are unaffected, and
+the page retries. An optional AWS WAF rate-based rule per IP would help; it adds a monthly cost and is left as an open
+question.
+
+### Configuration validation
+
+The new keys follow the existing pattern: validated in `cdk/lib/config.ts`, covered by `cdk/test/config.test.ts`, and
+each documented in [configuration.md](configuration.md) when built (`docs.test.ts` already fails on an undocumented
+key). Every rule fails at `cdk synth`, never at run time:
+
+- `inputSource`: must be `srt` or `browser`; default `srt`.
+- The end time is **not** a CDK key. It comes from the operator command and lives in an SSM parameter (see below).
+  Until the command has run, the parameter does not exist and the endpoint is closed.
+- `browserInputConcurrency`: integer, at least 1; default 5. `0` is rejected.
+- `browserInputTokenTtlSec`: integer from 60 to 3600; default 600.
+- `browserSessionGraceSec`: integer from 10 to 600; default 60.
+- `browserAudioProcessing`: `all`, `echo` or `none`; default `all` (**provisional**).
+- `browserSilenceDb`: number from -120 to 0; default `-60` (**provisional**).
+- `browserSilenceSec`: integer from 5 to 600; default `30` (**provisional**).
+- `roomName`: must not end in `-ingest`, so `<roomName>-ingest` cannot equal or collide with a configured room name.
+
+### Expiry, event end and rotation
+
+- **Event end.** `notAfter` lives in the SSM String parameter `/simul-translation/publisher-not-after`
+  (`YYYY-MM-DDTHH:MM:SSZ`, UTC). The **operator script creates and updates it**; CDK does not create it, because a
+  CDK-managed parameter would be reset on every deploy and switching `INPUT_SOURCE` is a deploy. CDK grants read
+  access and prints the name as an output (`PublisherNotAfterParameter`). A missing parameter means closed: the
+  endpoint answers `500` and the app refuses the publisher. After `notAfter` the endpoint answers `403` whatever
+  the code. Both the Lambda and the app enforce the end time.
+- **Already connected publisher at the end time.** The app reads the end-time parameter at start and **polls it every
+  60 seconds**, re-arming its timer when the value changes (so `--ends-at` takes effect within a minute). At
+  `notAfter` it removes `browser-publisher` from the ingest room (RoomService `RemoveParticipant`, using the API
+  credentials it already has) and keeps the ingest closed: a token minted up to 10 minutes
+  before `notAfter` can still join afterwards, so the app re-checks on every `ParticipantConnected` and, after
+  `notAfter`, removes any `browser-publisher` it sees and never subscribes to it. Without this a session opened just before the end could run
+  on. If the parameter cannot be read, the app keeps the last known value and logs a warning.
+- **Rotation.** One command, run by the operator from the repository root with their own AWS identity:
+
+  ```bash
+  node cdk/scripts/publisher-code.mjs --ends-at 2026-11-20T09:00:00Z [--disconnect] [--dry-run]
+  ```
+
+  `--ends-at` is required: a UTC time with a `Z` suffix and no offset or fraction, a real calendar time, in the
+  future. The script generates a new code (12 characters, `crypto.randomInt`), writes it to the secret with
+  `put-secret-value` (JSON on stdin, so the code is never in argv, a file or the environment), writes the end time to
+  the parameter, and prints the publisher URL, the code and the end time **once** to the terminal. It writes no log
+  line or file that contains the code. Running it again rotates the code. `--disconnect` also removes the current
+  `browser-publisher` from the ingest room. `--dry-run` validates the arguments and makes no AWS call. The script
+  never takes the code as an argument. Region and stack name follow `dictionaries.sh` (`AWS_REGION`, `STACK_NAME`).
+- **Effect.** The old code stops working on the next request. A publisher that is already connected is **not**
+  dropped by rotation alone (the token was valid when it joined). Use `--disconnect` when the old code leaked. A
+  speaker whose network breaks and who must rejoin needs the new code after a rotation.
+- **When to rotate:** after the code was visible (a photo of a card, a screen share), after any suspicious
+  `bad_code` burst, after an unexpected publisher, and between events.
+- **Deleting the secret value after the event** is not required: the code is dead after `notAfter`. A new event
+  rotates it again.
+
+### The publisher page
+
+A new static page, `app/publisher/publish.html` (script `publisher.js`), served from the same bucket at the bucket
+root. The URL is short and holds no secret: `https://<distribution>/publish`. A CloudFront Function rewrites
+`/publish` to `/publish.html`.
+
+- One `<input type="password" autocomplete="off">` for the code, one button, no `<form>` element and no
+  `name`, so the browser has nothing to submit, save or put in the address bar. The handler calls `fetch` with `POST`.
+  Whether the browsers still offer to save the password **is unverified** and is part of the test.
+- The code is cleared from the field after the request. **Decision:** it is kept in a closure variable (never a global
+  or a DOM property) and used only to fetch a new token after a LiveKit disconnect, so a speaker who is not looking at
+  the page still reconnects after a network drop. It is cleared on `beforeunload`, on `DUPLICATE_IDENTITY` and on a
+  `401` or `403`.
+  **Bounded auto-reconnect (stale pages cannot take the stage back).** After a LiveKit disconnect the page reconnects
+  by itself only within 60 seconds of its last successful publish, and only if it never saw `DUPLICATE_IDENTITY`.
+  After 60 seconds it clears the closure variable and returns to "enter code". A page that was offline during a
+  takeover therefore cannot return with its retained code and kick the newest publisher, even if the speaker forgot to
+  close the tab. It is never written to `localStorage`, `sessionStorage`, cookies, the URL, the hash or `history`. A
+  reload asks again.
+- `<meta name="referrer" content="no-referrer">` and `noindex`.
+- **No third-party script.** The listener page imports `livekit-client` from a CDN today. The publisher page must serve a
+  pinned copy of `livekit-client` from its own origin (an exact-version `livekit-client` devDependency in
+  `cdk/package.json`, pinned by `cdk/package-lock.json`; the CDK site deployment copies its browser bundle from
+  `cdk/node_modules/livekit-client/dist/` into the site bucket, and its SHA-256 is recorded in a test so a changed file
+  fails the build), because a script that can read the field can steal both the code
+  and the microphone. It also gets its own CloudFront response headers policy with a `Content-Security-Policy`
+  (`default-src 'self'`, `connect-src 'self'` plus both `https://<livekit-host>` and `wss://<livekit-host>`, because livekit-client also calls
+  the signalling host over HTTPS; no inline script; whether `worker-src` or `blob:` is needed for the level meter is
+  **unverified** and is confirmed in the first build). The listener page is not
+  changed by this.
+- `getUserMedia` needs a secure context. The page is served over HTTPS by CloudFront, and the LiveKit URL is `wss://`
+  (Caddy, certificate for the `sslip.io` name), so there is no mixed content. `http://` access is redirected to
+  HTTPS by the distribution. A browser opening the page from `file://` or `http://` cannot capture audio.
+- The page shows: state (waiting for code, asking for the microphone, **sending**, reconnecting, taken over by another
+  device, closed), the microphone in use (with a selector), a level meter, and a warning when the track ends or
+  mutes. It warns before the tab is closed (`beforeunload`).
+- On `DUPLICATE_IDENTITY` (see below) it stops and says "Another device took over". It must **not** reconnect by
+  itself, or two pages would knock each other out in a loop.
+
+### Newest wins: handover
+
+- Every browser publisher joins with the same identity, `browser-publisher`. LiveKit documents that an identity is
+  unique in a room and that when a second participant joins with it, the most recent one stays and the others are
+  disconnected ([participant management](https://docs.livekit.io/intro/basics/rooms-participants-tracks/participants/)).
+  The old page receives a disconnect with reason `DUPLICATE_IDENTITY`.
+- **Unverified for the pinned server version.** Another source describes a server that rejects the second join instead.
+  A test against the pinned `livekitImage` is required. If it rejects, the fallback is that the app (or the token
+  Lambda, with `RemoveParticipant`) removes the old participant before the new one joins.
+- The app sees `ParticipantDisconnected` and `ParticipantConnected` for the same identity within a short time and switches
+  to the new track. It must handle the reverse order (new track published before the old disconnect is delivered) and
+  must never feed two tracks at once.
+- **Abuse:** anyone with the code can take over mid-talk, and nothing stops them from doing it repeatedly. This is
+  the cost of "no action from the previous speaker". Mitigations: the code is shared only with speakers and the operator,
+  `--disconnect` removes the intruder and invalidates their way back, the app logs every handover with the time
+  (`[ingest] publisher replaced`) so the operator sees it, and the operator can switch to SRT.
+- A handover has a short gap (the new speaker's connect time). The pacer fills it with silence (see below).
+
+### How the app consumes the track
+
+- New setting `INPUT_SOURCE=srt|browser` (CDK context `inputSource`, default `srt`). It is read once at start.
+  Changing it needs a deploy (about 2 to 3 minutes, like other app settings). In `srt` mode nothing browser-related
+  runs and nothing browser-related is deployed: no publish-token Lambda, no CloudFront behavior for
+  `/publisher-token`, no `publish.html` upload, no code secret.
+  In `browser` mode the SRT listener is not started. The SRT port and security groups stay as they are, so
+  switching back is one deploy. Never both: the app starts exactly one source.
+- In `browser` mode `main.ts` starts an ingest source instead of `startSrtListener()`. It joins the ingest room as
+  `ingest-app` with `autoSubscribe: false`, accepts only a track published by identity `browser-publisher` with source
+  microphone, and subscribes to that one.
+- The audio goes into a `@livekit/rtc-node` `AudioStream` created at the pipeline's rate (16 kHz, mono; API shape
+  **unverified** against the pinned `^0.13.0`). Its frames are pushed into the **same `PcmQueue`** that the SRT path
+  and the `INPUT_FILE` mode use. From the queue on, everything is unchanged: Transcribe, language gate, segmenter,
+  translation, Polly, LiveKit.
+- **Silence filler (no pacer).** Transcribe streaming needs a steady stream of audio and stops a stream that receives none
+  for about 15 seconds (**unverified**; check the Transcribe documentation). Real frames go from the `AudioStream` into
+  the queue with no delay and no pacing. Only when no real audio arrived for 100 ms during an open session inside the
+  event window, the app pushes one 100 ms frame of digital silence and counts the silent milliseconds. If the queue
+  holds more than 500 ms (a stalled consumer), the oldest frames are dropped and counted (`PcmQueue.trimTo`), so a
+  stalled browser cannot build latency.
+**Ingest connection failures.** The app's connection to the ingest room is new code. `RoomServiceClient` is not used in
+`app/src` today (`livekit-server-sdk` is only used for tokens), so the app derives the HTTP(S) service URL from the
+`wss://` LiveKit URL for `RemoveParticipant`.
+
+| Event | Action | Log line | Level |
+|---|---|---|---|
+| Join of `<roomName>-ingest` fails at start (LiveKit down, bad credentials) | Retry with backoff (1 s, doubling, capped at 30 s). The task stays up and the SRT or file path is not affected. | `[ingest] join failed, retry in Ns: <error>` | error |
+| Connection drops mid-event | Rejoin with the same backoff; the silence filler keeps running while a session is open. | `[ingest] app connection lost, rejoining` then `[ingest] app reconnected` | error, info |
+| `ingest-app` token expires mid-event (lifetime `publisherTokenTtl`, 6 h) | Mint a new token and rejoin before expiry, at 90% of the lifetime. | `[ingest] token refreshed` | info |
+| A publisher is already in the room when the app starts or rejoins | After joining, enumerate existing participants and subscribe to `browser-publisher` if present; do not wait only for `ParticipantConnected`. | `[ingest] publisher already present` | info |
+| `RemoveParticipant` fails (at `notAfter`, on `--disconnect`) | Retry every 10 s until it succeeds, and refuse to subscribe to the publisher meanwhile. | `[ingest] remove publisher failed, retry: <error>` | error |
+
+- On a track change the app does not reset the Transcribe stream. A handover is a short silence, as a pause is.
+- **Session lifecycle (browser mode).** A session starts at the first audio frame from a publisher. Mechanism: the browser source's frame
+  iterable yields nothing until the first frame arrives, and the pipeline opens the Transcribe stream lazily on the
+  first yielded frame, so `main.ts` can create the source at start without opening a stream (this needs a small change
+  to how `runPipeline` is started; **unverified** against the current loop). A session ends when no
+  publisher has been present for N seconds (default 60, `browserSessionGraceSec`). A handover inside that window is the
+  same session. The silence filler runs only while a session is open and inside the window. With no publisher and no
+  open session nothing is sent, so no Transcribe stream is opened and nothing is billed. When the session ends the
+  pipeline closes the stream and prints `[summary]`; the next first frame starts a new session. This matches SRT, where a
+  session is one sender connection.
+- `INPUT_FILE` (the test mode) keeps working. A third path, a headless browser or the LiveKit CLI publishing a file as
+  `browser-publisher`, lets the e2e harness drive the browser path (acceptance criterion of the issue).
+
+### Browser audio constraints
+
+The page asks for `getUserMedia({audio: {channelCount: 1, echoCancellation, noiseSuppression, autoGainControl}})`
+and publishes with Opus, DTX off (silence suppression would make gaps look like disconnects), the speech preset.
+`sampleRate` is left to the browser (48 kHz); the app resamples to 16 kHz.
+
+**Decision for measurement (decision 8).** `browserAudioProcessing` is `all` until the measurement (**provisional**); `echo` and `none` are the other two. Browsers default all three processing options to on. Effects on
+Transcribe are **unverified**:
+
+| Option | Reason to keep on | Reason to turn off |
+|---|---|---|
+| `echoCancellation` | The laptop may play the room or slide audio through its own speakers while the microphone is open. | It can clip the speaker's voice when it mistakes it for an echo. |
+| `noiseSuppression` | Fans and room noise. | Aggressive suppression can remove soft consonants and lower accuracy, and can produce exact digital silence between words, which interacts with the silence detector below. |
+| `autoGainControl` | Different laptops and distances give very different levels. | It pumps the level and raises background noise in pauses. |
+
+Plan: record the same 10-minute scripted talk (the project's sample talks) through a laptop microphone with each
+of three settings: all on; echo cancellation on and the other two off; all off. Compare Transcribe word error rate
+and the `[summary]` line (commit lag, dropped chunks) with the e2e harness, on a Mac and a Windows laptop. Pick the
+default from the result, and keep the choice in one constant so it can be changed without redesign. Headphones for the
+speaker, not the audience, remain the guidance for echo.
+
+### Operator visibility
+
+The operator is not looking at the speaker's laptop (it shows PowerPoint). The signal must reach the operator without
+the page being visible.
+
+| Event | Log line in `/simul-translation/app` | Level |
+|---|---|---|
+| Publisher joined | `[ingest] publisher joined identity=browser-publisher trackSid=...` | info |
+| Publisher replaced | `[ingest] publisher replaced previous disconnected reason=DUPLICATE_IDENTITY` | warn |
+| Publisher left | `[ingest] publisher left reason=...` | warn |
+| No publisher connected | `[ingest] no publisher for Ns` every 10 s while none is connected | warn |
+| Silence | `[ingest] silent Ns rmsDb=...` when the level stays below a threshold for N seconds | warn |
+| App lost ingest connection | `[ingest] app connection lost, rejoining` (see table above) | error |
+| Level | `[ingest] level rmsDb=... silentMs=... droppedMs=...` every 5 s | info |
+
+- **Disconnect** is exact: the token Lambda and LiveKit tell us. **Silence** is a heuristic. A muted or unplugged
+  microphone produces digital zero; a live microphone has a noise floor. But a pause in the talk, or noise
+  suppression, can also give very low levels. Default (**provisional**): warn after 30 s below -60 dBFS
+  (`browserSilenceSec`, `browserSilenceDb`). The values are set from the recordings of the measurement above.
+- No metric filter, alarm or SNS topic is created (decision 4). The operator runs
+  `aws logs tail /simul-translation/app --follow --filter-pattern "[ingest]"` (see the [operations runbook](operations.md)).
+- The operator can also see the participant in the LiveKit room list with the API credentials (LiveKit console or API).
+- The `[summary]` line at the end of the session gains the number of handovers, silent seconds and dropped milliseconds.
+
+### Background capture on the speaker's laptop
+
+Why it should work, and what could still break it:
+
+- Capture and the WebRTC media path run on browser media threads, not on the page's JavaScript timers. Chrome
+  documents that pages with an active WebRTC connection are excluded from intensive timer throttling
+  ([Chrome blog](https://developer.chrome.com/blog/timer-throttling-in-chrome-88)). The page's own timers
+  (level meter, retries) may still slow down; the design does not depend on them for sending.
+- **Unverified and must be tested:** that no step in this chain stops when PowerPoint is full screen on the projector
+  output: window occlusion on Windows, App Nap on macOS, Chrome Memory Saver and Energy Saver, Edge sleeping tabs and
+  Efficiency mode. Chrome does not discard a tab that is using the microphone (**unverified**; check the current
+  Memory Saver documentation).
+- What the page cannot prevent: the laptop going to sleep (the lid closed, the sleep timer), the speaker closing or
+  navigating the tab, a different default microphone after a headset is plugged in, and Bluetooth headsets switching to
+  a low-quality profile when their microphone opens.
+- The page reacts to what it can detect: `track.onended`, `onmute`, `devicechange`. It tries to acquire the microphone
+  again once, then shows the problem in red and waits. The operator sees the result as silence or a left publisher.
+- A screen wake lock does not help: it is released when the page is not visible.
+
+### Speaker checklist
+
+Print or send this to speakers with the URL. (The Mac and Windows steps are to be confirmed by the tests.)
+
+1. Use a desktop browser (Chrome, Edge, Firefox or Safari) on a laptop. Not a phone.
+2. **Plug in the charger.** Do not close the lid. Do not let the laptop sleep: set "never sleep when plugged in"
+   (Windows: Settings, System, Power; Mac: System Settings, Battery or Lock Screen, prevent automatic sleeping on
+   power adapter).
+3. Turn **off** Chrome Memory Saver for this site, or add the site to "Always keep these sites active"
+   (`chrome://settings/performance`). In Edge, turn off sleeping tabs for it ("Never put these sites to sleep") and
+   Efficiency mode.
+4. Open the URL. Type the **event code** (you will not see it). Press Start. When the browser asks, press
+   **Allow** for the microphone. Choose your own microphone if the page picks another.
+5. Speak a sentence and check that the level meter moves and the page says **Sending**.
+6. Leave the tab open, in its own window if you can. **Do not close, minimize or reload it.** Start your slides.
+   PowerPoint can be full screen.
+7. Do not plug in or remove a headset, and do not change the default audio device, during the talk. A wired headset or
+   the laptop microphone is better than Bluetooth.
+8. If the operator tells you the page lost the connection, press Alt+Tab to it, press **Start** again, then go back.
+9. Open Slack and paste the code on the **laptop screen only**, never on the projector-mirrored screen (or paste it
+   before you connect HDMI).
+10. When you finish, close the tab. The next speaker's page replaces yours; you do not need to do anything.
+
+### Acceptance criteria and tests
+
+Automated (run in `cdk/test` and `app/test`, no AWS needed). Test names are in `cdk/test/publisher-token.test.mjs`,
+`cdk/test/browser-input.test.ts`, `cdk/test/publisher-code.test.mjs`, `cdk/test/config.test.ts`,
+`app/test/ingest-*.test.ts`, `app/test/input-source.test.ts`, `app/test/publisher-*.test.ts` and
+`app/test/ingest-livekit.test.ts` (a real local `livekit-server`, skipped if it is not installed):
+
+| # | Test | Passes when |
+|---|---|---|
+| 1 | Listener token cannot publish | Mint a listener token; decode it: `canPublish=false`, `canPublishData=false`, room is `roomName`, no `canPublishSources`. Existing `captions.test.ts` pins the grant; add the ingest room check. |
+| 2 | Listener token cannot join the ingest room | The listener token's room differs from the ingest room. A real LiveKit run (docker, local) rejects the join. |
+| 3 | The listener Lambda cannot mint a publisher token | No code path of `cdk/lambda/token/` produces `canPublish: true`; the stack gives that function no read on the code secret (template assertion). |
+| 4 | Publisher token grant is exactly as in the table | Decode and compare every field of the grant; identity `browser-publisher`; room `<roomName>-ingest`; TTL 10 minutes. A camera-track publish attempt with this token is refused (`canPublishSources` is unverified on the pinned server, see test 13). |
+| 5 | Wrong code rejected | `401 {"error":"invalid"}`; the same for empty, missing, malformed, wrong length, wrong case-insensitive match. No token in the body. |
+| 6 | Generic errors | Responses for wrong code, malformed JSON, wrong content type, body over 256 bytes and missing field are all `401` and byte-identical. |
+| 7 | Constant-time compare | The handler uses `timingSafeEqual` on equal-length digests (unit test with a spy; a timing test is too noisy to be a gate). |
+| 8 | No code in logs | A known code is sent in a right and a wrong attempt; no log line contains it or a 4-character piece of it. |
+| 9 | Fails closed | A stored code of 9 characters gives `500` and no token. A missing, unreadable or non-`YYYY-MM-DDTHH:MM:SSZ` end-time parameter gives `500` and no token. |
+| 10 | Event end | After `notAfter` the right code gets `403`. Before it, `200`. |
+| 11 | Rotation invalidates the old code | After `rotate`, the old code gets `401` on the next request and the new one `200`. Needs a deployed stack or a mocked Secrets Manager. |
+| 12 | Throttle | The template sets reserved concurrency on the publish-token function only (also covered by 22). The quota-refusal path is a manual deploy check in a low-quota account. |
+| 13 | Old publisher disconnected | Two clients join with `browser-publisher` against the pinned `livekitImage` (docker); the first receives `DUPLICATE_IDENTITY`; the app consumes only the second. |
+| 14 | One input at a time | With `INPUT_SOURCE=srt` no ingest connection is made; with `browser` no ffmpeg SRT listener starts. |
+| 15 | Same pipeline | The e2e harness feeds a recorded talk through a LiveKit publisher as `browser-publisher`; the result matches the SRT run within the normal run-to-run spread (commit lag, chunk count). |
+| 16 | Page keeps no secret | The page source has no `localStorage`, `sessionStorage`, `location.hash`, `history`, `innerHTML` use for the code; the code is never in a URL (test checks the `fetch` call). |
+| 17 | No third-party script | The publisher page has no `src` or `import` from another origin. |
+| 18 | App cannot read the code | Template assertion: the app task role has no `secretsmanager:GetSecretValue` on `PublisherCodeSecret`, and has `ssm:GetParameter` on the end-time parameter. |
+| 19 | `notAfter` follows rotation | Changing the parameter moves the app's removal timer within 60 s (unit test with a fake clock). After `notAfter`, a `browser-publisher` that joins with a still-valid token is removed and never subscribed to. |
+| 20 | Idle costs nothing | No publisher for 5 minutes: zero Transcribe seconds streamed. After a publisher leaves, the session closes after the grace period. |
+| 21 | `srt` mode deploys nothing browser-related | Template assertion: no publish-token function, behavior, page or secret. |
+| 22 | `browser` mode requires the throttle | Template assertion: reserved concurrency is set and `0` is rejected at synth. |
+| 23 | Configuration validation | Each rule in "Configuration validation" has a failing-config test in `config.test.ts` (bad `inputSource`, concurrency below 1, TTL and grace out of range, colliding room names); `docs.test.ts` finds every new key in configuration.md. |
+| 24 | Ingest reconnect | Drop the app's ingest connection (fake or local LiveKit): the app rejoins with backoff, picks up a publisher that was already present, and logs the lines in "Ingest connection failures". |
+| 25 | Lazy session start | With no frames, no Transcribe stream is opened; the first frame opens it (unit test on the browser source and `runPipeline`). |
+| 26 | Pinned `livekit-client` | The SHA-256 of the served copy equals the recorded value. |
+| 27 | Operator script | `--ends-at` accepts only a future UTC `...Z` time; `--dry-run` makes no `aws` call; the code is never in argv, stderr or a file; two runs give two codes (tests use a stub `aws` on `PATH`). |
+| 28 | Off by default | `cdk synth` with no browser setting equals `origin/main`'s synth after sorting keys and normalizing asset hashes (`cdk/scripts/synth-parity.sh`, and the resource-count test in `browser-input.test.ts`). |
+| 29 | Audio settings are configuration | `browserAudioProcessing`, `browserSilenceDb`, `browserSilenceSec` are validated, documented and provisional. |
+
+Manual, before the feature is announced:
+
+- **60-minute background test**, on each of: Chrome, Edge and Firefox on Mac and on Windows, and Safari on Mac. The
+  speaker opens the page, starts a talk recording, opens a PowerPoint deck full screen on the HDMI output and runs
+  it for 60 minutes with the page in the background, on mains power. A reference tone or a counting voice is played
+  at the microphone. Pass: the app log shows no gap longer than 1 second in the received audio, no `no publisher`
+  line, no silence warning during the tone, and the Transcribe text contains the whole count. Repeat once on battery
+  and once with Memory Saver and Energy Saver at their defaults, and record what fails; the result goes into the
+  checklist.
+- A laptop sleep test: lid closed for 30 seconds, then open. Record what happens and how long recovery takes.
+- Handover test: speaker 1 talks, speaker 2 starts the page and enters the code; speaker 1's page shows "taken over"
+  and speaker 2's audio is translated with a gap under 5 seconds.
+- Stale-page test: speaker 1 loses network for 90 s, speaker 2 takes over, speaker 1's network returns. Speaker 2
+  stays; speaker 1's page shows "enter code" and does not reconnect.
+- Latency: record the time from speech to first Japanese word through the browser path and through SRT with the same
+  sample, and add both to [architecture.md](architecture.md). Not estimated here.
+
+### Cost impact
+
+Small, and mostly fixed per event. Prices are the ones used in [cost.md](cost.md); check them at deploy time.
+
+| Item | Estimate |
+|---|---|
+| Secrets Manager: one more secret | $0.40 per month while it exists; calls at $0.05 per 10,000 |
+| Lambda and CloudFront for the publish endpoint | a few requests per speaker; below $0.01 per event, a flood adds little because of the concurrency cap |
+| LiveKit: publisher uplink to the server | inbound traffic is not charged for EC2 |
+| LiveKit to the app (one subscriber, about 50 kbps with headers, **estimate**) | about 90 MB for 4 hours, about $0.01 at $0.114 per GB |
+| Transcribe while nobody publishes | **$0 by design.** A stream held open with silence would bill about $0.60 per hour (see [cost.md](cost.md)); the session rule above avoids it. Up to 60 s of silence after the last publisher is billed once per session end |
+| Fargate | same task; one more connection |
+| CloudWatch Logs | a few lines per 5 seconds, negligible; metric filters have no charge by themselves, each alarm has a monthly price (check) |
+| SRT infrastructure (NLB, Elastic IPs) | unchanged. It keeps costing money in `browser` mode; removing it for browser-only events is a separate change |
+
+### Verified locally
+
+Against a local `livekit-server` 1.13.7 (the stack pins v1.13.11): a second `browser-publisher` join disconnects the
+first with `DUPLICATE_IDENTITY`; a camera publish with the publisher token is not accepted; a listener token stays in
+the listener room and cannot publish; a 16 kHz tone arrives as 640-byte frames. The pinned version still needs the
+same run (see below).
+
+### Live tests after deploy (owner)
+
+Automated tests run locally. These need a deployed stack or a laptop and are the owner's, after the next deploy:
+
+- Rotation against a deployed stack (test 11) and the quota-refusal path (test 12) in a low-quota account.
+- Test 13 and `canPublishSources` on the pinned `livekitImage`, if not run locally; token expiry of a connected
+  participant.
+- The e2e harness through a LiveKit publisher (test 15), compared with SRT.
+- `x-amz-content-sha256` for `POST` through CloudFront OAC; CSP (`blob:`, `worker-src`) and the password-save prompt in
+  each browser.
+- The 60-minute background PowerPoint test, battery and Memory Saver runs, the lid-closed sleep test, the handover
+  test and the stale-page test.
+- Measurements that set the provisional values: audio constraints (decision 8), silence threshold and wording
+  (decision 9), and latency of the browser path versus SRT.
+- **Safari.** If Safari fails the 60-minute test, state "Safari is not supported for the browser ingest" in
+  `README.md` (decision 12 and the owner's instruction). It is not stated there now.
 
 ## Transcript privacy and data flow
 

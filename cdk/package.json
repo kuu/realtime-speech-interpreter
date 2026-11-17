@@ -22,7 +22,7 @@
     "typecheck": "tsc --noEmit",
     "synth": "cdk synth",
     "cdk": "cdk",
-    "test": "node --require ts-node/register --test test/*.test.ts",
+    "test": "node --require ts-node/register --test test/*.test.ts test/*.test.mjs",
     "doctor": "../scripts/doctor.sh"
   },
   "dependencies": {
@@ -32,6 +32,7 @@
   "devDependencies": {
     "@types/node": "22.20.4",
     "aws-cdk": "2.1143.0",
+    "livekit-client": "2.24.1",
     "ts-node": "10.9.2",
     "typescript": "5.9.3"
   }

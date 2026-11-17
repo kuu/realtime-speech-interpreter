@@ -17,11 +17,21 @@ import { loadConfig } from "./config";
 import { readingsHash } from "./dictionary-dir";
 import { buildLiveKitUserData } from "./livekit-user-data";
 
+/** SSM parameter that holds the event end time. The operator script creates it; CDK only grants read access. */
+export const PUBLISHER_NOT_AFTER_PARAM = "/simul-translation/publisher-not-after";
+/** The event code alphabet (no 0 O 1 I L). The secret generator may use only these characters. */
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const CODE_EXCLUDE = Array.from({ length: 94 }, (_, i) => String.fromCharCode(33 + i)).filter((c) => !CODE_ALPHABET.includes(c)).join("");
+
 export class SimulTranslationStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
     const cfg = loadConfig(this);
     const region = cdk.Stack.of(this).region;
+    // Browser microphone input is off by default. Every browser-related resource below sits behind this flag, so
+    // with inputSource=srt the template is the same as without the feature (cdk/scripts/synth-parity.sh).
+    const browser = cfg.inputSource === "browser";
+    const ingestRoom = `${cfg.roomName}-ingest`;
     const retention = cfg.logRetentionDays as logs.RetentionDays;
 
     // ---------------------------------------------------------------- Network
@@ -286,6 +296,16 @@ export class SimulTranslationStack extends cdk.Stack {
         LIVEKIT_TOKEN_TTL: cfg.publisherTokenTtl,
         HEALTH_PORT: String(cfg.healthPort),
         HEALTH_HOST: "0.0.0.0", // NLB health check (awsvpc; SGs restrict who can reach it); app default is loopback
+        ...(browser
+          ? {
+              INPUT_SOURCE: "browser",
+              INGEST_ROOM: ingestRoom,
+              INGEST_NOT_AFTER_PARAM: PUBLISHER_NOT_AFTER_PARAM,
+              INGEST_SESSION_GRACE_SEC: String(cfg.browserSessionGraceSec),
+              INGEST_SILENCE_DB: String(cfg.browserSilenceDb),
+              INGEST_SILENCE_SEC: String(cfg.browserSilenceSec),
+            }
+          : {}),
       },
       secrets: {
         SRT_PASSPHRASE: ecs.Secret.fromSecretsManager(srtSecret),
@@ -398,6 +418,59 @@ export class SimulTranslationStack extends cdk.Stack {
     livekitSecret.grantRead(tokenFn);
     const tokenUrl = tokenFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
+    // ---------------------------------------------------------------- Browser microphone input (inputSource=browser)
+    // A separate function with its own URL, so the listener function never ships or can reach publish-grant code.
+    // Reserved concurrency is the brute-force throttle (browserInputConcurrency >= 1 is enforced at synth).
+    let publisherFn: lambda.Function | undefined;
+    let publisherCodeSecret: secretsmanager.Secret | undefined;
+    let publisherUrl: lambda.FunctionUrl | undefined;
+    const notAfterArn = this.formatArn({ service: "ssm", resource: "parameter", resourceName: PUBLISHER_NOT_AFTER_PARAM.slice(1) });
+    if (browser) {
+      publisherCodeSecret = new secretsmanager.Secret(this, "PublisherCodeSecret", {
+        description: "Event code for the browser microphone page. Rotated by cdk/scripts/publisher-code.mjs",
+        generateSecretString: {
+          secretStringTemplate: "{}",
+          generateStringKey: "code",
+          passwordLength: 12,
+          // Secrets Manager requires one character of every type that is not excluded by a flag
+          // (RequireEachIncludedType defaults to true). Listing every lowercase letter and punctuation mark
+          // in excludeCharacters is not enough: the deploy fails with "All characters of the desired type
+          // have been excluded". Exclude those types by flag; only uppercase and digits remain.
+          excludeLowercase: true,
+          excludePunctuation: true,
+          excludeCharacters: CODE_EXCLUDE,
+        },
+      });
+      const publisherLogGroup = new logs.LogGroup(this, "PublisherTokenLogGroup", {
+        logGroupName: "/simul-translation/publisher-token",
+        retention,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      });
+      publisherFn = new lambda.Function(this, "PublisherTokenFunction", {
+        runtime: lambda.Runtime.NODEJS_22_X,
+        architecture: lambda.Architecture.ARM_64,
+        handler: "index.handler",
+        code: lambda.Code.fromAsset(path.join(__dirname, "..", "lambda", "publisher-token")),
+        memorySize: 128,
+        timeout: cdk.Duration.seconds(5),
+        reservedConcurrentExecutions: cfg.browserInputConcurrency,
+        logGroup: publisherLogGroup,
+        environment: {
+          CODE_SECRET_ARN: publisherCodeSecret.secretArn,
+          LIVEKIT_SECRET_ARN: livekitSecret.secretArn,
+          NOT_AFTER_PARAM: PUBLISHER_NOT_AFTER_PARAM,
+          INGEST_ROOM: ingestRoom,
+          TOKEN_TTL_SEC: String(cfg.browserInputTokenTtlSec),
+          LIVEKIT_URL: livekitUrl,
+        },
+      });
+      publisherCodeSecret.grantRead(publisherFn);
+      livekitSecret.grantRead(publisherFn);
+      publisherFn.addToRolePolicy(new iam.PolicyStatement({ actions: ["ssm:GetParameter"], resources: [notAfterArn] }));
+      // The app reads only the end time. It cannot read the code.
+      taskDef.taskRole.addToPrincipalPolicy(new iam.PolicyStatement({ actions: ["ssm:GetParameter"], resources: [notAfterArn] }));
+      publisherUrl = publisherFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
+    }
     const siteBucket = new s3.Bucket(this, "SiteBucket", {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -407,12 +480,43 @@ export class SimulTranslationStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
+    // Publisher page headers: its own CSP (script from its own origin only; signalling to the LiveKit host over
+    // https and wss) and a microphone permission for itself only.
+    let publisherHeaders: cloudfront.ResponseHeadersPolicy | undefined;
+    let publishRewrite: cloudfront.Function | undefined;
+    if (browser) {
+      publisherHeaders = new cloudfront.ResponseHeadersPolicy(this, "PublisherHeaders", {
+        comment: "publisher page: CSP, no-referrer, microphone for self",
+        securityHeadersBehavior: {
+          contentSecurityPolicy: {
+            override: true,
+            contentSecurityPolicy: cdk.Fn.join("", [
+              "default-src 'self'; connect-src 'self' https://", livekitHost, " wss://", livekitHost,
+              "; img-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+            ]),
+          },
+          contentTypeOptions: { override: true },
+          frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+          referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.NO_REFERRER, override: true },
+          strictTransportSecurity: { accessControlMaxAge: cdk.Duration.days(365), includeSubdomains: true, override: true },
+        },
+        customHeadersBehavior: { customHeaders: [{ header: "Permissions-Policy", value: "microphone=(self)", override: true }] },
+      });
+      publishRewrite = new cloudfront.Function(this, "PublishRewrite", {
+        runtime: cloudfront.FunctionRuntime.JS_2_0,
+        comment: "/publish and /publish/ -> /publish.html",
+        code: cloudfront.FunctionCode.fromInline(
+          "function handler(event) {\n  var r = event.request;\n  if (r.uri === '/publish' || r.uri === '/publish/') r.uri = '/publish.html';\n  return r;\n}\n",
+        ),
+      });
+    }
+    const siteOrigin = origins.S3BucketOrigin.withOriginAccessControl(siteBucket);
     const distribution = new cloudfront.Distribution(this, "SiteDistribution", {
       comment: "simul-translation listener page",
       defaultRootObject: "index.html",
       priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
       defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket),
+        origin: siteOrigin,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
       },
@@ -425,6 +529,30 @@ export class SimulTranslationStack extends cdk.Stack {
           originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
         },
+        ...(browser && publisherUrl && publisherHeaders && publishRewrite
+          ? {
+              // POST is needed here and nowhere else. The viewer's x-forwarded-for and x-amz-content-sha256 reach the function.
+              "/publisher-token": {
+                origin: origins.FunctionUrlOrigin.withOriginAccessControl(publisherUrl),
+                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+                allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+                cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+                originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS,
+              },
+              "/publish": {
+                origin: siteOrigin,
+                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                responseHeadersPolicy: publisherHeaders,
+                functionAssociations: [{ function: publishRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }],
+              },
+              "/publish.html": {
+                origin: siteOrigin,
+                viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                responseHeadersPolicy: publisherHeaders,
+              },
+            }
+          : {}),
       },
     });
     // CloudFront OAC -> function URL also needs lambda:InvokeFunction (scoped to this distribution).
@@ -440,11 +568,33 @@ export class SimulTranslationStack extends cdk.Stack {
       invokedViaFunctionUrl: true,
     });
 
+    if (browser && publisherFn) {
+      publisherFn.addPermission("AllowCloudFrontInvokeFunction", {
+        principal: new iam.ServicePrincipal("cloudfront.amazonaws.com"),
+        action: "lambda:InvokeFunction",
+        sourceArn: this.formatArn({ service: "cloudfront", region: "", resource: "distribution", resourceName: distribution.distributionId }),
+        invokedViaFunctionUrl: true,
+      });
+    }
     new s3deploy.BucketDeployment(this, "SiteDeployment", {
       destinationBucket: siteBucket,
       sources: [
         s3deploy.Source.asset(path.resolve(__dirname, "..", cfg.appPath, "web"), { exclude: ["local-test.html"] }),
-        s3deploy.Source.jsonData("config.json", { livekitUrl, tokenEndpoint: "/token", captions: cfg.captions === "on" }),
+        ...(browser
+          ? [
+              s3deploy.Source.asset(path.resolve(__dirname, "..", cfg.appPath, "publisher")),
+              // One pinned file of the livekit-client devDependency, served from the site's own origin (CSP: no third party).
+              s3deploy.Source.asset(path.resolve(__dirname, "..", "node_modules", "livekit-client", "dist"), {
+                exclude: ["*", "!livekit-client.esm.mjs"],
+              }),
+            ]
+          : []),
+        s3deploy.Source.jsonData("config.json", {
+          livekitUrl,
+          tokenEndpoint: "/token",
+          captions: cfg.captions === "on",
+          ...(browser ? { publisherTokenEndpoint: "/publisher-token", audioProcessing: cfg.browserAudioProcessing } : {}),
+        }),
       ],
       distribution,
       distributionPaths: ["/*"],
@@ -479,6 +629,12 @@ export class SimulTranslationStack extends cdk.Stack {
     out("LiveKitInstanceId", livekitInstance.instanceId);
     out("LiveKitApiSecretArn", livekitSecret.secretArn);
     out("ListenerUrl", cdk.Fn.join("", ["https://", distribution.distributionDomainName, "/"]));
+    if (browser && publisherCodeSecret) {
+      out("PublisherUrl", cdk.Fn.join("", ["https://", distribution.distributionDomainName, "/publish"]), "Page for speakers; the code is not part of the URL");
+      out("PublisherCodeSecretArn", publisherCodeSecret.secretArn);
+      out("PublisherNotAfterParameter", PUBLISHER_NOT_AFTER_PARAM, "Event end time (UTC), written by cdk/scripts/publisher-code.mjs");
+      out("PublisherIngestRoom", ingestRoom);
+    }
     out("AppLogGroupName", appLogGroup.logGroupName);
     out("LiveKitLogGroupName", livekitLogGroup.logGroupName);
     out("EcsClusterName", cluster.clusterName);

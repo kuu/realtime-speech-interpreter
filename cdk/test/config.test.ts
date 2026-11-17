@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as cdk from "aws-cdk-lib";
 import { loadConfig, resolveRegion } from "../lib/config";
-import { parseJsonc, LISTENER_TIERS } from "../lib/event-config";
+import { parseJsonc, LISTENER_TIERS, knownContextKeys } from "../lib/event-config";
 import { makeContext } from "./helpers";
 
 const CIDR = "203.0.113.10/32";
@@ -146,4 +146,34 @@ test("captions: default on, -c captions=off, junk is rejected", () => {
   assert.equal(cfgFor({ captions: "off" }).captions, "off");
   assert.equal(cfgFor({ captions: "OFF" }).captions, "off");
   assert.throws(() => cfgFor({ captions: "maybe" }), /captions must be "on" or "off"/);
+});
+
+test("browser input defaults: off, throttle and audio settings", () => {
+  const c = cfgFor({});
+  assert.equal(c.inputSource, "srt");
+  assert.equal(c.browserInputConcurrency, 5);
+  assert.equal(c.browserInputTokenTtlSec, 600);
+  assert.equal(c.browserSessionGraceSec, 60);
+  assert.equal(c.browserAudioProcessing, "all");
+  assert.equal(c.browserSilenceDb, -60);
+  assert.equal(c.browserSilenceSec, 30);
+});
+test("browser input: invalid values are rejected at synth", () => {
+  assert.equal(cfgFor({ inputSource: " Browser " }).inputSource, "browser");
+  assert.throws(() => cfgFor({ inputSource: "usb" }), /inputSource must be/);
+  for (const v of [1.5, "x"]) assert.throws(() => cfgFor({ browserInputConcurrency: v }), /browserInputConcurrency|Context/);
+  assert.throws(() => cfgFor({ browserInputConcurrency: 0 }), /throttle/);
+  for (const v of [59, 3601]) assert.throws(() => cfgFor({ browserInputTokenTtlSec: v }), /browserInputTokenTtlSec/);
+  for (const v of [9, 601]) assert.throws(() => cfgFor({ browserSessionGraceSec: v }), /browserSessionGraceSec/);
+  assert.throws(() => cfgFor({ browserAudioProcessing: "loud" }), /browserAudioProcessing/);
+  assert.throws(() => cfgFor({ browserSilenceDb: 1 }), /browserSilenceDb/);
+  assert.throws(() => cfgFor({ browserSilenceDb: -121 }), /browserSilenceDb/);
+  assert.throws(() => cfgFor({ browserSilenceSec: 4 }), /browserSilenceSec/);
+  assert.throws(() => cfgFor({ roomName: "x-ingest" }), /-ingest/);
+});
+test("browser input: ranges are checked even when inputSource=srt", () => {
+  assert.throws(() => cfgFor({ inputSource: "srt", browserSessionGraceSec: 5 }), /browserSessionGraceSec/);
+});
+test("browserInputEndsAt is not a known key (the end time comes from the operator script)", () => {
+  assert.ok(!knownContextKeys().includes("browserInputEndsAt"));
 });

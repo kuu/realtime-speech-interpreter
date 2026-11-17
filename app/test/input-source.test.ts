@@ -4,6 +4,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { selectSource } from "../src/input-source.js";
 
+test("rtmps is selected, file still wins, rtmps and browser are never both", () => {
+  assert.equal(selectSource({ source: "rtmps" }), "rtmps");
+  assert.equal(selectSource({ inputFile: "/tmp/x.raw", source: "rtmps" }), "file");
+  assert.equal(selectSource({ inputFile: "", source: "rtmps" }), "rtmps");
+  assert.notEqual(selectSource({ source: "rtmps" }), selectSource({ source: "browser" }));
+});
+
+test("main.ts starts the RTMP listener only for rtmps, validating the key first", () => {
+  const src = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+  assert.match(src, /const srt = rtmps \? startRtmpListener\(\) : startSrtListener\(\);/);
+  assert.match(src, /if \(kind === "rtmps"\) assertRtmpConfig\(\);/);
+  assert.match(src, /buildAudioSource\(inputFile, ingest, kind === "rtmps"\)/);
+});
+
+test("INPUT_SOURCE=rtmps is accepted by config", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const env = { ...process.env, INPUT_SOURCE: "rtmps" } as NodeJS.ProcessEnv;
+  const r = spawnSync(process.execPath, ["--import", "tsx", "-e", 'import("./src/config.ts").then((m)=>console.log("SRC="+m.config.input.source+" HOST="+m.config.rtmp.listenHost+" PORT="+m.config.rtmp.listenPort))'], { env, encoding: "utf8", cwd: new URL("..", import.meta.url).pathname });
+  assert.match(r.stdout, /SRC=rtmps HOST=127.0.0.1 PORT=1935/);
+});
+
 test("file wins, then browser, then srt", () => {
   assert.equal(selectSource({ inputFile: "/tmp/x.raw", source: "browser" }), "file");
   assert.equal(selectSource({ inputFile: "/tmp/x.raw", source: "srt" }), "file");

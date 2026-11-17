@@ -73,6 +73,19 @@ The browser path is driven in tests by a LiveKit publisher with identity `browse
 `app/test/ingest-livekit.test.ts` for a local run). Pointing this harness at it is not built; it is on the live-test list
 in [security.md](security.md#browser-microphone-input).
 
+## RTMPS input
+
+`./e2e/e2e.sh run` streams over SRT; it does not send RTMPS and is not changed for it. With a stack deployed with
+`-c inputSource=rtmps`, send the same clip yourself and read the report the same way:
+
+```bash
+ffmpeg -re -i path/to/clip.wav -vn -ac 1 -ar 48000 -c:a aac -b:a 128k -f flv \
+  "rtmps://rtmps.<LiveKitPublicIp>.sslip.io:443/live/<stream key>"
+```
+
+Take the URL from the `RtmpsUrl` output and the key from `GetRtmpsStreamKeyCommand`; do not shorten the name to the IP.
+Compare the first-word delay with an SRT run of the same clip (the app logs are the same for both inputs).
+
 ## Safety notes
 
 - `check`, `report`, `compare` and `langscan` do not change AWS. `check --fix` asks before each change and never

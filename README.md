@@ -24,8 +24,23 @@ Details of the diagram: [docs/architecture.md](docs/architecture.md).
 | Q&A in two directions with two channels | **Planned** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. |
 | Captions on the listener page | **Supported** | After **Listen** is pressed, Japanese captions appear below the button in time with the voice, and the English source as it is recognised; Japanese speech is shown as said with a `―` marker. See below. |
 | Browser microphone as input (`getUserMedia`) | **Optional** (`-c inputSource=browser`), live tests pending | For venues with no audio line out, or no PC to run OBS. See [security.md](docs/security.md#browser-microphone-input). |
+| RTMPS as input (OBS over TCP 443) | **Optional** (`-c inputSource=rtmps`), live tests pending | For venues whose network blocks outbound UDP. See [alternative-inputs.md](docs/alternative-inputs.md). |
 | Dictionary builder (easier than editing files) | **Idea** | A tool that suggests terms from slides or a transcript. |
 | Voice that follows the speaker | **Idea** | Depends on speaker detection. |
+
+## Input options
+
+SRT is the default, but not the only way to get the speaker's audio in. Pick one per deploy with `-c inputSource=...`;
+exactly one input runs at a time.
+
+| Input | Setting | When to use it |
+|---|---|---|
+| SRT from OBS or ffmpeg | `srt` (default) | A PC at the venue gets the room audio (audio line out) and the venue network lets UDP out. Lowest setup risk, tested most. |
+| Browser microphone | `browser` | The venue gives no audio line output, or OBS and ffmpeg cannot be used: no extra PC is allowed and only the speaker's own laptop is at the lectern. The speaker opens a page and types an event code. |
+| RTMPS from OBS or ffmpeg | `rtmps` | The venue network forbids outbound UDP, so SRT cannot reach AWS. OBS still runs at the venue and streams over TCP 443, which venues usually allow. |
+
+The architecture diagram above shows the SRT path. How the browser and RTMPS paths work, and why:
+[docs/alternative-inputs.md](docs/alternative-inputs.md).
 
 ## Quick start (about 10 minutes plus deploy time)
 
@@ -207,7 +222,8 @@ Your dictionary folder is `dictionaries/local/` (see step 9). Edit `terms.csv`, 
 ## Security and privacy
 
 - The listener page and the token endpoint are public. Tokens only allow listening, and expire after 6 hours.
-- SRT is accepted from your venue IP only, and needs a passphrase.
+- SRT is accepted from your venue IP only, and needs a passphrase. RTMPS (optional) is accepted from your venue IP
+  only (checked by Caddy) and needs a stream key.
 - Secrets are in AWS Secrets Manager. IAM roles are limited to the calls the app makes.
 - Audio is not recorded. The text of every chunk is written to CloudWatch Logs (14 days by default).
 - Speech and text go to Amazon Transcribe, Translate or Bedrock, and Polly. Tell speakers and attendees.
@@ -221,6 +237,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 | Page | Content |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, latency budget, design choices |
+| [docs/alternative-inputs.md](docs/alternative-inputs.md) | Browser microphone and RTMPS inputs: when to use them, how they work |
 | [docs/configuration.md](docs/configuration.md) | All settings |
 | [docs/dictionaries.md](docs/dictionaries.md) | Vocabulary, terminology, readings, corrections |
 | [docs/operations.md](docs/operations.md) | Event-day runbook, monitoring, tear down |

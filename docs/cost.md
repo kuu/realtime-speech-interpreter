@@ -81,6 +81,20 @@ Notes:
 - Other things you may have created outside the stack and that bill separately: the dictionaries bucket, the Transcribe
   vocabulary and the Translate terminology (free), the CDK bootstrap bucket and image repository.
 
+## Optional inputs
+
+The tables in this page are for the default SRT input. The calculator does not model the other inputs; their extra cost
+is small. Browser microphone input: see [security.md](security.md#cost-impact). RTMPS input (`inputSource=rtmps`):
+
+| Item | Estimate |
+|---|---|
+| Network Load Balancer: one more TCP listener on the existing NLB | No extra NLB-hour. LCU use of one audio connection (about 130 kbps) is far below 1 LCU, so the hourly LCU estimate above does not change. |
+| Secrets Manager: the stream key secret | $0.40 per month while it exists; one read per task start |
+| ECR: the custom Caddy image in the CDK assets repository | about 120 MB, about $0.012 per month at $0.1 per GB-month. Each rebuild adds an image; old images stay until you delete them, also after `cdk destroy` (like the app image). |
+| Data transfer: Caddy to the NLB's public IP (same Region) | about 60 MB per hour for 128 kbps audio. If billed as regional data transfer ($0.01 per GB each way, **not checked against a bill**), below $0.002 per hour. |
+| Elastic IPs | none added: RTMPS uses the LiveKit Elastic IP and the NLB's existing addresses |
+| SRT infrastructure | unchanged: the SRT listener stays and keeps costing what it does today |
+
 ## Cost per hour of a session
 
 Typical session: 4 hours, 100 listeners, one speaker, the `talk` profile (about 1,130 chunks per hour), Transcribe

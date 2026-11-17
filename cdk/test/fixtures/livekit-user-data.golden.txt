@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euxo pipefail
+dnf install -y docker
+systemctl enable --now docker
+set +x
+SECRET_JSON=$(aws secretsmanager get-secret-value --region ap-northeast-1 --secret-id 'arn:aws:secretsmanager:ap-northeast-1:ACCOUNT:secret:lk' --query SecretString --output text)
+API_KEY=$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["apiKey"])')
+API_SECRET=$(printf '%s' "$SECRET_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["apiSecret"])')
+unset SECRET_JSON
+mkdir -p /etc/livekit /etc/caddy
+umask 077
+cat > /etc/livekit/livekit.yaml <<EOF
+port: 7880
+bind_addresses: ["127.0.0.1"]
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: false
+  node_ip: 203.0.113.20
+keys:
+  $API_KEY: $API_SECRET
+logging:
+  level: info
+EOF
+unset API_KEY API_SECRET
+set -x
+umask 022
+cat > /etc/caddy/Caddyfile <<'EOF'
+{
+  auto_https disable_redirects
+}
+lk.example.test:443 {
+  tls {
+    issuer acme {
+      disable_http_challenge
+    }
+  }
+  reverse_proxy 127.0.0.1:7880
+}
+EOF
+docker run -d --name livekit --restart unless-stopped --network host --log-driver awslogs --log-opt awslogs-region=ap-northeast-1 --log-opt awslogs-group=/simul-translation/livekit --log-opt awslogs-stream=livekit -v /etc/livekit/livekit.yaml:/etc/livekit.yaml:ro livekit/livekit-server:v1.13.11 --config /etc/livekit.yaml
+docker run -d --name caddy --restart unless-stopped --network host --log-driver awslogs --log-opt awslogs-region=ap-northeast-1 --log-opt awslogs-group=/simul-translation/livekit --log-opt awslogs-stream=caddy -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro -v caddy_data:/data -v caddy_config:/config caddy:2.11.7

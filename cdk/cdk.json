@@ -108,6 +108,7 @@
     "livekitUdpPortEnd": 60000,
     "livekitTcpPort": 7881,
     "inputSource": "srt",
+    "rtmpPort": 1935,
     "browserInputConcurrency": 5,
     "browserInputTokenTtlSec": 600,
     "browserSessionGraceSec": 60,

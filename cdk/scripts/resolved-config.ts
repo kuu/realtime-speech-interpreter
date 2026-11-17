@@ -28,6 +28,8 @@ try {
     sourceLanguage: cfg.sourceLanguage,
     dictionaryDir: cfg.dictionaryDir,
     dictionaryDirSource: cfg.dictionaryDirSource,
+    inputSource: cfg.inputSource,
+    rtmpPort: cfg.rtmpPort,
   });
 } catch (err) {
   out.ok = false;

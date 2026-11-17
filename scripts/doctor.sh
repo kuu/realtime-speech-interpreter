@@ -70,7 +70,7 @@ RC=""
 if [[ -d "$CDK_DIR/node_modules" ]] && command -v node >/dev/null 2>&1; then
   RC="$(cd "$CDK_DIR" && node_modules/.bin/ts-node scripts/resolved-config.ts ${CARGS[@]+"${CARGS[@]}"} 2>/dev/null | tail -1)"
 fi
-REGION="" ENGINE="" MODEL="" VOCAB="" TERM="" CIDRS="" DDIR="" DSRC=""
+REGION="" ENGINE="" MODEL="" VOCAB="" TERM="" CIDRS="" DDIR="" DSRC="" INPUT=""
 if [[ -z "$RC" ]]; then
   fail "could not read the configuration (see the missing tools above)" "cd cdk && npm ci"
 else
@@ -84,6 +84,7 @@ else
     DDIR="$(printf '%s' "$RC" | jget dictionaryDir)"
     DSRC="$(printf '%s' "$RC" | jget dictionaryDirSource)"
     EVF="$(printf '%s' "$RC" | jget eventFile)"
+    INPUT="$(printf '%s' "$RC" | jget inputSource)"
     pass "configuration is valid (profile $(printf '%s' "$RC" | jget profile), region $REGION, engine $ENGINE, event file: ${EVF:-none})"
   else
     ERR="$(printf '%s' "$RC" | jget error)"
@@ -111,6 +112,20 @@ if [[ -n "$CIDRS" ]]; then
       pass "venueCidr $c"
     fi
   done
+fi
+
+if [[ "$INPUT" == "rtmps" ]]; then
+  echo "== RTMPS input"
+  warn "inputSource=rtmps: the venue IP check of the RTMPS route is done by Caddy on the LiveKit host (port 443 is public for wss), not by a security group; a venueCidr change replaces the LiveKit instance" "see docs/alternative-inputs.md and docs/security.md (RTMPS input)"
+  pass "encoder URL after deploy: rtmps://rtmps.<LiveKit IP>.sslip.io:443/live (stack output RtmpsUrl; never replace the name with the IP), stream key: GetRtmpsStreamKeyCommand"
+  # cdk deploy builds the custom Caddy image (cdk/caddy-l4) and downloads Go modules from the module proxy.
+  if [[ -n "${CADDY_GOPROXY:-}" ]]; then
+    pass "CADDY_GOPROXY is set; the Caddy image build uses it"
+  elif command -v curl >/dev/null 2>&1 && curl -s -m 8 -o /dev/null https://proxy.golang.org/; then
+    pass "proxy.golang.org is reachable (the Caddy image build downloads Go modules)"
+  else
+    warn "proxy.golang.org is not reachable from this machine; the custom Caddy image build will fail or be very slow" "export CADDY_GOPROXY=\"https://<a Go module proxy you trust>,direct\" before cdk deploy (see cdk/caddy-l4/README.md)"
+  fi
 fi
 
 echo "== Dictionary"

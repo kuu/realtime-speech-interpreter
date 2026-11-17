@@ -432,6 +432,12 @@ export class SimulTranslationStack extends cdk.Stack {
           secretStringTemplate: "{}",
           generateStringKey: "code",
           passwordLength: 12,
+          // Secrets Manager requires one character of every type that is not excluded by a flag
+          // (RequireEachIncludedType defaults to true). Listing every lowercase letter and punctuation mark
+          // in excludeCharacters is not enough: the deploy fails with "All characters of the desired type
+          // have been excluded". Exclude those types by flag; only uppercase and digits remain.
+          excludeLowercase: true,
+          excludePunctuation: true,
           excludeCharacters: CODE_EXCLUDE,
         },
       });

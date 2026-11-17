@@ -123,6 +123,13 @@ test("code secret generator uses only the 31-character alphabet, 12 characters",
   for (const c of alphabet) assert.ok(!g.ExcludeCharacters.includes(c), c);
   for (const c of "0O1IL".split("")) assert.ok(g.ExcludeCharacters.includes(c), c);
   assert.ok(g.ExcludeCharacters.includes("a") && g.ExcludeCharacters.includes("!"));
+  // Regression: without these flags Secrets Manager rejects the request ("All characters of the desired
+  // type have been excluded"), because each included type must contribute at least one character.
+  assert.equal(g.ExcludeLowercase, true);
+  assert.equal(g.ExcludePunctuation, true);
+  assert.notEqual(g.ExcludeUppercase, true);
+  assert.notEqual(g.ExcludeNumbers, true);
+  assert.notEqual(g.RequireEachIncludedType, false);
 });
 
 test("the pinned livekit-client file has the recorded SHA-256 (served from the page's own origin)", () => {

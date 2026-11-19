@@ -3,13 +3,13 @@
 
 Commands (see e2e/README.md):
   check     report (and with --fix, repair) the deployed system; prints READY / NOT READY
-  run       cloud E2E: stream a recording over SRT exactly like OBS, record the LiveKit output
+  run       cloud E2E: stream a recording over SRT (default) or RTMPS (--input) like OBS, record the LiveKit output
   local     offline E2E: run the app locally (INPUT_FILE + file sink) on the same clip
   report    regenerate report.md for a run folder (keeps the HUMAN JUDGEMENT section)
   compare   side-by-side metrics of two run folders -> compare.md
   langscan  locate Japanese speech in a recording with Transcribe language identification
 
-Python stdlib only. AWS access goes through the AWS CLI. Secrets (SRT passphrase, LiveKit API
+Python stdlib only. AWS access goes through the AWS CLI. Secrets (SRT passphrase, RTMPS stream key, LiveKit API
 secret) are fetched at runtime, kept in memory, redacted from every echoed line and never
 written to disk.
 """
@@ -79,6 +79,31 @@ def status(tag: str, msg: str) -> None:
 
 class Fail(Exception):
     pass
+
+
+INPUTS = ("srt", "rtmps")
+INPUT_ALIASES = {"rtmp": "rtmps"}
+
+
+def normalize_input(value: str) -> tuple[str, str | None]:
+    """Return (canonical input, note). 'rtmp' is accepted as an alias of 'rtmps'."""
+    v = (value or "").strip().lower()
+    if v in INPUT_ALIASES:
+        c = INPUT_ALIASES[v]
+        return c, f"--input {v}: RTMP without TLS is not offered; this means {c.upper()} (RTMP over TLS)."
+    if v in INPUTS:
+        return v, None
+    raise Fail(f"invalid --input {value!r}: valid values are {', '.join(INPUTS)} (rtmp is an alias of rtmps)")
+
+
+class _InputAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        try:
+            canon, note = normalize_input(values)
+        except Fail as e:
+            parser.error(str(e))
+        setattr(namespace, self.dest, canon)
+        setattr(namespace, "input_note", note)
 
 
 def confirm(question: str, yes: bool, allow_yes: bool = True) -> bool:
@@ -155,7 +180,7 @@ class StackInfo:
 
 
 # ---------------------------------------------------------------- tools
-def find_ffmpeg(need_srt: bool) -> tuple[str, str]:
+def find_ffmpeg(need_srt: bool, need_rtmps: bool = False) -> tuple[str, str]:
     cands = [os.environ.get("FFMPEG", ""), shutil.which("ffmpeg") or "",
              "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg", "/usr/local/opt/ffmpeg-full/bin/ffmpeg"]
     for c in cands:
@@ -166,12 +191,19 @@ def find_ffmpeg(need_srt: bool) -> tuple[str, str]:
             enc = subprocess.run([c, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
             if not re.search(r"^\s*srt\s*$", prot, re.M) or "libopus" not in enc:
                 continue
+        if need_rtmps:
+            prot = subprocess.run([c, "-hide_banner", "-protocols"], capture_output=True, text=True).stdout
+            if not re.search(r"^\s*rtmps\s*$", prot, re.M):
+                continue
         probe = str(Path(c).with_name("ffprobe"))
         if not os.path.exists(probe):
             probe = shutil.which("ffprobe") or ""
         if not probe:
             continue
         return c, probe
+    if need_rtmps:
+        raise Fail("no ffmpeg found with the rtmps protocol (TLS): `brew install ffmpeg` "
+                   "(or set FFMPEG=/path/to/ffmpeg); check with: ffmpeg -hide_banner -protocols | grep rtmps")
     raise Fail("no ffmpeg found" + (" with SRT (libsrt) and libopus: `brew install ffmpeg-full` "
                                      "(or set FFMPEG=/path/to/ffmpeg)" if need_srt else ": `brew install ffmpeg`"))
 
@@ -246,8 +278,9 @@ def stream_tail(group: str, stream: str, limit: int = 40) -> list[str]:
 
 # ---------------------------------------------------------------- check
 class Check:
-    def __init__(self, fix: bool, yes: bool, quiet: bool = False) -> None:
+    def __init__(self, fix: bool, yes: bool, quiet: bool = False, input_kind: str = "srt") -> None:
         self.fix, self.yes, self.quiet = fix, yes, quiet
+        self.input_kind = input_kind
         self.reasons: list[str] = []
         self.warnings: list[str] = []
         self.ctx: dict = {}
@@ -281,6 +314,24 @@ class Check:
             self.bad(f"Stack {STACK}: {s}", f"stack {s}")
         self.ctx["stack"] = st
         return st
+
+    def input_outputs(self, st: StackInfo) -> None:
+        """The stack must offer the chosen input. SRT with an RTMPS stack only warns (the SRT listener may be unused)."""
+        has_rtmps = bool(st.outputs.get("RtmpsUrl"))
+        self.ctx["listenTags"] = ("[rtmp]",) if self.input_kind == "rtmps" else \
+            (("[srt]", "[rtmp]") if has_rtmps else ("[srt]",))
+        if self.input_kind == "rtmps":
+            missing = [k for k in ("RtmpsUrl", "RtmpsStreamKeySecretArn") if not st.outputs.get(k)]
+            if missing:
+                self.bad(f"Stack {STACK} has no {' / '.join(missing)} output: it was deployed without "
+                         "-c inputSource=rtmps. Deploy it with that flag (keep your other -c settings), or use "
+                         "--input srt",
+                         "stack has no RTMPS input (deploy with -c inputSource=rtmps)")
+                return
+            self.ok("Stack offers RTMPS input (output RtmpsUrl)")
+        elif has_rtmps:
+            self.warn("Stack has an RtmpsUrl output (deployed with inputSource=rtmps): the SRT listener may not be "
+                      "in use, so an SRT run can fail. Use --input rtmps if you meant RTMPS")
 
     def livekit_ec2(self, st: StackInfo) -> None:
         iid = st.out("LiveKitInstanceId")
@@ -349,12 +400,15 @@ class Check:
             head = stream_head(group, stream, 30)
         except Fail:
             head = []
-        return (any("[livekit] connected" in m for m in head), any("[srt] listening on port" in m for m in head), head)
+        tags = self.ctx.get("listenTags", ("[srt]",))
+        return (any("[livekit] connected" in m for m in head),
+                any(f"{t} listening on port" in m for m in head for t in tags), head)
 
     def _wait_task_ready(self, st: StackInfo, not_task: str | None, timeout: int = 420) -> bool:
         group = st.out("AppLogGroupName")
         deadline = time.time() + timeout
-        say("  waiting for a RUNNING task with startup lines ([livekit] connected, [srt] listening) ...")
+        say("  waiting for a RUNNING task with startup lines ([livekit] connected, "
+            f"{'/'.join(self.ctx.get('listenTags', ('[srt]',)))} listening) ...")
         while time.time() < deadline:
             t = self._running_task(st)
             if t and t.get("lastStatus") == "RUNNING" and t["taskArn"].split("/")[-1] != not_task:
@@ -458,14 +512,15 @@ class Check:
         self.ctx["startupLines"] = [m for m in head if rpt.RE_LINE.match(m)]
         problems = []
         if not (lk and srt):
-            missing = [n for n, ok in (("[livekit] connected", lk), ("[srt] listening on port 9000", srt)) if not ok]
+            tag = "/".join(self.ctx.get("listenTags", ("[srt]",)))
+            missing = [n for n, ok in (("[livekit] connected", lk), (f"{tag} listening on port", srt)) if not ok]
             if age < 120:
                 self.warn(f"Task {tid} started {int(age)} s ago; startup lines not yet seen: {', '.join(missing)}")
             else:
                 problems.append(f"startup lines missing in app/app/{tid}: {', '.join(missing)}")
         else:
             self.ok(f"Latest task {tid}: RUNNING since {started}; started cleanly ([livekit] connected, "
-                    f"[srt] listening on port)")
+                    f"{'/'.join(self.ctx.get('listenTags', ('[srt]',)))} listening on port)")
         # NLB target health (the app's TCP health port)
         tg = st.resource("AWS::ElasticLoadBalancingV2::TargetGroup")
         if tg:
@@ -483,8 +538,9 @@ class Check:
             self.ok(f"LiveKit room '{self.ctx.get('room', 'translation')}': publisher-app is publishing audio")
         elif pub is False:
             problems.append("app (publisher-app) is not publishing in the LiveKit room")
-        # Is an SRT publisher (OBS) connected right now?
-        self._srt_idle(group, f"app/app/{tid}")
+        # Is an SRT publisher (OBS) connected right now? (the session lines are SRT-specific)
+        if self.input_kind == "srt":
+            self._srt_idle(group, f"app/app/{tid}")
         if problems:
             msg = f"Task {tid} is RUNNING but unhealthy: " + "; ".join(problems)
             if self.fix:
@@ -553,7 +609,22 @@ class Check:
         else:
             self.ok("SRT listener idle (no publisher connected)")
 
+    def rtmps_network(self, st: StackInfo) -> None:
+        """RTMPS is TCP 443 on the LiveKit address, filtered by venueCidr in Caddy before TLS. Not editable here."""
+        try:
+            ip = public_ip()
+        except Exception as e:  # noqa: BLE001
+            self.bad(f"Could not determine this machine's public IP: {e}", "public IP unknown")
+            return
+        self.ctx["publicIp"] = ip
+        self.warn(f"RTMPS needs this machine's public IP {ip} in the stack's venueCidr (checked by the LiveKit host "
+                  "before TLS, not by this harness). If it is not, the connection is closed at once. Redeploy "
+                  "with every allowed CIDR plus this one: cd cdk && npx cdk deploy -c inputSource=rtmps "
+                  "-c venueCidr=<existing CIDRs>,<ip>/32")
+
     def sg(self, st: StackInfo) -> None:
+        if self.input_kind == "rtmps":
+            return self.rtmps_network(st)
         port = int(st.outputs.get("SrtPort", SRT_PORT_DEFAULT))
         try:
             ip = public_ip()
@@ -627,7 +698,7 @@ class Check:
         st = self.stack()
         if st:
             self.ctx["room"] = "translation"
-            for fn in (self.livekit_ec2, self.livekit_tls, self.ecs, self.listener_page, self.sg):
+            for fn in (self.input_outputs, self.livekit_ec2, self.livekit_tls, self.ecs, self.listener_page, self.sg):
                 try:
                     fn(st)
                 except Fail as e:
@@ -1007,25 +1078,42 @@ def _print_done(run_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------- cloud run
+def rtmps_target(st: StackInfo) -> tuple[str, str]:
+    """(base URL without key, full URL with key). The key is registered for redaction before it is used."""
+    base = st.out("RtmpsUrl").rstrip("/")
+    if not re.fullmatch(r"rtmps://[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9_-]+", base):
+        raise Fail("unexpected RtmpsUrl output (expected rtmps://<host>[:port]/<app>)")
+    key = get_secret_string(st.out("RtmpsStreamKeySecretArn"))  # registers the key with add_secret
+    if not re.fullmatch(r"[A-Za-z0-9]{8,128}", key):
+        raise Fail("the RTMPS stream key secret has an unexpected format (expected letters and digits only)")
+    return base, f"{base}/{key}"
+
+
 def cmd_run(args) -> int:
-    ffmpeg, ffprobe = find_ffmpeg(True)
+    inp = getattr(args, "input", "srt")
+    if getattr(args, "input_note", None):
+        say(f"NOTE: {args.input_note}")
+    ffmpeg, ffprobe = find_ffmpeg(inp == "srt", inp == "rtmps")
     f, start, dur, _ = clip_args(args, ffprobe)
     if not app_deps_ok():
         raise Fail(f"{APP}/node_modules missing (the recorder uses the app's LiveKit SDKs): cd {APP} && npm ci")
-    chk = Check(fix=False, yes=False)
+    chk = Check(fix=False, yes=False, input_kind=inp)
     if not chk.run():
         say("Refusing to stream: the system is NOT READY. Fix it first: ./e2e/e2e.sh check --fix")
         return 2
     st: StackInfo = chk.ctx["stack"]
     group = st.out("AppLogGroupName")
     stream = chk.ctx["logStream"]
-    template = st.out("ObsSrtUrlTemplate")
-    u = urllib.parse.urlparse(template)
-    params = dict(urllib.parse.parse_qsl(u.query))
-    if params.get("mode") != "caller" or "passphrase" not in params:
-        raise Fail(f"unexpected ObsSrtUrlTemplate {template}")
-    host = st.out("SrtIngestIp2") if args.ingest == 2 else u.hostname
-    port = u.port or SRT_PORT_DEFAULT
+    if inp == "srt":
+        template = st.out("ObsSrtUrlTemplate")
+        u = urllib.parse.urlparse(template)
+        params = dict(urllib.parse.parse_qsl(u.query))
+        if params.get("mode") != "caller" or "passphrase" not in params:
+            raise Fail(f"unexpected ObsSrtUrlTemplate {template}")
+        host = st.out("SrtIngestIp2") if args.ingest == 2 else u.hostname
+        port = u.port or SRT_PORT_DEFAULT
+    elif args.ingest == 2:
+        raise Fail("--ingest 2 selects the second SRT ingest IP; it does not apply to --input rtmps")
 
     run_dir = make_run_dir(args.label, f, "cloud")
     say("")
@@ -1044,7 +1132,7 @@ def cmd_run(args) -> int:
                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                            bufsize=1, start_new_session=True)
     ff = None
-    meta = dict(mode="cloud", label=args.label, file=str(f), fileStem=f.stem, clipStartSec=start, clipDurationSec=dur,
+    meta = dict(mode="cloud", input=inp, label=args.label, file=str(f), fileStem=f.stem, clipStartSec=start, clipDurationSec=dur,
                 startedAt=iso_now(), taskDefRevision=chk.ctx.get("taskDefRevision"), taskId=chk.ctx.get("taskId"),
                 logStream=stream, command=sys.argv[1:],
                 configSource=f"deployed task definition revision {chk.ctx.get('taskDefRevision')}")
@@ -1081,14 +1169,21 @@ def cmd_run(args) -> int:
             say(f"   streaming starts in {args.countdown} s (Ctrl-C to abort)")
             time.sleep(args.countdown)
 
-        passphrase = get_secret_string(st.out("SrtPassphraseSecretArn"))
-        q = dict(params)
-        q["passphrase"] = passphrase
-        url = f"srt://{host}:{port}?" + urllib.parse.urlencode(q)
-        del passphrase
-        meta["srtUrlRedacted"] = redact(url)
-        ff_cmd = [ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostats", "-re", "-i", str(clip), "-vn",
-                  "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", args.bitrate, "-f", "mpegts", url]
+        if inp == "rtmps":
+            base, url = rtmps_target(st)
+            meta["rtmpsUrlRedacted"] = redact(url)
+            # Same shape as an OBS RTMPS stream: AAC, 48 kHz, mono, FLV; -re paces it at real time.
+            ff_cmd = [ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostats", "-re", "-i", str(clip), "-vn",
+                      "-ac", "1", "-ar", "48000", "-c:a", "aac", "-b:a", args.bitrate, "-f", "flv", url]
+        else:
+            passphrase = get_secret_string(st.out("SrtPassphraseSecretArn"))
+            q = dict(params)
+            q["passphrase"] = passphrase
+            url = f"srt://{host}:{port}?" + urllib.parse.urlencode(q)
+            del passphrase
+            meta["srtUrlRedacted"] = redact(url)
+            ff_cmd = [ffmpeg, "-hide_banner", "-loglevel", "warning", "-nostats", "-re", "-i", str(clip), "-vn",
+                      "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", args.bitrate, "-f", "mpegts", url]
         meta["ffmpegCommand"] = redact(" ".join(_shq(x) for x in ff_cmd))
         say(f"   $ {meta['ffmpegCommand']}")
         stream_start = now_ms()
@@ -1113,8 +1208,11 @@ def cmd_run(args) -> int:
                     say(f"   streaming {rpt.fmt_hms(el)} / {rpt.fmt_hms(dur)}" +
                         (f"  (app session {session})" if session else "  (app has not reported audio yet)"))
                     if session is None and el > 45:
-                        say("   ERROR: the app has not received audio after 45 s. Likely: this IP is blocked by the "
-                            "SGs, a wrong passphrase, or another SRT publisher (OBS) is connected. Stopping.")
+                        say("   ERROR: the app has not received audio after 45 s. Likely: " + (
+                            "this IP is not in venueCidr, a wrong stream key, or another RTMPS publisher is "
+                            "connected. Stopping." if inp == "rtmps" else
+                            "this IP is blocked by the SGs, a wrong passphrase, or another SRT publisher (OBS) "
+                            "is connected. Stopping."))
                         ff.terminate()
                         meta["note"] = "app received no audio; stream aborted"
         except KeyboardInterrupt:
@@ -1131,7 +1229,11 @@ def cmd_run(args) -> int:
         if ff.returncode not in (0, 255) and not interrupted:
             for line in ff_err[-10:]:
                 say("   ffmpeg: " + line)
-            if sent < 15:
+            if sent < 15 and inp == "rtmps":
+                say("   Hint: an immediate RTMPS failure usually means this IP is not in venueCidr (the "
+                    "connection is closed before TLS), the stack was not deployed with -c inputSource=rtmps, or "
+                    "another encoder (OBS) is publishing. See README troubleshooting.")
+            elif sent < 15:
                 say("   Hint: an immediate SRT failure usually means this IP is not allowlisted, the passphrase is "
                     "wrong, or another publisher holds the listener (stop OBS). See README troubleshooting.")
         session = session or _find_session(group, stream, stream_start, wait=20)
@@ -1352,6 +1454,8 @@ def main() -> int:
 
     c = sub.add_parser("check", aliases=["ensure-running"], help="report (and with --fix repair) the deployed system")
     c.add_argument("--fix", action="store_true", help="offer repairs (each asks for confirmation)")
+    c.add_argument("--input", action=_InputAction, default="srt", metavar="{srt,rtmps}",
+                   help="input to check the stack for: srt (default) or rtmps (alias: rtmp)")
     c.add_argument("--yes", action="store_true", help="skip confirmations for ECS/EC2 repairs (never for SG changes)")
 
     def clip_opts(p, need_label=True):
@@ -1362,11 +1466,14 @@ def main() -> int:
         if need_label:
             p.add_argument("--label", default=None, help="run name, e.g. baseline, ja-filter-v1")
 
-    r = sub.add_parser("run", help="cloud E2E: stream a recording to the deployed system over SRT")
+    r = sub.add_parser("run", help="cloud E2E: stream a recording to the deployed system over SRT or RTMPS")
+    r.add_argument("--input", action=_InputAction, default="srt", metavar="{srt,rtmps}",
+                   help="how the audio is delivered: srt (default) or rtmps (alias: rtmp, which means RTMPS)")
+    r.set_defaults(input_note=None)
     clip_opts(r)
     r.add_argument("--countdown", type=int, default=10, help="seconds before streaming starts (default 10)")
     r.add_argument("--ingest", type=int, choices=(1, 2), default=1, help="which SRT ingest IP (default 1)")
-    r.add_argument("--bitrate", default="128k", help="Opus bitrate (default 128k)")
+    r.add_argument("--bitrate", default="128k", help="Opus (srt) or AAC (rtmps) bitrate (default 128k)")
     r.add_argument("--drain-timeout", type=int, default=180, help="max seconds to wait for the backlog (default 180)")
 
     lo = sub.add_parser("local", help="offline E2E: run the app locally on the same clip (no deployed stack)")
@@ -1397,7 +1504,9 @@ def main() -> int:
             args.label = "cloud" if args.cmd == "run" else "local"
     try:
         if args.cmd in ("check", "ensure-running"):
-            return 0 if Check(args.fix, args.yes).run() else 1
+            if getattr(args, "input_note", None):
+                say(f"NOTE: {args.input_note}")
+            return 0 if Check(args.fix, args.yes, input_kind=args.input).run() else 1
         return {"run": cmd_run, "local": cmd_local, "report": cmd_report, "compare": cmd_compare,
                 "langscan": cmd_langscan}[args.cmd](args)
     except Fail as e:

@@ -19,14 +19,14 @@ The full reference is [`e2e/README.md`](../e2e/README.md). This page is the shor
 |---|---|---|
 | `./e2e/e2e.sh check` | Is the system ready? Read-only. `--fix` offers repairs. | yes |
 | `./e2e/e2e.sh local <clip>` | Runs the app on your machine on a clip, with the file sink. Calls the real Transcribe, Translate or Bedrock and Polly. | no |
-| `./e2e/e2e.sh run <clip>` | Streams the clip over SRT to the deployed stack and records the LiveKit output. | yes |
+| `./e2e/e2e.sh run <clip>` | Streams the clip over SRT (or RTMPS with `--input rtmps`) to the deployed stack and records the LiveKit output. | yes |
 | `./e2e/e2e.sh report <run-folder>` | Rebuilds `report.md`. | no |
 | `./e2e/e2e.sh compare <run-A> <run-B>` | Side-by-side metrics of two runs. | no |
 | `./e2e/e2e.sh langscan <clip>` | Finds Japanese speech in a recording (language identification). | no |
 
 `<clip>` is the path of an audio file. You can also give a number or a name fragment of an `NN_*.m4a` file in the folder
 set in `E2E_RECORDINGS` (default `samples/`).
-Useful options: `--start 00:05:00`, `--duration 5m`, `--label my-test`. `local` also takes `--env KEY=VALUE` to
+Useful options: `--start 00:05:00`, `--duration 5m`, `--label my-test`, and for `run` `--input srt|rtmps`. `local` also takes `--env KEY=VALUE` to
 override one app setting, for example `--env TRANSLATE_ENGINE=llm`.
 
 `local` and `run` bill the same AWS services as a live event for the length of the clip.
@@ -74,21 +74,34 @@ The browser path is driven in tests by a LiveKit publisher with identity `browse
 in [security.md](security.md#browser-microphone-input).
 
 ## RTMPS input
+`./e2e/e2e.sh run` sends over SRT by default. To send over RTMPS instead, deploy the stack with `-c inputSource=rtmps`
+and run:
+```bash
+./e2e/e2e.sh check --input rtmps
+./e2e/e2e.sh run --input rtmps --file 1 --start 00:10:00 --duration 5m --label rtmps
+```
+`rtmp` is accepted as an alias of `rtmps` (a note says it means RTMPS); other values are an error.
 
-`./e2e/e2e.sh run` streams over SRT; it does not send RTMPS and is not changed for it. With a stack deployed with
-`-c inputSource=rtmps`, send the same clip yourself and read the report the same way:
+- The harness reads the URL from the `RtmpsUrl` output and the stream key from the secret named in
+  `RtmpsStreamKeySecretArn` (read-only calls). It never prints the key. It is in ffmpeg's argument list while the run
+  streams, so other users of the same Mac could see it with `ps`.
+- Without the `RtmpsUrl` output (stack deployed without `inputSource=rtmps`), `check --input rtmps` and `run --input rtmps`
+  stop with a clear message.
+- Your Mac's public IP must be in the stack's `venueCidr` (for example `203.0.113.10/32`), because the venue allowlist is
+  applied on TCP 443 before TLS. The harness prints a reminder but cannot change it.
+- The audio is paced at real time. The run records `input` in `meta.json` and `report.md`; `compare` warns when the two
+  runs used different inputs.
 
+To send by hand instead, with ffmpeg:
 ```bash
 ffmpeg -re -i path/to/clip.wav -vn -ac 1 -ar 48000 -c:a aac -b:a 128k -f flv \
   "rtmps://rtmps.<LiveKitPublicIp>.sslip.io:443/live/<stream key>"
 ```
-
 Take the URL from the `RtmpsUrl` output and the key from `GetRtmpsStreamKeyCommand`; do not shorten the name to the IP.
 Compare the first-word delay with an SRT run of the same clip (the app logs are the same for both inputs).
-
 ## Safety notes
 
 - `check`, `report`, `compare` and `langscan` do not change AWS. `check --fix` asks before each change and never
   opens a security group without you typing `y`.
-- `run` refuses to start when `check` says NOT READY, and it needs the SRT port open for your IP.
+- `run` refuses to start when `check` says NOT READY, and it needs your IP allowed: the SRT port for SRT, `venueCidr` for RTMPS.
 - The harness mints its own subscribe-only token and never prints secrets.

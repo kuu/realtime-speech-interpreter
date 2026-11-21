@@ -14,6 +14,7 @@ import { config } from "./config.js";
 import { initReadings, readingsStartupLine } from "./polly-readings.js";
 import { log } from "./log.js";
 import { startSrtListener } from "./srt-source.js";
+import { startRtmpListener, assertRtmpConfig } from "./rtmp-source.js";
 import { PcmQueue } from "./pcm-queue.js";
 import { runPipeline } from "./pipeline.js";
 import { createSink } from "./audio-sink.js";
@@ -25,7 +26,7 @@ import { selectSource } from "./input-source.js";
 import { BrowserIngest } from "./ingest.js";
 
 // Build the PCM frame source for one session: either the live SRT listener or a paced file (test).
-function buildAudioSource(inputFile: string | undefined, ingest?: BrowserIngest): {
+function buildAudioSource(inputFile: string | undefined, ingest?: BrowserIngest, rtmps = false): {
   frames: AsyncIterable<Uint8Array>;
   stop: () => void;
 } {
@@ -57,15 +58,16 @@ function buildAudioSource(inputFile: string | undefined, ingest?: BrowserIngest)
     return { frames: queue.frames$(), stop: () => stream.destroy() };
   }
 
-  // Live SRT ingest.
-  const srt = startSrtListener();
+  // Live ingest: the RTMP listener (INPUT_SOURCE=rtmps) or the SRT listener. Same queue, same pipeline.
+  const tag = rtmps ? "rtmp" : "srt";
+  const srt = rtmps ? startRtmpListener() : startSrtListener();
   srt.chunks.on("data", (c: Buffer) => queue.push(Buffer.from(c)));
   srt.chunks.on("end", () => {
-    log.info(`[srt] stream ended (${queue.totalBytes} bytes)`);
+    log.info(`[${tag}] stream ended (${queue.totalBytes} bytes)`);
     queue.end();
   });
   srt.chunks.on("error", (err) => {
-    log.error("[srt] stdout error:", err);
+    log.error(`[${tag}] stdout error:`, err);
     queue.end();
   });
   return { frames: queue.frames$(), stop: srt.stop };
@@ -167,6 +169,7 @@ async function main(): Promise<void> {
   // Exactly one live input: the browser ingest or the SRT listener (started per session below). Never both.
   const kind = selectSource({ inputFile, source: config.input.source });
   const ingest = kind === "browser" ? new BrowserIngest() : undefined;
+  if (kind === "rtmps") assertRtmpConfig(); // refuses to start without a valid stream key (never an open listener)
   if (ingest) await ingest.start();
   let shuttingDown = false;
   let currentStop: (() => void) | null = null;
@@ -193,7 +196,7 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
   for (let session = 1; !shuttingDown; session++) {
-    const src = buildAudioSource(inputFile, ingest);
+    const src = buildAudioSource(inputFile, ingest, kind === "rtmps");
     currentStop = src.stop;
     try {
       await runPipeline(src.frames, player, session, captions);

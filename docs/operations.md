@@ -57,6 +57,43 @@ Watch the log with `aws logs tail /simul-translation/app --follow --filter-patte
 The lines (`publisher joined`, `publisher replaced`, `no publisher for Ns`, `silent Ns`, `level`) are listed in
 [security.md](security.md#browser-microphone-input). The speaker checklist is in the same section.
 
+## RTMPS input (only with `-c inputSource=rtmps`)
+
+Use it when the venue network blocks outbound UDP (SRT cannot get out). Design: [alternative-inputs.md](alternative-inputs.md).
+
+1. Deploy with the flag (and the venue IP as always): `cd cdk && npx cdk deploy -c inputSource=rtmps`. Docker must be
+   running: the deploy builds the custom Caddy image (`cdk/caddy-l4`, several minutes the first time). If
+   `proxy.golang.org` is unreachable from your machine, set `CADDY_GOPROXY` first (see
+   [cdk/caddy-l4/README.md](../cdk/caddy-l4/README.md)); `./scripts/doctor.sh -c inputSource=rtmps` checks it. The LiveKit
+   instance is replaced by this deploy (short outage, the Elastic IP stays); Caddy then needs 1 to 3 minutes for the
+   certificate of the new `rtmps.` name.
+2. Get the URL and the stream key:
+   ```bash
+   aws cloudformation describe-stacks --stack-name SimulTranslation --region ap-northeast-1 \
+     --query "Stacks[0].Outputs[?OutputKey=='RtmpsUrl'||OutputKey=='GetRtmpsStreamKeyCommand'].[OutputKey,OutputValue]" --output text
+   ```
+   Run the `GetRtmpsStreamKeyCommand` value to print the key. Treat it like a password.
+3. OBS: Settings > Stream > Service **Custom...**, Server = the `RtmpsUrl` value
+   (`rtmps://rtmps.<LiveKit IP>.sslip.io:443/live`), Stream Key = the key. **Do not replace the name with the IP
+   address**: the name selects the RTMPS route, a bare IP fails. Settings > Output: audio AAC, 128 kbps, 48 kHz, mono or
+   stereo. OBS sends a video track with RTMP; keep it minimal (for example a small static image, low bitrate); the app
+   ignores video. Enable Settings > Advanced > Automatically reconnect. ffmpeg:
+   ```bash
+   ffmpeg -re -i input.wav -vn -ac 1 -ar 48000 -c:a aac -b:a 128k -f flv \
+     "rtmps://rtmps.<LiveKit IP>.sslip.io:443/live/<stream key>"
+   ```
+4. Only the venue IPs in `venueCidr` can connect; from elsewhere the connection is closed before TLS (OBS shows a
+   connection error). Changing `venueCidr` with `inputSource=rtmps` replaces the LiveKit instance, so set it days
+   before the event.
+5. Log lines (`aws logs tail /simul-translation/app --follow --filter-pattern "[rtmp]" --region ap-northeast-1`):
+   `[rtmp] listening on port 1935`, `[rtmp] publish accepted`, `[rtmp] stream ended`, and
+   `[rtmp] rejected publish with a wrong key` (check the key in OBS). Caddy logs are in the `/simul-translation/livekit`
+   log group, stream `caddy`.
+6. Switch back to SRT with a deploy without the flag (or `-c inputSource=srt`). It removes the RTMPS listener and
+   secret and replaces the LiveKit instance with the official Caddy image again.
+7. Rebuild duty: when Caddy, caddy-l4 or Go publish a security fix, update the pins in `cdk/caddy-l4/Dockerfile` and
+   deploy ([cdk/caddy-l4/README.md](../cdk/caddy-l4/README.md)).
+
 ## Encoder settings (OBS)
 
 Output: custom, FFmpeg output to the SRT URL, container `mpegts`, audio codec `libopus`, mono or stereo, 48 kHz,

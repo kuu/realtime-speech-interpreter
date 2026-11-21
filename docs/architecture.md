@@ -92,7 +92,11 @@ for audio only. LiveKit publishes audio-only from a server SDK and plays it in t
 **OBS and SRT for ingest.** Event teams already know OBS. SRT survives packet loss on venue networks and
 supports a passphrase. The Network Load Balancer gives static IPs, so the venue can allow-list them.
 
-**Browser microphone input (optional, `inputSource=browser`).** A second input next to SRT, for venues without an audio line out: a desktop browser page (`/publish`) captures the microphone and publishes it to a separate LiveKit ingest room; the app subscribes and feeds the same `PcmQueue` and pipeline as SRT. One input is active at a time (`INPUT_SOURCE=srt|browser`). The security model is in [security.md](security.md#browser-microphone-input) (issue #10).
+**Browser microphone input (optional, `inputSource=browser`).** A second input next to SRT, for venues without an audio line out: a desktop browser page (`/publish`) captures the microphone and publishes it to a separate LiveKit ingest room; the app subscribes and feeds the same `PcmQueue` and pipeline as SRT. One input is active at a time (`INPUT_SOURCE=srt|browser|rtmps`). The security model is in [security.md](security.md#browser-microphone-input) (issue #10).
+
+**RTMPS input (optional, `inputSource=rtmps`).** For venues that block outbound UDP: OBS sends RTMPS to TCP 443 of the LiveKit host, where Caddy's layer4 route (selected by the TLS server name, venue IPs only) decrypts it and forwards plain RTMP through a TCP listener on the existing NLB to the app, which decodes it into the same `PcmQueue` (issue #11). It adds no buffering: in a local loopback test the path through Caddy was about 5 ms slower than direct RTMP. The diagram above shows only SRT.
+
+**Alternative inputs.** The browser and RTMPS paths, with diagrams and the reasons for each design decision, are in [alternative-inputs.md](alternative-inputs.md).
 
 **Language filter.** Rooms with a moderator or questions in Japanese would otherwise be transcribed as English-looking
 words and translated into nonsense. Transcribe identifies the language of every result and the app drops results that

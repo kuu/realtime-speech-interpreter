@@ -338,6 +338,16 @@ export const config = {
     analyzeMs: safeNum("SRT_ANALYZE_MS", 500, 0, 10000),
   },
 
+  // RTMP ingest (INPUT_SOURCE=rtmps): the app is the RTMP listener behind Caddy, which terminates TLS.
+  // Same bind rule as SRT: loopback by default, the Fargate task sets RTMP_HOST=0.0.0.0.
+  rtmp: {
+    listenHost: str("RTMP_HOST", "127.0.0.1"),
+    listenPort: num("RTMP_PORT", 1935),
+    streamKey: str("RTMP_STREAM_KEY", ""), // secret; required when INPUT_SOURCE=rtmps
+    // Same role as SRT_ANALYZE_MS (-analyzeduration, ms); 0 = ffmpeg default.
+    analyzeMs: safeNum("RTMP_ANALYZE_MS", 500, 0, 10000),
+  },
+
   // Audio decoded from SRT and sent to Transcribe (validated: 16 kHz mono s16le).
   audio: {
     sampleRateHertz: num("SAMPLE_RATE", 16000),
@@ -413,8 +423,9 @@ export const config = {
   //   sleep    = revert: sleep(frameMs) after each frame (drifts ~1 %, +2.5 s after 4 min)
   input: {
     pacing: oneOf("INPUT_PACING", "absolute", ["absolute", "sleep"] as const),
-    // Which live input runs: the SRT listener or the browser microphone page. Exactly one, never both.
-    source: oneOf("INPUT_SOURCE", "srt", ["srt", "browser"] as const),
+    // Which live input runs: the SRT listener, the browser microphone page or the RTMP listener behind
+    // the RTMPS front (Caddy). Exactly one, never two.
+    source: oneOf("INPUT_SOURCE", "srt", ["srt", "browser", "rtmps"] as const),
   },
   // Browser microphone input (INPUT_SOURCE=browser). Silence level and seconds are provisional
   // (to be set after the live measurement).

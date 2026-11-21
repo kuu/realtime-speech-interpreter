@@ -101,6 +101,7 @@ export interface StackConfig {
   livekitUdpPortEnd: number;
   livekitTcpPort: number;
   inputSource: string;
+  rtmpPort: number;
   browserInputConcurrency: number;
   browserInputTokenTtlSec: number;
   browserSessionGraceSec: number;
@@ -279,6 +280,7 @@ export function loadConfig(scope: Construct): StackConfig {
     livekitUdpPortEnd: ctxPort("livekitUdpPortEnd"),
     livekitTcpPort: ctxPort("livekitTcpPort"),
     inputSource: ctxStr("inputSource").trim().toLowerCase(),
+    rtmpPort: ctxPort("rtmpPort"),
     browserInputConcurrency: ctxNum("browserInputConcurrency"),
     browserInputTokenTtlSec: ctxNum("browserInputTokenTtlSec"),
     browserSessionGraceSec: ctxNum("browserSessionGraceSec"),
@@ -470,7 +472,16 @@ export function loadConfig(scope: Construct): StackConfig {
     throw new Error("livekitHostname must be a plain DNS name");
   }
   // Browser microphone input. All ranges are checked even when inputSource=srt, so a typo shows up early.
-  if (cfg.inputSource !== "srt" && cfg.inputSource !== "browser") throw new Error('inputSource must be "srt" or "browser"');
+  if (!["srt", "browser", "rtmps"].includes(cfg.inputSource)) throw new Error('inputSource must be "srt", "browser" or "rtmps"');
+  // RTMPS input. The port is checked even when inputSource is not rtmps, so a typo shows up early.
+  for (const [name, port] of [["srtPort", cfg.srtPort], ["healthPort", cfg.healthPort], ["livekitTcpPort", cfg.livekitTcpPort]] as const) {
+    if (cfg.rtmpPort === port) throw new Error(`rtmpPort must differ from ${name} (${port})`);
+  }
+  if (cfg.rtmpPort === 443 || cfg.rtmpPort === 7880) throw new Error("rtmpPort must not be 443 or 7880 (Caddy and LiveKit signaling)");
+  if (cfg.inputSource === "rtmps" && cfg.livekitHostname) {
+    throw new Error("inputSource=rtmps needs livekitHostname empty: the RTMPS name rtmps.<LiveKit IP>.sslip.io exists only with the sslip.io host");
+  }
+  if (cfg.inputSource === "rtmps" && cfg.venueCidrs.length === 0) throw new Error("inputSource=rtmps needs venueCidr (Caddy admits only those addresses)");
   intRangeEarly(cfg, "browserInputConcurrency", 1, 1000, " (0 is not allowed: the reserved concurrency is the brute-force throttle of the publisher endpoint)");
   intRangeEarly(cfg, "browserInputTokenTtlSec", 60, 3600);
   intRangeEarly(cfg, "browserSessionGraceSec", 10, 600);

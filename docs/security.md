@@ -12,6 +12,8 @@ this repository. It is not a security audit. Review it against your own requirem
 | LiveKit host: TCP 443, TCP 7881, UDP 50000-60000 | Internet | Browsers anywhere must reach signaling and media. | A token is required to join. Port 7880 (plain signaling), 22 and 80 are not open. TLS ends in Caddy (Let's Encrypt). |
 | `/publish` and `/publisher-token` (only with `inputSource=browser`) | Anyone with the URL can open the page; only a holder of the event code gets a publish token | Speakers open the page in a desktop browser and type the code. | Event code in Secrets Manager, constant-time compare, reserved-concurrency throttle, 1 s delay on a wrong code, event end time, publish-only microphone token for one fixed identity in a separate ingest room. See [Browser microphone input](#browser-microphone-input). |
 | SRT ingest: UDP 9000 on the Network Load Balancer | **Venue IP only** | OBS sends the audio here. | Security groups on the load balancer and the task allow only `venueCidr`. SRT passphrase (AES). |
+| RTMPS ingest: name `rtmps.<LiveKit IP>.sslip.io` on TCP 443 of the LiveKit host (only with `inputSource=rtmps`) | **Venue IP only**, checked by Caddy (the port itself is public for wss) | OBS sends the audio here when UDP is blocked. | Caddy closes non-venue sources before TLS; stream key checked by the app. See [RTMPS input](#rtmps-input). |
+| RTMP: TCP 1935 on the Network Load Balancer (only with `inputSource=rtmps`) | **The LiveKit Elastic IP only** | Caddy forwards the decrypted stream here. | Security group allows `<LiveKit Elastic IP>/32` only; the task accepts it from the load balancer only. |
 
 Anyone who has the listener URL can listen. There is no login. Do not publish the URL if the content is not public.
 
@@ -39,6 +41,8 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
 - With `inputSource=browser` the event code is in its own secret (`PublisherCodeSecret`). Only the publisher function
   and the operator's own identity can read it; the app task role cannot. The event end time is an SSM String parameter
   (`/simul-translation/publisher-not-after`) that the operator command writes and the app and the publisher function read.
+- With `inputSource=rtmps` the stream key is in its own secret (`RtmpStreamKeySecret`), injected into the app only.
+  See [Stream key](#stream-key).
 - Get the SRT passphrase with the `GetSrtPassphraseCommand` stack output. Treat it like a password and do not paste it
   into chat or tickets. To rotate it, rotate the secret in Secrets Manager, restart the app task (`--force-new-deployment`) and
   update the encoder.
@@ -52,6 +56,7 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
 | Token Lambda | Read of the LiveKit secret, write to its log group. |
 | Publisher token Lambda (`inputSource=browser`) | Read of the code secret and the LiveKit secret, `ssm:GetParameter` on the end-time parameter, write to its log group. No wildcard resources. |
 | App task role, additionally with `inputSource=browser` | `ssm:GetParameter` on the end-time parameter only. It cannot read the code secret. |
+| LiveKit instance role, additionally with `inputSource=rtmps` | `ecr:GetAuthorizationToken` (no resource scope exists) and `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, `ecr:BatchGetImage` on the CDK assets repository that holds the Caddy image. No push. It cannot read the stream key. |
 | Operator (your own identity) | For `cdk/scripts/publisher-code.mjs`: `cloudformation:DescribeStacks`, `secretsmanager:PutSecretValue` on the code secret, `ssm:PutParameter` on the end-time parameter, and for `--disconnect` `secretsmanager:GetSecretValue` on the LiveKit secret. |
 
 The Fargate task and the LiveKit host sit in public subnets without a NAT gateway. Security groups are the boundary:
@@ -583,6 +588,111 @@ Automated tests run locally. These need a deployed stack or a laptop and are the
   (decision 9), and latency of the browser path versus SRT.
 - **Safari.** If Safari fails the 60-minute test, state "Safari is not supported for the browser ingest" in
   `README.md` (decision 12 and the owner's instruction). It is not stated there now.
+
+## RTMPS input
+
+**Status: implemented; live tests pending (see "RTMPS live tests after deploy").** Only with `inputSource=rtmps`
+([issue #11](https://github.com/kuu/realtime-speech-interpreter/issues/11)). The data path and the design reasons are in
+[alternative-inputs.md](alternative-inputs.md#rtmps-path).
+
+### Threat model change
+
+| With SRT | With RTMPS |
+|---|---|
+| The input port (UDP `srtPort` on the NLB) is open to `venueCidr` only, enforced by security groups. | The input arrives on TCP 443 of the LiveKit host, which is open to the internet for wss signaling. **The venue check moves from security groups to Caddy:** the layer4 route closes a connection from outside `venueCidr` before the TLS handshake. |
+| The sender proves itself with the SRT passphrase (AES). | The sender proves itself with the stream key (in the URL path, inside TLS). |
+| SRT is encrypted end to end to the app. | RTMPS is encrypted to Caddy. **Caddy forwards plain RTMP to the NLB** through the internet gateway (see "Residual risks"). |
+
+Anyone can open a TCP connection to port 443, as before. For the RTMPS name from a non-venue address they get no TLS
+handshake. The route matches only the RTMPS server name with an ALPN other than `acme-tls/1`, so wss signaling for the
+LiveKit name and Let's Encrypt's TLS-ALPN-01 validation (which comes from addresses outside the venue) are not affected.
+A wrong venue setting therefore cannot break certificate issuance; a mistake in the generated Caddyfile is caught by
+`caddy validate` in the boot script before Caddy starts.
+
+### The NLB port
+
+The RTMP listener (TCP `rtmpPort`, default 1935) is on the existing internet-facing NLB. Its security group admits
+that port from **`<LiveKit Elastic IP>/32` only**: Caddy reaches the NLB through its public address, so the packets
+arrive with the Elastic IP as the source. A rule that names the LiveKit security group would not match that traffic,
+and no venue CIDR or `0.0.0.0/0` rule exists for the port (`cdk/test/rtmps-input.test.ts` checks all three). The
+target group does not preserve the client IP, so the task sees the NLB as the source; the app security group admits
+the port from the NLB security group only. The NLB is public, but only one source address passes its security group
+on this port.
+
+### Stream key
+
+- Generated by Secrets Manager like the SRT passphrase (`RtmpStreamKeySecret`: 32 characters, letters and digits only,
+  so it is safe in a URL path). The template holds only the ARN. These generator settings were checked against the
+  service with `aws secretsmanager get-random-password` (no resource created) and a test pins them, because a
+  generator setting that the service rejects failed a deploy in #10.
+- ECS injects it into the app as `RTMP_STREAM_KEY` through the task execution role. The LiveKit host never reads it:
+  Caddy does not check the key, the app does.
+- Read it with the `GetRtmpsStreamKeyCommand` output. There is no operator script, no end time and no rotation command.
+  To rotate: rotate the secret in Secrets Manager, restart the app task (`--force-new-deployment`), update OBS.
+- It is never logged. The app's startup line shows the URL with `***`; ffmpeg's log lines are masked before they are
+  written, and the mismatch line, which names the received stream, is not written at all. Inside the task the key is in
+  the ffmpeg command line, as the SRT passphrase is.
+- The app refuses to start with an empty key or one that is not 16 to 128 letters and digits, so an open RTMP listener
+  cannot be deployed by mistake.
+
+**The key check depends on ffmpeg log messages.** ffmpeg in `-listen 1` mode does not refuse a wrong key: it logs
+`Unexpected stream <name>, expecting <key>` (or `App field don't match up` for a wrong app name) and decodes the stream
+anyway. This was checked with ffmpeg 9.0.2 and with the ffmpeg 5.1.9 of the app image. The app therefore holds all PCM
+of a connection until ffmpeg reports the opened input with no mismatch line before it, kills ffmpeg and drops the PCM
+on a mismatch (`[rtmp] rejected publish with a wrong key`), and rejects a connection whose PCM arrives while the gate
+stays closed for 2 seconds (fail closed). `app/test/rtmp-ffmpeg-image.test.ts` runs the ffmpeg of a built app image
+against a right key, a wrong key and a wrong app name and fails if the messages change; run it whenever the app
+image's ffmpeg changes (`RTMP_IMAGE=<tag> npm test` in `app/`). The unit tests prove the gate with a fake ffmpeg that
+writes PCM before its log lines.
+
+### Image supply chain
+
+With `rtmps` the LiveKit host runs a Caddy image built from `cdk/caddy-l4/Dockerfile` instead of the official image:
+official Caddy source plus the third-party caddy-l4 plugin (not an official Caddy repository; its README says it is
+still in development). Caddy version, caddy-l4 commit and both base images are pinned (digests); Go modules are
+verified by the Go checksum database. The image is stored in the CDK assets ECR repository. The instance role gets
+`ecr:GetAuthorizationToken` (which has no resource scope) and pull actions on that repository only, no push. You own
+the rebuilds: see [cdk/caddy-l4/README.md](../cdk/caddy-l4/README.md). With `srt` or `browser` none of this is
+deployed and the official image runs unchanged.
+
+### Residual risks
+
+- **Plain RTMP between Caddy and the NLB.** The decrypted stream leaves the LiveKit instance through the internet
+  gateway to the NLB's public address and crosses the AWS network unencrypted. Only the LiveKit Elastic IP may connect
+  to that port. The stream key travels in it. Accepting this avoided a second, internal load balancer.
+- One Caddy process carries wss signaling and RTMPS. A crash stops both.
+- A holder of the stream key at a venue address can send any audio, as with the SRT passphrase.
+
+### RTMPS cost
+
+See [cost.md](cost.md#optional-inputs): one secret, one NLB listener, the image in ECR. No new Elastic IP.
+
+### Verified locally
+
+With the custom image (arm64 build of `cdk/caddy-l4`) in Docker on 127.0.0.1 and the app's RTMP source, using the
+Caddyfile the stack generates (local CA instead of Let's Encrypt, local backends): a correct key delivered PCM (gate
+hold 0 ms); a wrong key delivered no PCM and logged the rejection, and the key appeared in no log line; a source
+outside the venue list was closed before TLS; wss requests and a websocket upgrade to the LiveKit name still worked
+while RTMPS was denied; `caddy validate` passed on the generated production Caddyfile and failed on a broken copy. Both
+image architectures (amd64, arm64) built and contain the layer4 modules. The ACME exclusion was proven in the probe
+with a local ACME server, not with Let's Encrypt.
+
+### RTMPS live tests after deploy (owner)
+
+1. Deploy with `-c inputSource=rtmps`. Read `RtmpsUrl` and run `GetRtmpsStreamKeyCommand`.
+2. OBS on a network that blocks UDP (or block outbound UDP on the laptop) streams to `RtmpsUrl` with the key; Japanese
+   audio plays on the listener page.
+3. A wrong key: OBS fails or disconnects, the app logs `[rtmp] rejected publish with a wrong key`, no translation.
+4. From a network outside `venueCidr`: `openssl s_client -connect <LiveKit IP>:443 -servername rtmps.<LiveKit IP>.sslip.io`
+   gets no handshake (the connection is closed).
+5. The certificate of `rtmps.<LiveKit IP>.sslip.io` is issued by Let's Encrypt (`openssl s_client` from the venue shows
+   the issuer; the Caddy log stream shows the certificate obtained).
+6. The listener page and a LiveKit session still work; ICE/TCP on `livekitTcpPort` and the UDP range are unchanged.
+7. The NLB security group shows only the LiveKit Elastic IP /32 on `rtmpPort`; the RTMP target group is healthy.
+8. Latency compared with SRT: the same clip through both inputs (e2e harness for SRT, ffmpeg for RTMPS, see
+   [e2e-testing.md](e2e-testing.md#rtmps-input)).
+9. Redeploy with `inputSource=srt`: the official `caddy` image runs again (`docker ps` through Systems Manager), the
+   RTMPS listener, secret and outputs are gone.
 
 ## Transcript privacy and data flow
 

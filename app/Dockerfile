@@ -28,8 +28,9 @@ COPY --from=build /app/dist ./dist
 # Pronunciation readings (POLLY_READINGS_FILE default: /app/assets/polly-readings.csv).
 COPY --from=dictionary polly-readings.csv ./assets/polly-readings.csv
 
-# SRT ingest (UDP) and health check (TCP).
+# SRT ingest (UDP), RTMP ingest behind the RTMPS front (TCP, only with INPUT_SOURCE=rtmps) and health check (TCP).
 EXPOSE 9000/udp
+EXPOSE 1935/tcp
 EXPOSE 8080/tcp
 
 CMD ["node", "dist/main.js"]

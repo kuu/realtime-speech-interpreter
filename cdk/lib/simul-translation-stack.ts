@@ -12,7 +12,7 @@ import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as lambda from "aws-cdk-lib/aws-lambda";
-import { Platform } from "aws-cdk-lib/aws-ecr-assets";
+import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { loadConfig } from "./config";
 import { readingsHash } from "./dictionary-dir";
 import { buildLiveKitUserData } from "./livekit-user-data";
@@ -31,6 +31,8 @@ export class SimulTranslationStack extends cdk.Stack {
     // Browser microphone input is off by default. Every browser-related resource below sits behind this flag, so
     // with inputSource=srt the template is the same as without the feature (cdk/scripts/synth-parity.sh).
     const browser = cfg.inputSource === "browser";
+    // RTMPS input, off by default, same rule: every RTMPS resource sits behind this flag (cdk/scripts/synth-parity.sh).
+    const rtmps = cfg.inputSource === "rtmps";
     const ingestRoom = `${cfg.roomName}-ingest`;
     const retention = cfg.logRetentionDays as logs.RetentionDays;
 
@@ -57,6 +59,13 @@ export class SimulTranslationStack extends cdk.Stack {
       description: "SRT passphrase (AES) for OBS -> app ingest",
       generateSecretString: { passwordLength: 32, excludePunctuation: true, includeSpace: false },
     });
+    // Same generator as the SRT passphrase: 32 letters and digits, so the key is safe in a URL path.
+    const rtmpSecret = rtmps
+      ? new secretsmanager.Secret(this, "RtmpStreamKeySecret", {
+          description: "RTMPS stream key (OBS Stream Key field) for OBS -> Caddy -> app ingest",
+          generateSecretString: { passwordLength: 32, excludePunctuation: true, includeSpace: false },
+        })
+      : undefined;
 
     // ---------------------------------------------------------------- Logs
     const appLogGroup = new logs.LogGroup(this, "AppLogGroup", {
@@ -105,11 +114,34 @@ export class SimulTranslationStack extends cdk.Stack {
     livekitSecret.grantRead(livekitRole);
     livekitLogGroup.grantWrite(livekitRole);
 
+    // Static NLB addresses (SRT ingest; with rtmps also the upstream Caddy forwards RTMP to). Defined before the
+    // LiveKit instance because its boot script needs the first address when rtmps is on.
+    const nlbEips = vpc.publicSubnets.map(
+      (_, i) =>
+        new ec2.CfnEIP(this, `SrtEip${i + 1}`, {
+          domain: "vpc",
+          tags: [{ key: "Name", value: `simul-translation-srt-${i + 1}` }],
+        }),
+    );
+
     const instanceType = new ec2.InstanceType(cfg.livekitInstanceType);
     const cpuType =
       instanceType.architecture === ec2.InstanceArchitecture.ARM_64
         ? ec2.AmazonLinuxCpuType.ARM_64
         : ec2.AmazonLinuxCpuType.X86_64;
+
+    // Custom Caddy (official Caddy + caddy-l4) for the RTMPS route, built from cdk/caddy-l4 for the instance's
+    // architecture and stored in the CDK assets ECR repository. The instance role may pull it, nothing else.
+    // CADDY_GOPROXY (optional, build machine environment) overrides the Go module proxy of the build.
+    let caddyL4: DockerImageAsset | undefined;
+    if (rtmps) {
+      caddyL4 = new DockerImageAsset(this, "CaddyL4Image", {
+        directory: path.join(__dirname, "..", "caddy-l4"),
+        platform: instanceType.architecture === ec2.InstanceArchitecture.ARM_64 ? Platform.LINUX_ARM64 : Platform.LINUX_AMD64,
+        ...(process.env.CADDY_GOPROXY ? { buildArgs: { GOPROXY: process.env.CADDY_GOPROXY } } : {}),
+      });
+      caddyL4.repository.grantPull(livekitRole);
+    }
 
     const livekitInstance = new ec2.Instance(this, "LiveKitInstance", {
       vpc,
@@ -138,6 +170,16 @@ export class SimulTranslationStack extends cdk.Stack {
         tcpPort: cfg.livekitTcpPort,
         udpPortStart: cfg.livekitUdpPortStart,
         udpPortEnd: cfg.livekitUdpPortEnd,
+        ...(rtmps && caddyL4
+          ? {
+              rtmps: {
+                name: cdk.Fn.join("", ["rtmps.", livekitHost]),
+                venueCidrs: cfg.venueCidrs,
+                upstream: cdk.Fn.join("", [nlbEips[0].ref, `:${cfg.rtmpPort}`]),
+                image: caddyL4.imageUri,
+              },
+            }
+          : {}),
       }),
     });
     cdk.Tags.of(livekitInstance).add("Name", "simul-translation-livekit");
@@ -306,15 +348,24 @@ export class SimulTranslationStack extends cdk.Stack {
               INGEST_SILENCE_SEC: String(cfg.browserSilenceSec),
             }
           : {}),
+        ...(rtmps
+          ? {
+              INPUT_SOURCE: "rtmps",
+              RTMP_HOST: "0.0.0.0", // in-task bind (awsvpc); only the NLB may reach it (AppSg)
+              RTMP_PORT: String(cfg.rtmpPort),
+            }
+          : {}),
       },
       secrets: {
         SRT_PASSPHRASE: ecs.Secret.fromSecretsManager(srtSecret),
+        ...(rtmpSecret ? { RTMP_STREAM_KEY: ecs.Secret.fromSecretsManager(rtmpSecret) } : {}),
         LIVEKIT_API_KEY: ecs.Secret.fromSecretsManager(livekitSecret, "apiKey"),
         LIVEKIT_API_SECRET: ecs.Secret.fromSecretsManager(livekitSecret, "apiSecret"),
       },
       portMappings: [
         { containerPort: cfg.srtPort, protocol: ecs.Protocol.UDP },
         { containerPort: cfg.healthPort, protocol: ecs.Protocol.TCP },
+        ...(rtmps ? [{ containerPort: cfg.rtmpPort, protocol: ecs.Protocol.TCP }] : []),
       ],
     });
 
@@ -355,13 +406,6 @@ export class SimulTranslationStack extends cdk.Stack {
     service.connections.allowFrom(nlbSg, ec2.Port.udp(cfg.srtPort), "SRT forwarded by NLB");
     service.connections.allowFrom(nlbSg, ec2.Port.tcp(cfg.healthPort), "NLB TCP health check");
 
-    const nlbEips = vpc.publicSubnets.map(
-      (_, i) =>
-        new ec2.CfnEIP(this, `SrtEip${i + 1}`, {
-          domain: "vpc",
-          tags: [{ key: "Name", value: `simul-translation-srt-${i + 1}` }],
-        }),
-    );
     const nlb = new elbv2.NetworkLoadBalancer(this, "SrtNlb", {
       vpc,
       internetFacing: true,
@@ -396,6 +440,37 @@ export class SimulTranslationStack extends cdk.Stack {
         unhealthyThresholdCount: 2,
       },
     });
+
+    // ---------------------------------------------------------------- RTMPS input (inputSource=rtmps)
+    // Caddy on the LiveKit host decrypts RTMPS and connects to this listener over the internet gateway, so the
+    // source the NLB sees is the LiveKit Elastic IP: the rule admits that /32 only (a rule naming the LiveKit
+    // security group would not match). No venue CIDR and no 0.0.0.0/0 on this port: the venue check is Caddy's.
+    if (rtmps) {
+      nlbSg.addIngressRule(
+        ec2.Peer.ipv4(cdk.Fn.join("", [livekitEip.ref, "/32"])),
+        ec2.Port.tcp(cfg.rtmpPort),
+        "RTMP from the LiveKit Elastic IP (Caddy) only",
+      );
+      service.connections.allowFrom(nlbSg, ec2.Port.tcp(cfg.rtmpPort), "RTMP forwarded by NLB");
+      const rtmpListener = nlb.addListener("RtmpListener", { port: cfg.rtmpPort, protocol: elbv2.Protocol.TCP });
+      rtmpListener.addTargets("RtmpTargets", {
+        port: cfg.rtmpPort,
+        protocol: elbv2.Protocol.TCP,
+        // The task sees the NLB as the source, so AppSg's rule on NlbSg is the one that applies.
+        preserveClientIp: false,
+        deregistrationDelay: cdk.Duration.seconds(5),
+        targets: [
+          service.loadBalancerTarget({ containerName: "app", containerPort: cfg.rtmpPort, protocol: ecs.Protocol.TCP }),
+        ],
+        healthCheck: {
+          protocol: elbv2.Protocol.TCP,
+          port: String(cfg.healthPort),
+          interval: cdk.Duration.seconds(10),
+          healthyThresholdCount: 2,
+          unhealthyThresholdCount: 2,
+        },
+      });
+    }
 
     // ---------------------------------------------------------------- Listener web + token endpoint
     // Intentionally public (anonymous attendees). The token endpoint only issues
@@ -634,6 +709,23 @@ export class SimulTranslationStack extends cdk.Stack {
       out("PublisherCodeSecretArn", publisherCodeSecret.secretArn);
       out("PublisherNotAfterParameter", PUBLISHER_NOT_AFTER_PARAM, "Event end time (UTC), written by cdk/scripts/publisher-code.mjs");
       out("PublisherIngestRoom", ingestRoom);
+    }
+    if (rtmps && rtmpSecret) {
+      out(
+        "RtmpsUrl",
+        cdk.Fn.join("", ["rtmps://rtmps.", livekitEip.ref, ".sslip.io:443/live"]),
+        "OBS Server field. Use this name exactly: an IP address instead of the name cannot be routed (no SNI)",
+      );
+      out("RtmpsStreamKeyNote", "Put the value from GetRtmpsStreamKeyCommand into the OBS Stream Key field");
+      out("RtmpsStreamKeySecretArn", rtmpSecret.secretArn);
+      out(
+        "GetRtmpsStreamKeyCommand",
+        cdk.Fn.join("", [
+          `aws secretsmanager get-secret-value --region ${region} --secret-id `,
+          rtmpSecret.secretArn,
+          " --query SecretString --output text",
+        ]),
+      );
     }
     out("AppLogGroupName", appLogGroup.logGroupName);
     out("LiveKitLogGroupName", livekitLogGroup.logGroupName);

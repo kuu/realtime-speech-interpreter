@@ -177,3 +177,19 @@ test("browser input: ranges are checked even when inputSource=srt", () => {
 test("browserInputEndsAt is not a known key (the end time comes from the operator script)", () => {
   assert.ok(!knownContextKeys().includes("browserInputEndsAt"));
 });
+test("rtmps input: accepted, port checks and rtmps-only rules", () => {
+  assert.equal(cfgFor({ inputSource: "RTMPS" }).inputSource, "rtmps");
+  assert.equal(cfgFor({}).rtmpPort, 1935);
+  assert.throws(() => cfgFor({ inputSource: "rtmp" }), /inputSource must be "srt", "browser" or "rtmps"/);
+  for (const v of [0, 70000, 1.5]) assert.throws(() => cfgFor({ rtmpPort: v }), /rtmpPort/);
+  assert.throws(() => cfgFor({ rtmpPort: 9000 }), /rtmpPort must differ from srtPort/);
+  assert.throws(() => cfgFor({ rtmpPort: 8080 }), /rtmpPort must differ from healthPort/);
+  assert.throws(() => cfgFor({ rtmpPort: 7881 }), /rtmpPort must differ from livekitTcpPort/);
+  assert.throws(() => cfgFor({ rtmpPort: 443 }), /443 or 7880/);
+  assert.throws(() => cfgFor({ rtmpPort: 7880 }), /443 or 7880/);
+  // checked even when inputSource is srt
+  assert.throws(() => cfgFor({ inputSource: "srt", rtmpPort: 9000 }), /rtmpPort/);
+  assert.throws(() => cfgFor({ inputSource: "rtmps", livekitHostname: "lk.example.com" }), /livekitHostname empty/);
+  assert.equal(cfgFor({ inputSource: "srt", livekitHostname: "lk.example.com" }).livekitHostname, "lk.example.com");
+  assert.equal(cfgFor({ inputSource: "rtmps", rtmpPort: 1936 }).rtmpPort, 1936);
+});

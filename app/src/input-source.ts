@@ -1,7 +1,9 @@
 // Which audio input runs. INPUT_FILE (the test mode) wins, as before; otherwise exactly one live source:
-// the SRT listener or the browser microphone ingest. Never both.
-export type InputKind = "file" | "browser" | "srt";
-export function selectSource(opts: { inputFile?: string; source: "srt" | "browser" }): InputKind {
+// the browser microphone ingest, the RTMP listener (RTMPS front) or the SRT listener. Never two.
+export type InputKind = "file" | "browser" | "rtmps" | "srt";
+export function selectSource(opts: { inputFile?: string; source: "srt" | "browser" | "rtmps" }): InputKind {
   if (opts.inputFile) return "file";
-  return opts.source === "browser" ? "browser" : "srt";
+  if (opts.source === "browser") return "browser";
+  if (opts.source === "rtmps") return "rtmps";
+  return "srt";
 }

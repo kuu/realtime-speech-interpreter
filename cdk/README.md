@@ -459,6 +459,15 @@ It exports the base ref with `git archive` (the repository is not touched), synt
 replaces the 64-hex asset hashes with `<hash>` and compares. It prints the hashes that changed so you can see that only
 the app image moved. `cdk/test/browser-input.test.ts` also checks that `inputSource=srt` equals the default template.
 
+## RTMPS input (optional, off by default)
+
+`-c inputSource=rtmps` adds a TCP listener on the NLB, the stream key secret and a custom Caddy image built from
+[`caddy-l4/`](caddy-l4/README.md) (pinned Caddy plus the layer4 plugin; you own its rebuilds). With `srt` or `browser`
+Caddy keeps the official `caddyImage`. Settings: [configuration.md](../docs/configuration.md#rtmps-input). Design:
+[alternative-inputs.md](../docs/alternative-inputs.md). `cdk/scripts/synth-parity.sh` checks that the default is
+unchanged; `cdk/scripts/template-diff.sh -c inputSource=rtmps` lists what the setting adds. `cdk/test/rtmps-input.test.ts`
+pins the security groups, the IAM pull grant, the generated Caddyfile and the stream key generator.
+
 ### Operator command
 
 ```bash

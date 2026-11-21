@@ -780,6 +780,11 @@ def parse_judgement(text: str) -> dict:
     return out
 
 
+def cloud_input(meta: dict) -> str:
+    """Input of a cloud run. Runs recorded before --input existed were SRT."""
+    return meta.get("input") or "srt"
+
+
 def build_report(run_dir: Path, meta: dict, log_lines: list[str], startup_lines: list[str],
                  audio: dict, runs_dir: Path) -> tuple[str, dict]:
     parsed = parse_log(log_lines)
@@ -808,13 +813,18 @@ def build_report(run_dir: Path, meta: dict, log_lines: list[str], startup_lines:
     L = []
     L.append(f"# E2E run report: {meta.get('label', '')}")
     L.append("")
-    L.append(f"- Mode: **{meta.get('mode')}**" + (" (deployed system via SRT + LiveKit)" if meta.get("mode") == "cloud"
+    L.append(f"- Mode: **{meta.get('mode')}**" + (f" (deployed system via {cloud_input(meta).upper()} + LiveKit)"
+                                                  if meta.get("mode") == "cloud"
                                                   else " (app run locally with INPUT_FILE + file sink, real AWS AI services)"))
     L.append(f"- Recording: `{meta.get('file')}`")
     L.append(f"- Clip: start {fmt_hms(clip_start)} ({clip_start:.1f} s), duration {meta.get('clipDurationSec', 0):.1f} s")
     L.append(f"- Run started: {meta.get('startedAt')}  ·  folder `{run_dir.name}`")
     if meta.get("mode") == "cloud":
-        L.append(f"- SRT target: `{meta.get('srtUrlRedacted')}` (passphrase redacted)")
+        L.append(f"- Input: **{cloud_input(meta)}**" + ("" if meta.get("input") else " (older run: assumed)"))
+        if cloud_input(meta) == "rtmps":
+            L.append(f"- RTMPS target: `{meta.get('rtmpsUrlRedacted')}` (stream key redacted)")
+        else:
+            L.append(f"- SRT target: `{meta.get('srtUrlRedacted')}` (passphrase redacted)")
         L.append(f"- ECS task def revision: {meta.get('taskDefRevision')}  ·  task `{meta.get('taskId')}`")
     if meta.get("configSource"):
         L.append(f"- Config source: {meta.get('configSource')}")
@@ -969,13 +979,14 @@ def build_report(run_dir: Path, meta: dict, log_lines: list[str], startup_lines:
     m["judgement"] = parse_judgement(judgement)
     m["label"] = meta.get("label")
     m["mode"] = meta.get("mode")
+    m["input"] = cloud_input(meta) if meta.get("mode") == "cloud" else None
     m["file"] = meta.get("fileStem")
     m["clip"] = f"{fmt_hms(clip_start)}+{meta.get('clipDurationSec', 0):.0f}s"
     return "\n".join(L), dict(metrics=m, chunks=list(parsed["chunks"].values()))
 
 
 COMPARE_ROWS = [
-    ("label", "Label"), ("mode", "Mode"), ("file", "Recording"), ("clip", "Clip"), ("chunks", "Chunks"),
+    ("label", "Label"), ("mode", "Mode"), ("input", "Input"), ("file", "Recording"), ("clip", "Clip"), ("chunks", "Chunks"),
     ("reasons", "COMMIT reasons"), ("played", "Played"), ("dropped", "Dropped"), ("skipped", "Skipped"),
     ("failed", "Failed"), ("avgE2eFirstWordMs", "avg e2eFirstWordMs"), ("p90E2eFirstWordMs", "p90 e2eFirstWordMs"),
     ("maxE2eFirstWordMs", "max e2eFirstWordMs"),
@@ -1024,6 +1035,10 @@ def compare(a_dir: Path, b_dir: Path, a: dict, b: dict) -> str:
     L = [f"# Compare: `{a_dir.name}` vs `{b_dir.name}`", ""]
     if a.get("file") != b.get("file") or a.get("clip") != b.get("clip"):
         L.append("> Warning: the two runs used different audio (recording or clip); metrics are not directly comparable.")
+        L.append("")
+    if a.get("input") and b.get("input") and a["input"] != b["input"]:
+        L.append(f"> Warning: the two runs used different inputs ({a['input']} vs {b['input']}); the codec, transport "
+                 "and decoder start-up differ, so first-word delays are not directly comparable.")
         L.append("")
     L.append(f"| Metric | A | B |")
     L.append("|---|---|---|")

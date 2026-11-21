@@ -48,6 +48,7 @@ node -e 'const p=require("./package-lock.json").packages;const c={};for(const[k,
 | Debian `node:22-bookworm-slim` base image | Docker base image of the app | Mixed (Debian packages and Node.js MIT) |
 | LiveKit server (`livekit/livekit-server`, tag set by `livekitImage` in `cdk/cdk.json`) | Container started on the EC2 instance | Apache-2.0 |
 | Caddy (`caddy`, tag set by `caddyImage` in `cdk/cdk.json`) | TLS reverse proxy container on the same instance | Apache-2.0 |
+| caddy-l4 (`github.com/mholt/caddy-l4`, commit pinned in `cdk/caddy-l4/Dockerfile`) | Only with `inputSource=rtmps`: compiled into a custom Caddy binary with `xcaddy` when CDK builds `cdk/caddy-l4`. Not redistributed here; the image you build contains it and the Go modules Caddy and caddy-l4 depend on, each under its own license. | Apache-2.0 |
 | `livekit-client` (JavaScript SDK) | Loaded by the listener web page from the jsDelivr CDN at run time (`app/web/`) | Apache-2.0 |
 | Amazon Linux 2023 | AMI of the LiveKit instance | Mixed open-source licenses |
 

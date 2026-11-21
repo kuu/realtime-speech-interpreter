@@ -10,7 +10,7 @@ the SDKs already installed in `app/node_modules`.
 | Command | What it does |
 |---|---|
 | `check` (alias `ensure-running`) | Reports whether the deployed system is ready. With `--fix`, offers repairs. |
-| `run` | Cloud E2E, the main mode. Streams a recording over SRT exactly like OBS and records the LiveKit output. |
+| `run` | Cloud E2E, the main mode. Streams a recording over SRT (default) or RTMPS (`--input rtmps`) like OBS and records the LiveKit output. |
 | `local` | Offline E2E. Runs the app on this Mac (`INPUT_FILE` + file sink) on the same clip. Needs no deployed stack. |
 | `report` | Rebuilds `report.md` for a run folder. Your HUMAN JUDGEMENT section is kept. |
 | `compare` | Puts two runs' metrics side by side and writes `compare.md`. |
@@ -54,6 +54,8 @@ cd path/to/your/clone
 
 # Cloud E2E: the whole of recording 2 (about 51 min)
 ./e2e/e2e.sh run --file 2 --label baseline-full
+# Cloud E2E over RTMPS instead of SRT (stack deployed with -c inputSource=rtmps)
+./e2e/e2e.sh run --input rtmps --file 1 --start 00:10:00 --duration 5m --label rtmps
 
 # 3. Local E2E: the same slice, with the app running on this Mac (settings from cdk/cdk.json)
 ./e2e/e2e.sh local --file 1 --start 00:10:00 --duration 5m --label baseline
@@ -81,9 +83,13 @@ Options for `run` and `local`:
 - `--label`: the run name.
 
 Options for `run` only:
+- `--input srt|rtmps`: how the audio is delivered. `srt` is the default and behaves as before. `rtmps` sends
+  AAC (48 kHz, mono) in FLV over RTMPS to the stack's `RtmpsUrl` output, with the stream key from the
+  secret in `RtmpsStreamKeySecretArn`. `rtmp` is accepted as an alias and means RTMPS (a note is printed).
+  Any other value is an error. `check` takes the same option. See [RTMPS input](#rtmps-input).
 - `--countdown N`: seconds before streaming starts. Default 10.
-- `--ingest 2`: use the second SRT ingest IP.
-- `--bitrate`: Opus bitrate. Default `128k`.
+- `--ingest 2`: use the second SRT ingest IP (SRT only; an error with `--input rtmps`).
+- `--bitrate`: Opus bitrate for SRT, AAC bitrate for RTMPS. Default `128k`.
 - `--drain-timeout`: how long to wait for queued translations after the stream ends. Default 180 s.
 
 ### What `check` verifies and repairs
@@ -115,6 +121,28 @@ out is removed by the deploy, and SRT from that network then fails silently. Wit
 cd cdk && npx cdk deploy -c venueCidr=203.0.113.10/32,198.51.100.7/32,<new-ip>/32
 ```
 
+## RTMPS input
+`--input rtmps` needs a stack that was deployed with `-c inputSource=rtmps` (it then has the outputs `RtmpsUrl` and
+`RtmpsStreamKeySecretArn`). Prerequisites and behavior:
+- `check --input rtmps` (and `run --input rtmps`) fails with a clear message when the stack has no `RtmpsUrl`
+  output. It then expects `[rtmp] listening on port` instead of `[srt] listening on port` in the task's startup lines,
+  and skips the SRT-specific checks (UDP security groups, "SRT listener idle").
+- Network: RTMPS goes to TCP 443 on the LiveKit address. The venue allowlist (`venueCidr`) is applied there before TLS,
+  so this Mac's public IP must be in `venueCidr` (for example `203.0.113.10/32`). The harness cannot change this
+  and only prints a reminder with your current public IP. Fix it by redeploying with every allowed CIDR plus yours.
+- `--input srt` against a stack deployed with `inputSource=rtmps` only prints a warning (the SRT listener may not
+  be in use). It does not guess; the run then simply fails if SRT is not reachable.
+- ffmpeg needs the `rtmps` protocol (`ffmpeg -hide_banner -protocols | grep rtmps`). The plain Homebrew `ffmpeg` has it.
+- The audio is paced at real time (`-re`), as for SRT. The command is
+  `ffmpeg -re -i source-clip.wav -vn -ac 1 -ar 48000 -c:a aac -b:a 128k -f flv rtmps://<RtmpsUrl>/<stream key>`.
+  The app decodes it with the same arguments as SRT, so the report numbers are comparable.
+- `meta.json` and `report.md` record `input` (`srt` or `rtmps`). `compare` shows an `Input` row and warns when the
+  two runs used different inputs. Runs made before this option count as `srt`.
+
+```
+./e2e/e2e.sh check --input rtmps
+./e2e/e2e.sh run --input rtmps --file 1 --start 00:10:00 --duration 5m --label rtmps-baseline
+```
 ## How a cloud run works
 
 1. `check` runs and must say READY.
@@ -129,7 +157,8 @@ cd cdk && npx cdk deploy -c venueCidr=203.0.113.10/32,198.51.100.7/32,<new-ip>/3
    **caller**. The URL comes from `ObsSrtUrlTemplate` (`mode=caller&latency=120000&pbkeylen=16`). The
    app's `srt-source.ts` is the SRT listener and decodes any codec ffmpeg can read to 16 kHz PCM. The
    passphrase is fetched from Secrets Manager at runtime and exists only in memory and in ffmpeg's
-   argument list. Every echoed command and log line shows it as `***`.
+   argument list. Every echoed command and log line shows it as `***`. With `--input rtmps`, ffmpeg sends
+   AAC in FLV over RTMPS instead, and the stream key is handled the same way as the passphrase.
 6. When the stream ends, the harness waits for the backlog to drain: until the app logs `[summary] session=N`
    and every committed chunk has reached PLAYED, DROPPED, SKIPPED or FAILED (timeout 180 s). It then
    collects that session's lines from `/simul-translation/app` by time window.
@@ -284,6 +313,11 @@ cost about $1.5-3.6. The always-on Fargate task, LiveKit EC2 and NLB cost the sa
 - **Only ONE SRT publisher at a time.** The app's ffmpeg listener accepts a single caller. **Stop streaming in
   OBS before a run** (and don't start two runs). `check` fails with `another SRT publisher is connected`
   when the app's log shows an open session.
+- **`--input rtmps`: `has no RtmpsUrl` / NOT READY.** The stack was deployed without `-c inputSource=rtmps`. Deploy with
+  it (keep your other `-c` settings) or use `--input srt`.
+- **`--input rtmps`: ffmpeg fails at once, or the app gets no audio after 45 s.** This Mac's public IP is probably not
+  in `venueCidr` (the connection is closed before TLS), the stream key was rotated, or OBS is publishing.
+- **`no ffmpeg found with the rtmps protocol`**: `brew install ffmpeg`, or set `FFMPEG=/path/to/ffmpeg`.
 - **`no ffmpeg found with SRT (libsrt) and libopus`**: `brew install ffmpeg-full`, or set `FFMPEG=/path/to/ffmpeg`.
 - **`app/node_modules missing`**: `cd app && npm ci`.
 - **Ctrl-C during a run** stops the stream. The harness still drains, collects the logs and writes the
@@ -298,6 +332,10 @@ cost about $1.5-3.6. The always-on Fargate task, LiveKit EC2 and NLB cost the sa
   in memory, replaced by `***` in all printed text and saved logs, and never written to disk. The
   passphrase has to be in ffmpeg's SRT URL, so while a run streams, other processes **on this Mac**
   can see it with `ps`. Don't run the harness on a shared machine.
+- The RTMPS stream key (`--input rtmps`) is handled the same way: read from Secrets Manager at runtime, replaced
+  by `***` in printed text, `stream.log`, `meta.json` and `report.md`, and never written to disk. ffmpeg has no way to
+  take an output URL from a file or the environment, so the key is in its argument list, visible with `ps` to
+  other processes on this Mac while a run streams. `meta.json` stores the command with `***` and the key-free URL.
 - The recorder token is minted locally. It is subscribe-only, hidden, short-lived, and limited to room `translation`.
 - Security group changes happen only through `check --fix`, only after an explicit `y`, and only for
   `<current public IP>/32` on UDP 9000.

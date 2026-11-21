@@ -238,6 +238,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, latency budget, design choices |
 | [docs/alternative-inputs.md](docs/alternative-inputs.md) | Browser microphone and RTMPS inputs: when to use them, how they work |
+| [docs/bilingual-channels.md](docs/bilingual-channels.md) | Design (planned, not built): second channel, Japanese to English |
 | [docs/configuration.md](docs/configuration.md) | All settings |
 | [docs/dictionaries.md](docs/dictionaries.md) | Vocabulary, terminology, readings, corrections |
 | [docs/operations.md](docs/operations.md) | Event-day runbook, monitoring, tear down |

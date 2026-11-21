@@ -103,6 +103,8 @@ words and translated into nonsense. Transcribe identifies the language of every 
 are not the source language. Short low-confidence English fragments inside Japanese speech are dropped too.
 `LANGUAGE_FILTER=off` restores the old behavior.
 
+**Planned: two channels.** The dropped Japanese speech is meant to feed a second, Japanese-to-English channel with its own segmenter, translation, English voice and LiveKit track, from the same single Transcribe stream. This is a design only, not built: [bilingual-channels.md](bilingual-channels.md) (issue #9).
+
 **Chunking with merge and dangling rules.** The segmenter cuts at sentence ends, at clauses once a chunk has
 enough words, and on pauses. Two rules keep chunks translatable:
 
@@ -162,7 +164,7 @@ One versioned contract with three event types. The builders are in `app/src/capt
 | `type` | `caption` (Japanese chunk), `source` (English words) or `speech` (Japanese speech as said). Unknown types are ignored. |
 | `seq` | Increases across both types within one app run. |
 | `id`, `session` | `caption`: `<session>-<chunk number>` (as `[chunk N]` in the logs). `source`: `<session>-<batch number>`. |
-| `channel`, `lang` | `ja` / `en` today. Reserved for the two-channel bilingual mode (more `channel` values). |
+| `channel`, `lang` | `ja` / `en` today. Reserved for the two-channel bilingual mode; the planned use (a new `ch` field and a topic per channel, channel 1 unchanged) is in [bilingual-channels.md](bilingual-channels.md#captions-per-channel). |
 | `speaker` | `null` today. Reserved for speaker detection. |
 | `text` | `caption`: the Japanese exactly as sent to Polly, before the SSML `<sub>` readings are applied, so product names are never replaced by readings. `source`: the words of this batch, fillers removed. At most 600 characters. |
 | `sourceText`, `sourceLang` | `caption` only: the English that was translated (fillers removed, corrections applied). The page does not show it (the English line comes from `source` events). |

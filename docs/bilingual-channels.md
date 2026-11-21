@@ -75,13 +75,15 @@ code that exists today, unchanged.
 
 ### Shape
 
-`cdk/config/event.json` gets one new optional key, `channels`, a list of one or two lanes:
+`cdk/config/event.json` gets one new optional key, `channels`, a list of one or two lanes. It is an `event.json` key
+only (not a `cdk.json` key); `-c channels='<json>'` overrides it under the existing precedence (see
+[New settings](#new-settings)):
 
 ```json
 {
   "channels": [
     { "source": "en-US", "target": "ja", "pollyVoice": "Kazuha" },
-    { "source": "ja-JP", "target": "en", "pollyVoice": "<en-US neural voice, see English voice>",
+    { "source": "ja-JP", "target": "en", "pollyVoice": "Joanna",
       "transcribeVocabulary": "simul-translation-ja", "translateTerminology": "simul-translation-ja-en" }
   ]
 }
@@ -91,7 +93,7 @@ code that exists today, unchanged.
 |---|---|---|---|
 | `source` | Transcribe code | required | Language of the speech this lane translates. Must be in `languageOptions`. |
 | `target` | Translate code | required | Language of the lane's listeners. Also the **channel id** (`ja`, `en`) used in URLs, track names and events. |
-| `pollyVoice` | string | **required on every lane** (no fallback to the flat key, see below) | Polly voice that speaks `target`. |
+| `pollyVoice` | string | **required on every lane** (no fallback to the flat key, see below) | Polly voice that speaks `target`. Default choice for an `en` lane: `Joanna` (neural, `en-US`). |
 | `transcribeVocabulary` | string | lane 1: `dictionaries.transcribeVocabulary` (context `transcribeVocabularyName`); lane 2: `""` | Transcribe custom vocabulary for `source`. |
 | `translateTerminology` | string | lane 1: `dictionaries.translateTerminology` (context `translateTerminologyName`); lane 2: `""` | Translate terminology for `source` to `target`. With the LLM engine it must be set (the LLM reads its glossary from it), as today. |
 | `translateEngine` | `translate` or `llm` | the global `translateEngine` | *Optional, can be dropped from the first version.* Lets channel 2 run on Amazon Translate while channel 1 uses the LLM, or the reverse. |
@@ -110,26 +112,30 @@ per-lane override can be added later without a breaking change.
 
 - `channels` absent = one lane built from the flat keys that exist today (`sourceLanguage`, `targetLanguage`,
   `pollyVoice`, `translateEngine`, ...). This is the default and nothing else changes.
-- "Equal to what the flat keys give" means: `source` `en-US`, `target` `ja`, `pollyVoice` equal to the default voice
-  (`Kazuha`) or to the flat `pollyVoice` that would have been used, and no other channel key set. A `channels` list
-  with exactly one such entry is normalised to the same thing as absent: no new environment variable, same task
-  definition (tested, see [Single-channel parity](#single-channel-parity)). The same one entry with another voice is a
-  one-lane deploy with that voice and sets `POLLY_VOICE` as the flat key does today.
+- **One normalisation rule.** The CDK normaliser turns `channels` into the flat environment variables whenever the
+  list has **one lane, whatever the lane is**: `SOURCE_LANGUAGE`, `TRANSLATE_SOURCE`, `TRANSLATE_TARGET`,
+  `POLLY_VOICE` (and the engine and dictionary names as today). `CHANNELS` is set **only for two lanes** and is absent
+  otherwise. So `channels` with one default entry (`en-US` to `ja`, voice `Kazuha`) produces no new variable and the
+  same task definition as no `channels` at all (tested, see [Single-channel parity](#single-channel-parity)); one
+  default entry with another voice sets `POLLY_VOICE` as the flat key does today.
 - `channels` together with the flat keys `sourceLanguage`, `targetLanguage` or `pollyVoice` in `event.json` (or the
   same `-c` keys) is rejected with a message naming both. This is why `pollyVoice` is required on each lane when
   `channels` is present: two ways to say the same thing would need a precedence rule that nobody remembers on event
   day. The other flat keys (`translateEngine`, `dictionaries.*`) stay valid and act as defaults for lane 1 (and
   `translateEngine` for lane 2).
 - A single entry that is not the default, for example `ja-JP` to `en` (a venue where the speakers talk Japanese and
-  all listeners read English), is valid and runs one lane. With `languageFilter=langid` the stream is multi-language
-  with `PreferredLanguage=ja-JP`; with `languageFilter=off` it is a single-language stream with `LanguageCode=ja-JP`
-  (`transcribe-params.ts` already supports `off`).
+  all listeners read English), is valid and runs one lane through the flat variables (`SOURCE_LANGUAGE=ja-JP`,
+  `TRANSLATE_SOURCE=ja`, `TRANSLATE_TARGET=en`, `POLLY_VOICE`). The app picks the Japanese gate, the Japanese
+  segmenter and the ja-to-en prompt from `SOURCE_LANGUAGE` alone, so the one-lane path already needs them. With
+  `languageFilter=langid` the stream is multi-language with `PreferredLanguage=ja-JP`; with `languageFilter=off` it is a
+  single-language stream with `LanguageCode=ja-JP` (`transcribe-params.ts` already supports `off`). The config tests
+  include this case (flat variables only, no `CHANNELS`, correct source/target).
 
 ### Validation (CDK synth and app start, same rules in both)
 
 | Rule | Reason |
 |---|---|
-| Two lanes require `languageFilter=langid` (the router needs a language per result). Rejected at synth and at app start with `off`. A one-lane deploy accepts both modes. |
+| Two lanes require `languageFilter=langid`. Rejected at synth and at app start with `off`. A one-lane deploy accepts both modes. | The router needs a language per result. |
 | 1 to 2 channels. | More lanes belong to [#19](https://github.com/kuu/realtime-speech-interpreter/issues/19). |
 | `source` codes are distinct. | A result has one language, so routing by language is only unambiguous with one lane per source. |
 | `target` ids are distinct and match `^[a-z]{2,3}$`. | They appear in URLs, participant identities and topics. |
@@ -140,8 +146,8 @@ per-lane override can be added later without a breaking change.
 | With the LLM engine on any lane, that lane has a terminology name. | The glossary comes from it. |
 | Unknown keys inside a channel are rejected. | Same rule as the rest of `event.json`. |
 
-CDK passes the normalised list to the container as one JSON environment variable, `CHANNELS` (set only when the list is
-not the default). The app parses and validates it again at start and refuses to run on an invalid list, as it does for
+For two lanes CDK passes the normalised list to the container as one JSON environment variable, `CHANNELS`. For one
+lane it passes the flat variables (see the normalisation rule above). The app parses and validates it again at start and refuses to run on an invalid list, as it does for
 `RTMP_STREAM_KEY` today. Both sides share one validation function so the rules cannot drift.
 
 The first lane is the **default channel**: the listener URL without a parameter plays it, and it keeps the legacy
@@ -154,6 +160,9 @@ LiveKit names (below). Put the language of the majority of listeners first.
 With multi-language identification every partial and final result has a `LanguageCode`. The measurements below come
 from 34.5 min of recorded Q&A (162 final Japanese results, 1,388 consecutive Japanese partial pairs), taken from earlier
 probe runs, in multi-language mode with partial stabilization `high`. No new audio was streamed for this design.
+**Source of the numbers:** private probe data and a private summary file kept outside this repository. The
+statistics are not reproducible from the repository; they are starting values, and the replay harness (below) is
+how a reader reproduces them on their own recordings.
 Details are in [Measured Japanese results](#measured-japanese-results).
 
 - The language code of a **partial** is not reliable: in 10.9% of results (45 of 414) it changed between partials, and
@@ -242,38 +251,50 @@ segmenter through a small interface (`ResultSink` plus `closeResult`) so both fi
 
 ### Cut rules
 
-The segmenter keeps a buffer of committed (stable) characters, like the English one. It cuts when the first rule below
-that applies is met, in this order.
+The segmenter keeps a buffer of committed (stable) text, like the English one. It cuts at the first rule below that
+applies, in this order. "Token" means one Transcribe item, punctuation items excluded.
 
-| # | Rule | Cut when | Default |
+**Dangling test D.** D is true when the **last token of the text before any trailing punctuation** equals an entry of
+`jaDanglingTokens` (whole-token equality, not a suffix match). It always looks at the text before `、`, so a clause that
+ends in `、` is tested on the word in front of the comma. D is applied by rules 2, 4, 5 and 6 only. Rules 1 and 7 never
+apply it: a stable sentence end and a Transcribe final always cut.
+
+| # | Rule | Cut when | Defaults (careful / `talk`) |
 |---|---|---|---|
-| 1 | Sentence end | A stable `。` `？` `！` (also ASCII `?` `!`) is committed and the sentence has at least `jaSentenceMinChars` characters. Shorter sentences go to merge-short. | min 6 |
-| 2 | Clause end | A stable `、` is committed, the buffer has at least `jaClauseMinChars`, and the clause does not end in a dangling suffix (below). | min 12 |
-| 3 | Clause-closing suffix without punctuation | The buffer has at least `jaClauseMinChars` and its text **ends with** one of `jaClauseEndings` (suffix match on the committed characters) and then `jaPauseMs` passes with no new activity. Used because 23% of Japanese results have no punctuation. | on |
-| 4 | Maximum characters | The buffer reaches `jaMaxChars`. Cut at the last stable `、`, else at the last `jaClauseEndings` match, else at the last position that does not end in a `jaDanglingSuffixes` match, within `jaDanglingMaxChars` extra characters. | 40, extra 10 |
-| 5 | Pause | No new transcript activity for `jaPauseMs` (as `chunkPauseMs` today). | 900 ms |
-| 6 | Maximum wait | The oldest uncut stable character is older than `jaMaxWaitMs`. Cut as in rule 4. | 4000 ms |
+| 1 | Sentence end | A stable `。` `？` `！` (also ASCII `?` `!`) is committed. A sentence shorter than `jaSentenceMinChars` goes to merge-short, **only when the existing `mergeShort` key is on** (it is off in `talk`, so in `talk` every sentence end cuts). | min 6 |
+| 2 | Clause end | A stable `、` is committed, the buffer has at least `jaClauseMinChars`, and D is false. | min 12 / 8 |
+| 3 | Clause-closing ending | The buffer has at least `jaClauseMinChars`, its text **ends with** an entry of `jaClauseEndings` (suffix match), and `jaPauseMs` passes with no new activity. For the 23% of results without punctuation. D is not needed: the two lists share no entry (see below). | 12 / 8 |
+| 4 | Maximum characters | The buffer reaches `jaMaxChars`. Cut at the last stable `、` where D is false, else at the last `jaClauseEndings` match, else at the last token boundary where D is false, looking back at most `jaDanglingMaxChars` characters; if none exists, cut at the end of the buffer. | 40, back 10 / 30, back 10 |
+| 5 | Pause | No new transcript activity for `jaPauseMs` and D is false. If D is true the cut waits for rule 6 (or for new text, which re-tests). | 900 / 600 ms |
+| 6 | Maximum wait | The oldest uncut stable character is older than `jaMaxWaitMs`. Cut as rule 4 (including its look-back for D). | 4000 / 2500 ms |
 | 7 | Final | Transcribe finalises the result. Commit the rest. | n/a |
 
-**Merge-short.** A sentence shorter than `jaSentenceMinChars` (for example `はい。`, `ありがとうございます。`) is held
-and joined with the next sentence, with the same `mergePauseMs`/`mergeMaxHoldMs` limits as English, so short replies are
-not spoken as separate one-word chunks and are never held forever.
+The dangling hold needs no key of its own: it is bounded by `jaMaxWaitMs`, which is longer than `jaPauseMs`, so the hold
+in rule 5 is real and cannot last past rule 6. (An earlier draft had a separate hold shorter than the pause, which
+could never apply.)
+
+**Merge-short.** With `mergeShort` on, a sentence shorter than `jaSentenceMinChars` (for example `はい。`, `ええ。`) is
+held and joined with the next sentence, with the same `mergePauseMs`/`mergeMaxHoldMs` limits as English, so short
+replies are not spoken as separate one-word chunks and are never held forever.
 
 **No tokenizer and no part-of-speech data in the first version.** Transcribe returns items with text, time,
-confidence and stability, not word classes, so every rule above that looks at a word form is a **suffix match on the
-committed text** against a concrete list. The lists are built-in defaults, replaceable by settings:
+confidence and stability, not word classes. Rule 3 is a suffix match on the committed text; D is a whole-token match
+on the last item. Whether Transcribe's Japanese items split particles as separate tokens (so that `は` is a token of its
+own) is **unverified**; the replay harness checks it on the probe data before the lists are fixed, and a particle that
+is glued to its word would make D miss, which the "dangling-end chunks" metric shows. The lists are built-in defaults,
+replaceable by settings:
 
-- `jaClauseEndings` (rule 3; conjunctive endings and て/で forms): `ので` `のに` `けど` `けれど` `けれども` `が` `から`
-  `ため` `ために` `ながら` `ところ` `ですが` `ますが` `ですから` `ますので` `ては` `ても` `って` `して` `いて` `えて`
-  `んで` `て` `で`. The last two are short and match many word endings, so rule 3 with them needs the pause and the
-  `jaClauseMinChars` length, and they are the first candidates to remove if the evaluation shows bad cuts.
-- `jaDanglingSuffixes` (**do not cut here**, hold up to `jaDanglingMaxHoldMs`, default 500 ms): case and topic
-  particles `は` `が` `を` `に` `で` `と` `の` `も` `へ` `や` `から` `より` `まで` `って`, and the connectives `そして`
-  `しかし` `また` `ただ` `なので` when they are the whole last token. A buffer ending in a clause-ending is allowed to
-  cut where rule 3 says so; the two lists are checked in the order rule 3, then dangling, so `が` and `から` count as a
-  clause end only through `jaClauseEndings` after the pause, and never as a cut on stability alone. A word stem that
-  needs an ending (an incomplete verb or adjective) and a number with no counter cannot be detected without word
-  classes, so they are **not** handled in the first version.
+- `jaClauseEndings` (rule 3; conjunctive endings): `ので` `のに` `けど` `けれど` `けれども` `ため` `ために` `ながら`
+  `ところ` `ですが` `ますが` `ですから` `ますので` `ては` `ても` `して` `いて` `えて` `んで`. The very short endings
+  `が` `から` `で` `って` `て` are **not** here: they match many word endings, and as whole tokens they are particles,
+  so they are in the dangling list.
+- `jaDanglingTokens` (D; do not cut after these): the particles `は` `が` `を` `に` `で` `と` `の` `も` `へ` `や`
+  `から` `より` `まで` `って` `て`, and the connectives `そして` `しかし` `また` `ただ` `なので`.
+- **The two lists must share no entry** (exact string equality). Config validation rejects an overlap, so rule 3 and D
+  never disagree. A clause that really ends in `…ですが` is cut by rule 3 because `ですが` is a clause ending and is not
+  a dangling token; a bare `が` token is dangling and never a cut point on its own.
+- A word stem that needs an ending (an incomplete verb or adjective) and a number with no counter cannot be detected
+  without word classes, so they are **not** handled in the first version.
 - A tokenizer (for example a morphological analyser) is out of scope. It is considered only if the evaluation below
   finds dangling-end chunks at 5% or more after tuning the two lists, and then as a separate design with its own
   dependency, licence and latency review.
@@ -292,11 +313,37 @@ of a result). Today that list runs after Translate; the source-side use is new.
 exist so that one long unpunctuated stretch cannot hold the lane: with the measured tail (results of 12.9 s at p90 and
 25 s at p99) waiting for the final would delay such chunks by up to about 25 s.
 
-### New settings (all new keys documented in `configuration.md` when built)
+### New settings
 
-`jaSegmentationMode` (`clause` default, `sentence` revert), `jaSentenceMinChars`, `jaClauseMinChars`, `jaMaxChars`,
-`jaPauseMs`, `jaMaxWaitMs`, `jaClauseEndings`, `jaDanglingSuffixes`, `jaDanglingMaxChars`, `jaDanglingMaxHoldMs`, `jaShortChars`,
-`jaShortMinConf`. Defaults above are starting values for the evaluation, not results.
+**Where they live.** Every `ja*` key is a `cdk.json` `context` key (so a profile may set it, because profile `context`
+keys must be `cdk.json` keys) and an `advanced` key in `event.json`; the docs test in `cdk/test/docs.test.ts` then
+requires each one to be listed in `configuration.md`. Precedence is the existing one: `-c` flag, `event.json`, profile,
+`cdk.json`. The Japanese defaults follow the profile because low latency is the first priority:
+
+| Key | `cdk.json` default (= `careful`) | `talk` | `fast` | Mirrors today's key |
+|---|---|---|---|---|
+| `jaSegmentationMode` | `clause` | `clause` | `clause` | (new; `sentence` reverts to rules 1, 5, 6, 7) |
+| `jaSentenceMinChars` | 6 | 6 (idle: `mergeShort` off) | 6 (idle) | `sentenceMinWords` (8) |
+| `jaClauseMinChars` | 12 | 8 | 8 | `chunkMinWords` (8 / 5) |
+| `jaMaxChars` | 40 | 30 | 30 | `chunkMaxWords` (22) |
+| `jaPauseMs` | 900 | 600 | 600 | `chunkPauseMs` (900 / 600) |
+| `jaMaxWaitMs` | 4000 | 2500 | 2500 | `chunkMaxMs` (0 = off in `careful`, 2500 in `talk`) |
+| `jaClauseEndings`, `jaDanglingTokens` | built-in lists | same | same | `danglingWords` / built-in English list |
+| `jaDanglingMaxChars` | 10 | 10 | 10 | `danglingMaxWords` (2) |
+| `jaShortChars`, `jaShortMinConf` | 4, 0.6 | same | same | the English short rule |
+
+
+`qa` and `default` follow `careful`. These are starting values to be tuned by the evaluation, not results; a profile
+file gains the `ja*` rows only in the pull request that builds the feature, together with the tuned values.
+(Before building, the 900 and 600 ms values are read off `chunkPauseMs` in `cdk.json` and `talk.json`; the others are
+scaled the same way and are to be checked.)
+
+**`channels` is an `event.json` key**, not a `cdk.json` key and not an `advanced` key. A `-c channels='<json>'` flag
+overrides it (JSON text in the context value), under the same precedence as every other key. Merging with a profile is
+not needed: profiles do not set `channels`.
+
+`jaShortChars` and `jaShortMinConf` belong to the gate, the other keys to the segmenter. Defaults above are starting
+values for the evaluation, not results.
 
 ### How the segmenter is evaluated
 
@@ -387,12 +434,14 @@ engine, as today.
 
 ## English voice
 
-- **Engine and voice.** A neural English (`en-US`) Polly voice available in the stack's Region is the starting
-  point, because channel 1 already runs on a neural voice and its synthesis time (about 0.16 s per chunk) is part of
+- **Engine and voice.** The default for the English lane is **`Joanna`**, an `en-US` neural voice (the example in
+  [Configuration](#configuration) uses it). The Polly engine stays the one global setting `pollyEngine` (`neural`
+  by default) and applies to both lanes, so each lane's voice must support it; `doctor` checks that. There is no
+  per-channel engine key in the first version. `Joanna` is the starting point because channel 1 already runs on a neural voice and its synthesis time (about 0.16 s per chunk) is part of
   the measured budget. Polly also offers generative voices; evaluating one is optional and can be dropped, because its latency and
   Region availability have to be measured before it is chosen, and the first byte time is what matters here. `doctor` checks the chosen
   voice with `aws polly describe-voices --region <region> --engine <engine> --language-code en-US`. The voice name is
-  an open question with a recommendation (see question 3); it is a channel key, so it is a deploy-time choice.
+  open question 3 asks the owner to confirm `Joanna` or pick another listed voice; it is a channel key, so it is a deploy-time choice.
 - **Speed control.** The speed levels (100 to 145%) exist because Japanese output is slow. Speed control is derived
   from the lane's target language (see [Configuration](#configuration)): the lane with target `ja` keeps the global
   `speedMode` and speed keys, a lane with target `en` has it **off (100% only)**, with no new key. It stays off until a
@@ -517,10 +566,26 @@ data anyway).
 
 ### Listener subscription
 
-In a deploy with two lanes, `config.json` lists the channels (below) and the page connects with automatic subscription
-off, then subscribes only to the track whose name matches the selected channel. In a one-lane deploy `config.json` has
-no channel list and the page connects exactly as today (automatic subscription, same checks). The data packets need no
-subscription: they arrive in the joined room.
+In a one-lane deploy `config.json` has no channel list and the page connects exactly as today (automatic
+subscription, sender `publisher-app`, topic `captions`). In a deploy with two lanes (or one non-default lane) the page
+runs this sequence, in `subscriber.js`:
+
+1. Read the selected channel from the URL and its entry (`track`, `publisher`, `topic`) from `config.json`. The
+   sender check `CAPTION_SENDER` (a constant `"publisher-app"` today) becomes the `publisher` value of that entry, and
+   `CAPTION_TOPIC` the entry's `topic`.
+2. `room.connect(url, token, { autoSubscribe: false })`. Data packets need no subscription.
+3. After `Connected`, walk the participants already in the room and their audio publications: the publication whose
+   name equals the entry's `track` gets `setSubscribed(true)`; no other publication is subscribed. This covers a
+   listener who joins late.
+4. Listen for `RoomEvent.TrackPublished` and apply the same test, so a lane that publishes later (lane 2 starts
+   after lane 1, or restarts) is picked up. `TrackSubscribed` plays it as today.
+5. After a reconnect (`RoomEvent.Reconnected`) repeat step 3: subscriptions are not assumed to survive.
+6. While the selected track is not published, the status line says "Channel not live yet" (and "Listening" once the
+   track is subscribed). A lane disabled at start (see [Failure isolation](#failure-isolation)) leaves the listener on
+   this message; it does not fall back to another channel.
+
+Tests: a late joiner subscribes to the selected track only; a missing track shows "Channel not live yet" and then
+plays when it is published; a reconnect re-subscribes; no bytes arrive for the other track.
 
 ## Captions per channel
 
@@ -549,33 +614,61 @@ The event schema stays v1, additive only ([architecture.md](architecture.md#even
 
 ### Which area shows what
 
-The two areas keep their place, size and number of lines. Their roles are named by role, not by language:
+**Positions stay fixed by language; only the roles change.** The page has two elements today, `#captions-ja` and
+`#captions-en` (`app/web/index.html`), placed by `computeLayout` in `captions.js` (`LAYOUT`: `maxJaLines: 8`,
+`maxEnLines: 3`, `minJaLines: 2`). That does not change on either channel:
 
-| Area | Channel 1 (today) | Channel 2 |
+- `#captions-ja` stays the upper element, bottom-anchored just above the English one, up to 8 display lines.
+- `#captions-en` stays pinned near the bottom, up to 3 display lines (`maxEnLines` is not raised in the first version).
+- `?source=off` hides the **source** element of the channel. The other element keeps its place and size; the hidden
+  element's space is not given to it (the layout function is not changed for this).
+
+The channel decides which element is the translation and which is the source:
+
+| Element | Channel 1 (`ja` listeners, today) | Channel 2 (`en` listeners) |
 |---|---|---|
-| **Target area** (large, up to 8 lines, above the source area) | Japanese translation and Japanese as said (`― `, blue) | English translation and English as said (`― `, blue) |
-| **Source area** (small, `#555`, pinned near the bottom, 3 lines) | English source as recognised | Japanese source as recognised |
+| `#captions-ja` (upper, up to 8 lines, `lang="ja"`) | **Translation**: Japanese caption text and Japanese as said (`― `, blue `.said`) | **Source**: Japanese as recognised, small grey text |
+| `#captions-en` (lower, pinned, 3 lines, `lang="en"`) | **Source**: English as recognised, small grey text | **Translation**: English caption text and English as said (`― `, blue `.said`) |
 
-- `?source=off` hides the source area on either channel; the target area keeps its place and size.
-- English text is wider per character than Japanese, so the line-merging settings are per **role** and per language.
-  The page assembler (`captions.js`) has two presets today, `JA_DEFAULTS` for the Japanese target area and
-  `EN_DEFAULTS` for the English source area. Channel 2 uses the same two code paths with the languages swapped, and
-  the presets are selected by the area's language, not by the channel:
+An English listener therefore sees the English translation pinned at the bottom with the Japanese source above it,
+and with `?ch=en&source=off` only the English translation. Moving the English translation into the upper area was
+considered and rejected: it contradicts the fixed layout (Japanese area up to 8 lines, English area pinned at the
+bottom) and would need a second layout function.
 
-  | Role (channel) | Language | Separator when joining chunks | Sentence-end test | `maxLineChars` | `lineGapMs` | `lineTtlMs` | `maxLines` |
-  |---|---|---|---|---|---|---|---|
-  | Target (ch 1) | ja | none | `JA_SENTENCE_END` (`。？！?!`) | 60 (today) | 6000 | 12000 | 8 visible (CSS box) |
-  | Source (ch 1) | en | one space | `[?!.]` plus closing quote | 240 (today) | 10000 | 10000 | 3 |
-  | Target (ch 2) | en | one space | the English test above | about 110 *(starting value, confirm in browser tests)* | 10000 | 10000 | 8 visible (same CSS box) |
-  | Source (ch 2) | ja | none | `JA_SENTENCE_END` | about 90 *(starting value)* | 6000 | 12000 | 3 |
-  | As said (ch 1: ja, ch 2: en) | the channel's target language | as the target role | as the target role | as the target role | as the target role | as the target role | shares the target area |
+**What changes on the page, concretely** (all new code stays inactive on a one-channel page):
 
-  The English target area on channel 2 is the same CSS box as the Japanese target area on channel 1 (up to 8 lines,
-  same position, same size). The `maxLines` column is the number of lines the area shows; where the code keeps
-  fewer lines in memory, that is today's behaviour per preset and is not changed. A "pause closes a line" rule uses
-  each preset's own `lineGapMs`: Japanese closes after 6 s, English after 10 s. For the as-said text the existing
-  rule holds in both languages: a change of kind starts a new line, and as-said waits for the open translated
-  sentence for up to 3 s.
+- **Role styling by a class on `<html>`**, set once at load from the parsed channel (`ch-en` on channel 2, nothing
+  on channel 1; it is not a control). The CSS for the translation role (large font, dark colour, 36em width) and the
+  source role (small font, `#555`, 34em width) moves to rules per role: `html.ch-en #captions-en` takes today's
+  `#captions-ja` size and colour, `html.ch-en #captions-ja` takes today's `#captions-en` size and colour. The `.said`
+  and `.old` colour rules that exist for `#captions-ja` are repeated for `#captions-en`, scoped to `html.ch-en`.
+  Without the class nothing changes (today's rules).
+- **`computeLayout`** keeps its signature and `LAYOUT`. It already takes the two computed font sizes
+  (`jaFont`, `enFont`), so swapped sizes on channel 2 flow in without a code change; a unit test covers it. On
+  channel 2 the English element has the large font, so it needs more height per line, and the Japanese element
+  gets what is left (at least `minJaLines`, else the loop already reduces the English lines). The five viewport
+  tests run for both channels.
+- **Assemblers.** `createAssembler` (target role, with as-said) is hardwired to Japanese (`"ja"`, `JA_SENTENCE_END`).
+  It gets a `lang` parameter selecting the preset and sentence-end test, default `ja`; `createSourceAssembler`
+  gets the same, default `en`. On channel 2 the page builds the English-target assembler for `#captions-en` and the
+  Japanese-source assembler for `#captions-ja`; on channel 1 both are built as today.
+- **Event routing in the page.** A `caption` or `speech` event feeds the translation assembler, a `source` event
+  the source assembler, as today; the check `ev.channel !== "en"` in the source assembler becomes a check against the
+  lane's source channel from `config.json`.
+
+| Role (channel) | Element | Language | Joined with | Sentence-end test | `maxLineChars` | `lineGapMs` | `lineTtlMs` | Lines kept |
+|---|---|---|---|---|---|---|---|---|
+| Translation (ch 1) | `#captions-ja` | ja | nothing | `JA_SENTENCE_END` (`。？！?!`) | 60 (today) | 6000 | 12000 | 3 |
+| Source (ch 1) | `#captions-en` | en | one space | `[?!.]` plus closing quote | 240 (today) | 10000 | 10000 | 3 |
+| Translation (ch 2) | `#captions-en` | en | one space | the English test | 240 (`EN_DEFAULTS`) | 10000 | 10000 | 3 |
+| Source (ch 2) | `#captions-ja` | ja | nothing | `JA_SENTENCE_END` | 60 (`JA_DEFAULTS`) | 6000 | 12000 | 3 |
+
+The presets are selected by the **language** of the text (`JA_DEFAULTS` or `EN_DEFAULTS`), never by the channel, so no
+new numbers are introduced. "Lines kept" is the number of logical lines the assembler holds; the element shows them
+wrapped. A "pause closes a line" rule uses the preset's own `lineGapMs` (Japanese 6 s, English 10 s). For the as-said
+text the existing rules hold in both languages: a change of kind starts a new line, and as-said waits for the open
+translated sentence for up to 3 s.
+
 - **Joining items into `source` event text (app side).** The caption publisher builds the `source` text from the stable
   items of the lane. For an English source, items are joined with one space and punctuation items attach to the
   previous word (today). For a Japanese source, items are joined **without any separator**, and the same applies to
@@ -585,8 +678,10 @@ The two areas keep their place, size and number of lines. Their roles are named 
 - The English "as said" lines on channel 2 come from the same `speech` path: stable words of results the lane's gate
   classified as English and never forwarded, after the 3-item settle rule; a retract removes them if the result turns
   out to be Japanese.
-- `lang` attributes: the target area gets `lang="ja"` or `lang="en"` and the source area the other, so a screen reader
-  chooses the right voice. The target area stays `aria-live="polite"`, the source area `aria-live="off"`. Further
+- `lang` attributes: `#captions-ja` keeps `lang="ja"` and `#captions-en` keeps `lang="en"` on both channels, so a screen
+  reader chooses the right voice. The translation element is `aria-live="polite"` and the source element
+  `aria-live="off"`: on channel 2 these two attributes are set from the role at load (today `#captions-ja` has
+  `polite` and `#captions-en` has `off`). Further
   accessibility work belongs to [#12](https://github.com/kuu/realtime-speech-interpreter/issues/12) and applies to both
   channels.
 
@@ -745,7 +840,7 @@ for rule 3, 4, 5 or 6. For the first utterance after a switch: add up to about 3
    sets; record per channel `e2eFirstWordMs`, `commitLagMs`, `lateSpoken`, first-chunk delay after a switch.
 3. **Pure Japanese monologue.** The probe data is multi-language mode with short utterances. One 10-minute single-
    speaker Japanese recording through a stream in the production configuration (multi-language, as the app runs it)
-   (about 10 min of Transcribe, roughly $0.24 at the list price used in the probe notes, not re-verified). Needs the
+   (about 10 min of Transcribe: 600 s at $0.0001667 per s, about $0.10, see [cost.md](cost.md)). Needs the
    owner's approval (question 5). It decides whether the character cap and rule 3 are right for long sentences.
 4. **Per-chunk ground truth.** Each chunk logs the first and last source word's audio time (as today for English), so
    `e2eFirstWordMs` is source-time based and does not depend on listening.
@@ -822,15 +917,15 @@ One channel configured must equal today's behavior exactly. The evidence is test
 
 | Layer | Tests |
 |---|---|
-| Config (CDK) | default, one default entry, one non-default entry, duplicate sources, duplicate targets, same-language lane, source not in `languageOptions`, flat keys together with `channels`, unknown channel key, LLM lane without terminology, three channels; `CHANNELS` absent for the default; synth parity with `origin/main`. |
+| Config (CDK) | default, one default entry, one non-default entry, duplicate sources, duplicate targets, same-language lane, source not in `languageOptions`, flat keys together with `channels`, one non-default lane (`ja-JP` to `en`: flat variables only, no `CHANNELS`), `CHANNELS` only for two lanes, `ja*` keys per profile and precedence, overlapping `jaClauseEndings` and `jaDanglingTokens` rejected, unknown channel key, LLM lane without terminology, three channels; `CHANNELS` absent for the default; synth parity with `origin/main`. |
 | Config (app) | The same rules from the shared validator; the app refuses an invalid list; lane 2 start failure leaves lane 1 running. |
 | Router and gate | Both lanes receive every result; routing by final language; partial that flips (ja then en, en then ja); late flip with and without a spoken chunk (`lateSpoken`); split results (repeats) per lane; short interjections both ways; short-low-confidence rule for Japanese; the as-said tap per lane. |
-| Japanese segmenter | Each rule alone (1 to 7) with synthetic Japanese; merge-short; dangling hold and release; no-punctuation text; character cap; invariants (no loss, no duplicate, retract, split results); fillers before translation; property test with random item streams. |
+| Japanese segmenter | Each rule alone (1 to 7) with synthetic Japanese; one table-driven case per sentence for D (dangling test) on rules 2, 4, 5 and 6, and none on rules 1 and 7; merge-short with `mergeShort` on and off; dangling hold and release by `jaMaxWaitMs`; no-punctuation text; character cap; invariants (no loss, no duplicate, retract, split results); fillers before translation; property test with random item streams. |
 | Translation | Prompt builder for `ja` to `en` (snapshot of the template, glossary insertion, `chunk_ends_sentence`); name check and fallback; Translate request has no formality for an English target; terminology name per lane. |
 | Polly | Voice and engine per lane; English readings applied, katakana never in English alias; unchanged for lane 1. |
 | Dictionaries | New columns and flags parse; reserved-column note is gone only when the flags are implemented; generated files for a fixture; `generate --check`; validator rules; `dictionaries.sh --dry-run` lists the new uploads; example dictionary output unchanged. |
 | Captions (app) | Event builders for lane 2 (`ch`, `channel`, `lang`, ids, topic); lane 1 bytes unchanged. |
-| Page (unit and browser) | `?ch` parsing; unknown channel; track selection; sender and topic check per channel; assembler limits per language; layout on all viewports, both channels; `?source=off`; `textContent` only. |
+| Page (unit and browser) | `?ch` parsing; unknown channel; track selection; sender and topic check per channel; assembler limits per language; layout on all viewports, both channels (swapped font sizes through `computeLayout`); role styling class only on `?ch=en`; `.said` colour on `#captions-en`; `?source=off` on both channels; late joiner, missing track ("Channel not live yet") and reconnect (see Listener subscription); `textContent` only. |
 | LiveKit | Two participants publish to one room; a listener subscribes to one track only (bytes received per track); data packets on the right topic; a lane's disconnect does not affect the other (local LiveKit). |
 | e2e | `report.md` per channel; recorder with two tracks; `--channel`; fault injection on lane 2. |
 | Doctor | Per-channel checks, warning without a Japanese vocabulary. |
@@ -844,14 +939,14 @@ Each has a recommended answer. The design assumes the recommendation until told 
 2. **Default channel and legacy names.** The first channel in `channels` is the default and keeps `publisher-app`,
    `translation-audio` and `captions`. *Recommended:* yes; put Japanese first (as today). Order then decides which
    lane has the legacy names.
-3. **English voice.** Which voice, and neural or generative? *Recommended:* a neural `en-US` voice that
-   `describe-voices` lists for the stack's Region; consider generative only if its measured first-byte time is within
-   0.1 s of neural and the voice is available there.
-4. **As-said English on channel 2.** Show English speech in the English target area with `― `, controlled by the
+3. **English voice.** Which voice, and neural or generative? *Recommended:* `Joanna` on the neural engine (shared
+   `pollyEngine`), after `describe-voices` confirms it for the stack's Region; consider a generative voice only if
+   its measured first-byte time is within 0.1 s of neural and it is available there.
+4. **As-said English on channel 2.** Show English speech in the English translation element (`#captions-en`) with `― `, controlled by the
    existing `captionsJapaneseSpeech` key? *Recommended:* yes, same key (its meaning becomes "speech in the listeners'
    language"); a per-channel switch only if someone asks.
 5. **Pure Japanese measurement.** Approve one 10-minute single-speaker Japanese recording through a real stream (about
-   $0.24 of Transcribe at the list price in the probe notes, plus Translate or Bedrock and Polly if run end to end)? Who
+   $0.10 of Transcribe, 600 s at the list price in [cost.md](cost.md), plus Translate or Bedrock and Polly if run end to end)? Who
    records it (the sample must not contain a real attendee's voice without consent)? *Recommended:* yes, a script read
    by a colleague, synthetic content.
 6. **Personal names in English output.** Western order (given name first) or as spoken? *Recommended:* Western order
@@ -872,6 +967,10 @@ Each has a recommended answer. The design assumes the recommendation until told 
     now; global keys plus the new `ja*` keys, add per-channel overrides when a measurement needs them.
 12. **Unknown `?ch`.** Show "not available" and disable Listen (recommended), or fall back to the default channel?
     *Recommended:* not available. A fallback plays the wrong language without a hint.
+
+13. **English translation area size on channel 2.** The English element is pinned at the bottom with 3 lines, as
+    today. *Recommended:* keep 3 lines and the language-fixed layout; raise the English line count for channel 2 only if
+    the rehearsal shows clipped English at the five viewports (a layout change, not a new control).
 
 ## Not in scope
 

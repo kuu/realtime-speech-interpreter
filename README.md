@@ -1,6 +1,6 @@
 # Realtime Speech Interpreter
 
-<p align="center"><img src="docs/overview.drawio.svg" width="760" alt="Overview: live speech from one venue audio feed goes to an AI interpreter running in your own AWS account. Channel 1 turns English into Japanese, channel 2 turns Japanese into English. Japanese and English listeners hear the voice and read live captions on their own phones in a browser, with no app to install. A few seconds of delay, one CDK deploy, custom dictionaries keep product names right."></p>
+<p align="center"><img src="docs/overview.drawio.svg" width="760" alt="Overview: live speech from one venue audio feed goes to an AI interpreter running in your own AWS account. Channel 1 turns English into Japanese, channel 2 turns Japanese into English. Japanese and English listeners hear the voice and read live captions on their own phones in a browser, with no app to install. A few seconds of delay, one CDK deploy, custom dictionaries for sector-specific terminology."></p>
 
 Real-time speech-to-speech interpretation on AWS, English to Japanese first. A speaker talks English at an event.
 Attendees open a web page on their phones and hear Japanese about 6 seconds later. The audio goes from OBS over SRT

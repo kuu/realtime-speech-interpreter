@@ -6,7 +6,8 @@
 //                                  [--channels 1|2] [--ja-share 0.25] [--en-chars-per-chunk N]
 //
 // Sizing comes from cdk/cdk.json (taskCpu, taskMemoryMiB, livekitInstanceType, logRetentionDays,
-// translateEngine) and, when present, the selected profile and cdk/config/event.json.
+// translateEngine; the default is llm) and, when present, the selected profile and cdk/config/event.json.
+// --engine translate gives the low-cost mode (Amazon Translate only, no Bedrock).
 // Prices come from scripts/cost-prices.json (AWS Price List API, dated). See docs/cost.md.
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -84,7 +85,7 @@ function num(o, k, dflt) {
 const HELP = `Usage: node scripts/estimate-cost.mjs [options]
   --hours N              session length in hours (default 4)
   --listeners N          concurrent listeners (default expectedListeners from event.json, else 100)
-  --engine translate|llm translation engine (default from event.json / profile / cdk.json)
+  --engine translate|llm translation engine (default llm, from event.json / profile / cdk.json; translate = low-cost mode)
   --chunks-per-hour N    synthesized chunks per hour of speech (default ${MEASURED.chunksPerHour}, measured, fast profile)
   --channels 1|2         1 (default) = today; 2 adds the Japanese to English channel (Translate or LLM, Polly English, second glossary cache)
   --ja-share F           channel 2: share of the hour spoken in Japanese, 0-1 (default ${CHANNEL2.jaShare}, assumed)
@@ -113,7 +114,7 @@ function readJsonLoose(path) {
   }
   return JSON.parse(out);
 }
-function loadSizing() {
+export function loadSizing() {
   const cdkJson = readJsonLoose(join(root, "cdk", "cdk.json")).context ?? {};
   const ctx = { ...cdkJson };
   let ev = {};
@@ -136,7 +137,7 @@ export function estimate(opts = {}, sizing = loadSizing(), prices = readJsonLoos
   const { ctx, ev } = sizing;
   const hours = num(opts, "hours", 4);
   const listeners = num(opts, "listeners", ev.expectedListeners ?? 100);
-  const engine = opts.engine ?? ctx.translateEngine ?? "translate";
+  const engine = opts.engine ?? ctx.translateEngine ?? "llm";
   if (!["translate", "llm"].includes(engine)) fail("--engine must be translate or llm");
   const chunks = num(opts, "chunks-per-hour", MEASURED.chunksPerHour);
   const scale = chunks / MEASURED.chunksPerHour;
@@ -273,7 +274,7 @@ function resourceList(P, s) {
     r("Transcribe", "Streaming transcription with language identification", "seconds of audio", `$${P.transcribeStreamingSecond.usd} per s (about $0.01 per min)`, "while audio is sent", "usage", "Language identification and custom vocabulary have no separate charge (AWS Transcribe pricing page)."),
     r("Translate", "TranslateText (translate engine, and fallback of the llm engine)", "characters", `$${P.translateChar.usd} per character`, "per translated chunk", "usage", "Terminology has no separate charge."),
     r("Polly", "SynthesizeSpeech, neural voice", "characters", `$${P.pollyNeuralChar.usd} per character`, "per spoken chunk", "usage", "Lexicons are not used. Readings are SSML sub aliases."),
-    r("Bedrock", "Claude Haiku 4.5 via the jp. inference profile (llm engine only)", "input, output, cache-read and cache-write tokens", `$${P.bedrockHaikuRegionalInputMTok.usd} in, $${P.bedrockHaikuRegionalOutputMTok.usd} out, $${P.bedrockHaikuRegionalCacheReadMTok.usd} cache read, $${P.bedrockHaikuRegionalCacheWriteMTok.usd} cache write, per million tokens`, "per chunk", "usage"),
+    r("Bedrock", "Claude Haiku 4.5 via a geo inference profile (llm engine, the default)", "input, output, cache-read and cache-write tokens", `$${P.bedrockHaikuRegionalInputMTok.usd} in, $${P.bedrockHaikuRegionalOutputMTok.usd} out, $${P.bedrockHaikuRegionalCacheReadMTok.usd} cache read, $${P.bedrockHaikuRegionalCacheWriteMTok.usd} cache write, per million tokens`, "per chunk", "usage"),
     r("ECR (CDK bootstrap)", "App container image", "GB-months", `$${P.ecrGbMonth.usd} per GB-month`, "stays after cdk destroy", "time"),
     r("Free of charge", "Transcribe custom vocabulary, Translate terminology, ECS cluster, VPC, subnets, security groups, IAM, CloudFormation", "none", "$0", "", "free"),
   ];

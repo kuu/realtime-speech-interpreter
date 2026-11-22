@@ -14,6 +14,10 @@
     "langidSettleMode": "dynamic",
     "langidSettleWordsDefault": 3,
     "langidSettleWordsAfterJa": 5,
-    "langidJaMemoryMs": 60000
+    "langidJaMemoryMs": 60000,
+    "jaClauseMinChars": 8,
+    "jaMaxChars": 30,
+    "jaPauseMs": 600,
+    "jaMaxWaitMs": 2500
   }
 }

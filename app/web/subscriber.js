@@ -40,7 +40,7 @@ function setStatus(msg) {
 // Applies the chosen channel to the page: text that names the language, role styling and aria-live on the English
 // channel. Nothing changes for the Japanese channel, so a one-channel page is today's page.
 function applyChannelToPage(entry) {
-  if (entry.targetLang === "ja") return;
+  if (entry.targetLang !== "en") return; // only the English channel has its own roles and text
   const t = pageText(entry.targetLang);
   document.title = t.title;
   document.querySelector("h1").textContent = t.h1;
@@ -152,8 +152,8 @@ function initCaptions() {
   const showSource = parseSourceOption(window.location.search);
   // Positions are fixed by language (#captions-ja above, #captions-en below); the channel decides which one is the
   // translation (with as-said text) and which is the source.
-  const transLang = channel.targetLang;
-  const sourceLang = channel.sourceLang;
+  const transLang = channel.targetLang === "en" ? "en" : "ja";
+  const sourceLang = transLang === "en" ? "ja" : "en";
   const trans = createAssembler({}, true, transLang);
   const srcAsm = createSourceAssembler({}, sourceLang);
   const sender = channel.publisher;

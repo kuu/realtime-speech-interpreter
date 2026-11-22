@@ -45,6 +45,7 @@ Plain JSON. Comments (`//` and `/* */`) are accepted by the loader, so you can a
 | `sourceLanguage` | string | `"en-US"` | `sourceLanguage`, `translateSource` | Transcribe code of the speaker's language. Must be in `languageOptions` (advanced, default `en-US,ja-JP`). `translateSource` is its prefix (`en`). |
 | `targetLanguage` | string | `"ja"` | `translateTarget` | Translate code of the listeners' language. The Polly voice must speak it. |
 | `pollyVoice` | string | `"Kazuha"` | `pollyVoice` | Polly voice for the target language. |
+| `channels` | list of 1 or 2 lanes | `[{"source":"en-US","target":"ja","pollyVoice":"Kazuha"},{"source":"ja-JP","target":"en","pollyVoice":"Joanna","transcribeVocabulary":"simul-translation-ja","translateTerminology":"simul-translation-ja-en"}]` | `channels` (event key only; `-c channels='<json>'` overrides it) | Output channels, see [bilingual-channels.md](bilingual-channels.md). Absent = one English-to-Japanese channel from the flat keys (today). Per lane: `source` (Transcribe code, in `languageOptions`), `target` (Translate code and channel id), `pollyVoice` (required), `transcribeVocabulary`, `translateTerminology` (a lane other than English to Japanese defaults them to `""`), `translateEngine` (optional). Replaces `sourceLanguage`, `targetLanguage` and `pollyVoice`: combining them with `channels` is rejected. Two lanes need `languageFilter=langid` and add the `CHANNELS` variable, the `ListenerUrl<Id>` output and the channel list in `config.json`; one lane uses the flat variables. |
 | `pollyReadings` | true/false | `true` | `pollyReadings` | `true` = apply the pronunciation readings (SSML `sub` aliases) from the generated `polly-readings.csv` of your dictionary folder (see `dictionaryDir`). The displayed text is never changed. |
 | `translateEngine` | string | `"llm"` | `translateEngine` | `translate` = Amazon Translate. `llm` = Bedrock model per chunk, Translate stays as fallback. |
 | `llmModelId` | string | `"jp.anthropic.claude-haiku-4-5-20251001-v1:0"` | `llmModelId` | Bedrock Japan cross-Region inference profile id (must start with `jp.`). Used only with `translateEngine=llm`. |
@@ -124,9 +125,27 @@ Extra context keys that are not in `cdk.json`:
 | `langidSettleWordsDefault` | `LANGID_SETTLE_WORDS_DEFAULT` | `3` | Dynamic mode: stable words when no Japanese result was seen recently; integer 1-50 |
 | `langidSettleWordsAfterJa` | `LANGID_SETTLE_WORDS_AFTER_JA` | `5` | Dynamic mode: stable words within `langidJaMemoryMs` after a Japanese result; integer 1-50 |
 | `langidJaMemoryMs` | `LANGID_JA_MEMORY_MS` | `60000` | Dynamic mode: how long after a Japanese result the longer threshold applies; integer 0-600000 |
+| `langidSettleItems` | `LANGID_SETTLE_ITEMS` | `5` | Same as `langidSettleWords` for a lane with a Japanese source (`ja-JP`), counted in stable items; read only when a lane has a Japanese source; integer 1-50 |
+| `langidSettleItemsDefault` | `LANGID_SETTLE_ITEMS_DEFAULT` | `3` | Dynamic mode, Japanese-source lane: stable items when no English result was seen recently; integer 1-50 |
+| `langidSettleItemsAfterEn` | `LANGID_SETTLE_ITEMS_AFTER_EN` | `5` | Dynamic mode, Japanese-source lane: stable items within `langidJaMemoryMs` after an English result; integer 1-50 |
 | `langidShortWords` | `LANGID_SHORT_WORDS` | `4` | Also drop an English result of at most this many words with low confidence that comes right after a Japanese one (fragments inside a Japanese passage, e.g. "more.", "sleep."); integer 0-20, `0` disables |
 | `langidShortMinConf` | `LANGID_SHORT_MIN_CONF` | `0.6` | Mean word confidence below which that short result is dropped; 0-1 |
 
+### Japanese chunking (a lane with a Japanese source)
+Read only when a lane has a Japanese source (`ja-JP`); see [bilingual-channels.md](bilingual-channels.md#japanese-segmenter). The `talk` profile sets `jaClauseMinChars` 8, `jaMaxChars` 30, `jaPauseMs` 600 and `jaMaxWaitMs` 2500.
+| Key | Env var in the app | Default | Meaning |
+|---|---|---|---|
+| `jaSegmentationMode` | `JA_SEGMENTATION_MODE` | `simple` | `simple` cuts at a stable `。？！`, at every stable `、`, after `jaMaxWaitMs` and on the final. `full` is the opt-in experiment with the dangling test, clause endings, minimum lengths, pause and maximum characters; it can be compared with `simple` in one e2e run. |
+| `jaSentenceMinChars` | `JA_SENTENCE_MIN_CHARS` | `6` | A sentence shorter than this is held and joined with the next one, only when `mergeShort` is on; integer 1-200 |
+| `jaClauseMinChars` | `JA_CLAUSE_MIN_CHARS` | `12` | `full` only: characters before a `、` cut; integer 1-200 |
+| `jaMaxChars` | `JA_MAX_CHARS` | `40` | `full` only: the buffer is cut when it reaches this many characters; integer 4-400 |
+| `jaPauseMs` | `JA_PAUSE_MS` | `900` | `full` only: quiet time that cuts the buffer unless it ends on a dangling token; 0 disables |
+| `jaMaxWaitMs` | `JA_MAX_WAIT_MS` | `4000` | Both modes: the oldest uncut stable text is cut after this long; 0 disables |
+| `jaClauseEndings` | `JA_CLAUSE_ENDINGS` | `""` | `full` only: comma list of clause-closing endings; `""` = the built-in list. Must share no entry with `jaDanglingTokens` |
+| `jaDanglingTokens` | `JA_DANGLING_TOKENS` | `""` | `full` only: comma list of tokens a chunk must not end on; `""` = the built-in list |
+| `jaDanglingMaxChars` | `JA_DANGLING_MAX_CHARS` | `10` | `full` only: how far back a cut may move to avoid a dangling token; integer 0-100 |
+| `jaShortChars` | `JA_SHORT_CHARS` | `4` | A Japanese result of at most this many characters with low confidence right after an English one is dropped; 0 disables |
+| `jaShortMinConf` | `JA_SHORT_MIN_CONF` | `0.6` | Mean confidence below which that short result is dropped; 0-1 |
 ### Chunking (when text is sent to translation)
 
 | Key | Env var in the app | Default | Meaning |

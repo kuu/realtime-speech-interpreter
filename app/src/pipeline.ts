@@ -154,6 +154,8 @@ export async function runPipeline(
           jaMemoryMs: lf.jaMemoryMs,
           shortWords: lf.shortWords,
           shortMinConf: lf.shortMinConf,
+          jaShortChars: lf.jaShortChars,
+          jaShortMinConf: lf.jaShortMinConf,
           jaFillers: config.fillers.enabled && /^ja(-|$)/i.test(lane.source) === false ? config.fillers.jaPatterns : [],
         },
         () => t0,

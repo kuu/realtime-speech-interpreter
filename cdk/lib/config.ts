@@ -1,6 +1,9 @@
 import { Construct } from "constructs";
 import { buildResolver } from "./event-config";
 import { resolveDictionary } from "./dictionary-dir";
+import { ChannelsError, isDefaultLane, parseChannelsSetting, resolveChannels, type LaneSpec } from "./channels";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 // Every configurable value comes from cdk.json "context", config/event.json or a profile (override with -c key=value).
 // Values passed with -c arrive as strings, so numbers are parsed and validated here.
@@ -25,8 +28,22 @@ export interface StackConfig {
   langidSettleWordsDefault: number;
   langidSettleWordsAfterJa: number;
   langidJaMemoryMs: number;
+  langidSettleItems: number;
+  langidSettleItemsDefault: number;
+  langidSettleItemsAfterEn: number;
   langidShortWords: number;
   langidShortMinConf: number;
+  jaSegmentationMode: string;
+  jaSentenceMinChars: number;
+  jaClauseMinChars: number;
+  jaMaxChars: number;
+  jaPauseMs: number;
+  jaMaxWaitMs: number;
+  jaClauseEndings: string;
+  jaDanglingTokens: string;
+  jaDanglingMaxChars: number;
+  jaShortChars: number;
+  jaShortMinConf: number;
   segmentationMode: string;
   chunkMinWords: number;
   chunkMaxWords: number;
@@ -84,6 +101,14 @@ export interface StackConfig {
   pollyEngine: string;
   pollySampleRate: number;
   pollyReadings: string;
+  /** Output lanes of this deploy: one (the flat keys, or a one-entry `channels`) or two (`channels`). */
+  lanes: LaneSpec[];
+  /** True when `channels` has two lanes: the container gets CHANNELS. */
+  twoLanes: boolean;
+  /** True when the `channels` setting was used (config.json lists the channels for two lanes or one non-default lane). */
+  channelsUsed: boolean;
+  /** Printed at synth (not errors). */
+  warnings: string[];
   /** Resolved dictionary folder (absolute). Its polly-readings.csv is copied into the app image. */
   dictionaryDir: string;
   dictionaryDirSource: string;
@@ -161,6 +186,59 @@ function dictionaryFields(setting: string): { dictionaryDir: string; dictionaryD
   const r = resolveDictionary(setting);
   return { dictionaryDir: r.dir, dictionaryDirSource: r.source };
 }
+const FLAT_LANE_KEYS = ["sourceLanguage", "translateSource", "translateTarget", "pollyVoice"] as const;
+
+// Fills cfg.lanes (and the flat keys for one lane or lane 1 of two). `channels` absent = one lane from the flat keys.
+function resolveLanes(cfg: StackConfig, resolver: ReturnType<typeof buildResolver>, channelsRaw: unknown): void {
+  const flatLane: LaneSpec = {
+    source: cfg.sourceLanguage,
+    target: cfg.translateTarget,
+    pollyVoice: cfg.pollyVoice,
+    transcribeVocabulary: cfg.transcribeVocabularyName,
+    translateTerminology: cfg.translateTerminologyName,
+  };
+  if (channelsRaw === undefined || channelsRaw === null || channelsRaw === "") {
+    cfg.lanes = [flatLane];
+    return;
+  }
+  for (const k of FLAT_LANE_KEYS) {
+    const src = resolver.source(k);
+    if (src === "cli" || src === "event") {
+      throw new Error(`channels cannot be combined with "${k}" (set by ${src === "cli" ? "-c" : "event.json"}): put the language and voice in each channel instead`);
+    }
+  }
+  let lanes: LaneSpec[];
+  try {
+    lanes = resolveChannels(parseChannelsSetting(channelsRaw), {
+      languageOptions: cfg.languageOptions.split(",").map((s) => s.trim()).filter(Boolean),
+      languageFilter: cfg.languageFilter,
+      translateEngine: cfg.translateEngine,
+      dictVocabulary: cfg.transcribeVocabularyName,
+      dictTerminology: cfg.translateTerminologyName,
+    });
+  } catch (err) {
+    if (err instanceof ChannelsError) throw new Error(err.message);
+    throw err;
+  }
+  cfg.lanes = lanes;
+  cfg.twoLanes = lanes.length === 2;
+  cfg.channelsUsed = true;
+  // Lane 1 = the flat variables (PreferredLanguage, global names); two lanes also get CHANNELS.
+  const l1 = lanes[0];
+  cfg.sourceLanguage = l1.source;
+  cfg.translateSource = l1.source.split("-")[0].toLowerCase();
+  cfg.translateTarget = l1.target;
+  cfg.pollyVoice = l1.pollyVoice;
+  cfg.transcribeVocabularyName = l1.transcribeVocabulary;
+  cfg.translateTerminologyName = l1.translateTerminology;
+  if (!cfg.twoLanes && l1.translateEngine) cfg.translateEngine = l1.translateEngine;
+}
+
+/** True when a lane runs the LLM engine (its own setting, else the global one). */
+export function laneUsesLlm(cfg: Pick<StackConfig, "translateEngine">, lane: LaneSpec): boolean {
+  return (lane.translateEngine ?? cfg.translateEngine) === "llm";
+}
+
 export function loadConfig(scope: Construct): StackConfig {
   const resolver = buildResolver((k) => scope.node.tryGetContext(k));
   const latencyPreset = resolver.profile;
@@ -206,8 +284,22 @@ export function loadConfig(scope: Construct): StackConfig {
     langidSettleWordsDefault: ctxNum("langidSettleWordsDefault"),
     langidSettleWordsAfterJa: ctxNum("langidSettleWordsAfterJa"),
     langidJaMemoryMs: ctxNum("langidJaMemoryMs"),
+    langidSettleItems: ctxNum("langidSettleItems"),
+    langidSettleItemsDefault: ctxNum("langidSettleItemsDefault"),
+    langidSettleItemsAfterEn: ctxNum("langidSettleItemsAfterEn"),
     langidShortWords: ctxNum("langidShortWords"),
     langidShortMinConf: ctxNum("langidShortMinConf"),
+    jaSegmentationMode: ctxStr("jaSegmentationMode").trim().toLowerCase(),
+    jaSentenceMinChars: ctxNum("jaSentenceMinChars"),
+    jaClauseMinChars: ctxNum("jaClauseMinChars"),
+    jaMaxChars: ctxNum("jaMaxChars"),
+    jaPauseMs: ctxNum("jaPauseMs"),
+    jaMaxWaitMs: ctxNum("jaMaxWaitMs"),
+    jaClauseEndings: ctxStr("jaClauseEndings", true).trim(),
+    jaDanglingTokens: ctxStr("jaDanglingTokens", true).trim(),
+    jaDanglingMaxChars: ctxNum("jaDanglingMaxChars"),
+    jaShortChars: ctxNum("jaShortChars"),
+    jaShortMinConf: ctxNum("jaShortMinConf"),
     segmentationMode: ctxStr("segmentationMode"),
     chunkMinWords: ctxNum("chunkMinWords"),
     chunkMaxWords: ctxNum("chunkMaxWords"),
@@ -265,6 +357,10 @@ export function loadConfig(scope: Construct): StackConfig {
     pollyEngine: ctxStr("pollyEngine"),
     pollySampleRate: ctxNum("pollySampleRate"),
     pollyReadings: ctxStr("pollyReadings").trim().toLowerCase(),
+    lanes: [],
+    twoLanes: false,
+    channelsUsed: false,
+    warnings: [],
     ...dictionaryFields(ctxStr("dictionaryDir", true)),
     captions: ctxStr("captions").trim().toLowerCase(),
     captionsJapaneseSpeech: ctxStr("captionsJapaneseSpeech").trim().toLowerCase(),
@@ -318,6 +414,34 @@ export function loadConfig(scope: Construct): StackConfig {
       );
     }
     cfg.languageOptions = codes.join(",");
+  }
+  intRangeEarly(cfg, "langidSettleItems", 1, 50);
+  intRangeEarly(cfg, "langidSettleItemsDefault", 1, 50);
+  intRangeEarly(cfg, "langidSettleItemsAfterEn", 1, 50);
+  if (cfg.jaSegmentationMode !== "simple" && cfg.jaSegmentationMode !== "full") {
+    throw new Error('jaSegmentationMode must be "simple" or "full"');
+  }
+  intRangeEarly(cfg, "jaSentenceMinChars", 1, 200);
+  intRangeEarly(cfg, "jaClauseMinChars", 1, 200);
+  intRangeEarly(cfg, "jaMaxChars", 4, 400);
+  intRangeEarly(cfg, "jaPauseMs", 0, 60000, " (0 disables)");
+  intRangeEarly(cfg, "jaMaxWaitMs", 0, 60000, " (0 disables)");
+  intRangeEarly(cfg, "jaDanglingMaxChars", 0, 100);
+  intRangeEarly(cfg, "jaShortChars", 0, 50, " (0 disables the Japanese short-low-confidence rule)");
+  if (cfg.jaShortMinConf < 0 || cfg.jaShortMinConf > 1) throw new Error("jaShortMinConf must be a number 0-1");
+  {
+    const list = (key: "jaClauseEndings" | "jaDanglingTokens"): string[] => {
+      const v = cfg[key];
+      if (v === "") return [];
+      if (/[\s]/.test(v) || /(^,|,,|,$)/.test(v)) throw new Error(`${key} must be a comma list of tokens without spaces, or "" for the built-in list`);
+      return v.split(",");
+    };
+    const endings = list("jaClauseEndings");
+    const dangling = list("jaDanglingTokens");
+    const overlap = endings.filter((e) => dangling.includes(e));
+    if (overlap.length > 0) {
+      throw new Error(`jaClauseEndings and jaDanglingTokens share an entry (${overlap.join(",")}); the two lists must not overlap`);
+    }
   }
   if (!Number.isInteger(cfg.langidSettleWords) || cfg.langidSettleWords < 1 || cfg.langidSettleWords > 50) {
     throw new Error("langidSettleWords must be an integer 1-50");
@@ -381,14 +505,15 @@ export function loadConfig(scope: Construct): StackConfig {
   if (cfg.translateEngine !== "translate" && cfg.translateEngine !== "llm") {
     throw new Error('translateEngine must be "translate" or "llm"');
   }
-  if (cfg.translateEngine === "llm") {
+  resolveLanes(cfg, resolver, ctx("channels"));
+  if (cfg.lanes.some((l) => laneUsesLlm(cfg, l))) {
     // IAM scoping in the stack is only defined for the Japan cross-Region inference profile (jp.*).
     if (!/^jp\.[a-z0-9][a-z0-9.-]*(:\d+)?$/.test(cfg.llmModelId)) {
       throw new Error(
         `llmModelId must be a Japan inference profile id starting with "jp." (e.g. "jp.anthropic.claude-haiku-4-5-20251001-v1:0") when translateEngine=llm. Got: "${cfg.llmModelId}"`,
       );
     }
-    if (cfg.translateTerminologyName.trim().length === 0) {
+    if (cfg.translateEngine === "llm" && cfg.translateTerminologyName.trim().length === 0) {
       throw new Error(
         "translateEngine=llm needs a non-empty translateTerminologyName (the LLM glossary is loaded from the Translate terminology)",
       );
@@ -490,6 +615,18 @@ export function loadConfig(scope: Construct): StackConfig {
   intRangeEarly(cfg, "browserSilenceSec", 5, 600);
   if (cfg.roomName.endsWith("-ingest")) {
     throw new Error('roomName must not end in "-ingest": that suffix is reserved for the browser ingest room (<roomName>-ingest)');
+  }
+  // A Japanese-source lane without a Transcribe vocabulary while the dictionary folder has a generated Japanese one:
+  // a warning (printed at synth), not an error.
+  if (existsSync(join(cfg.dictionaryDir, "transcribe-vocabulary-ja.txt"))) {
+    cfg.lanes.forEach((l, i) => {
+      if (/^ja-/.test(l.source) && l.transcribeVocabulary === "") {
+        cfg.warnings.push(
+          `lane ${i + 1} (${l.source} to ${l.target}) has no transcribeVocabulary, but ${cfg.dictionaryDir} has transcribe-vocabulary-ja.txt. ` +
+            `Set "transcribeVocabulary" on that channel to the name dictionaries.sh uploads it as (<transcribeVocabulary>-ja) so Transcribe uses it.`,
+        );
+      }
+    });
   }
   return cfg;
 }

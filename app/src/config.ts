@@ -325,6 +325,8 @@ function languageFilter(): {
   jaMemoryMs: number;
   shortWords: number;
   shortMinConf: number;
+  jaShortChars: number;
+  jaShortMinConf: number;
 } {
   let mode = oneOf("LANGUAGE_FILTER", "langid", ["off", "langid"] as const);
   const raw = str("LANGUAGE_OPTIONS", DEFAULT_LANGUAGE_OPTIONS);
@@ -360,6 +362,9 @@ function languageFilter(): {
     // Drop short low-confidence source-language finals right after a non-source final. 0 disables.
     shortWords: safeNum("LANGID_SHORT_WORDS", 4, 0, 20),
     shortMinConf: safeNum("LANGID_SHORT_MIN_CONF", 0.6, 0, 1),
+    // The same rule for a ja-JP source lane, in characters (only read by such a lane).
+    jaShortChars: safeNum("JA_SHORT_CHARS", 4, 0, 50),
+    jaShortMinConf: safeNum("JA_SHORT_MIN_CONF", 0.6, 0, 1),
   };
 }
 

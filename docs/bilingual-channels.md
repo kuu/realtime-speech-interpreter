@@ -1007,6 +1007,8 @@ Each has a recommended answer. The design assumes the recommendation until told 
   leaves a hook: a lane's gate can take a speaker-to-language hint later.
 - Changes to the dictionary builder's suggestion heuristics beyond direction support ([#7](https://github.com/kuu/realtime-speech-interpreter/issues/7)).
 - Accessible caption presentation beyond the `lang` and `aria-live` rules above ([#12](https://github.com/kuu/realtime-speech-interpreter/issues/12)).
-- `architecture.drawio.svg`: the diagram stays unchanged, also when the feature is built (owner decision: keep the
-  diagram simple). The step table and text in [architecture.md](architecture.md) describe the second channel instead.
+- `architecture.drawio.svg` is not changed by this design. When the feature is built, the diagram and the step table in
+  [architecture.md](architecture.md) are updated in that pull request to show the two output channels (owner
+  decision). The input side of the diagram stays SRT only: the browser and RTMPS inputs remain described in
+  [alternative-inputs.md](alternative-inputs.md), not in the diagram.
 - Any deploy, `dictionaries.sh` run or other AWS change.

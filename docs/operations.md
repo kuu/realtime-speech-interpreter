@@ -42,9 +42,9 @@ Commands run from the repository root unless a `cd` is shown. Replace `ap-northe
   nothing from channel 2 until Japanese is spoken.
 - **Lane 2 failure.** If channel 2 cannot start the log shows `lane en disabled: <reason>` and channel 1 serves as usual; the
   health body shows it. The listener page for channel 2 shows "Channel not live yet" and stays quiet. Run `./scripts/doctor.sh`
-  (it checks the Japanese vocabulary, the `<name>-ja-en` terminology and the English voice) and restart the task.
+  (it checks the Japanese vocabulary, the shared terminology and the English voice) and restart the task.
 - **Dictionaries.** After editing `terms.csv`, run `node dictionaries/build.mjs generate` and `cd cdk && ./scripts/dictionaries.sh`;
-  it also uploads `<name>-ja` and `<name>-ja-en` when they exist. Set both names on the Japanese channel in `event.json`.
+  it also uploads `<name>-ja` when the Japanese vocabulary was generated. The Japanese channel uses the same terminology as channel 1 by default; the Japanese vocabulary is optional (set `transcribeVocabulary` on that channel). The first run on a deployment that still has the old uni-directional terminology asks before it deletes and re-creates it as multi-directional (`--yes` skips the question).
 
 ## Browser microphone input (only with `-c inputSource=browser`)
 

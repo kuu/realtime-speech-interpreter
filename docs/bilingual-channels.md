@@ -84,8 +84,7 @@ only (not a `cdk.json` key); `-c channels='<json>'` overrides it under the exist
 {
   "channels": [
     { "source": "en-US", "target": "ja", "pollyVoice": "Kazuha" },
-    { "source": "ja-JP", "target": "en", "pollyVoice": "Joanna",
-      "transcribeVocabulary": "simul-translation-ja", "translateTerminology": "simul-translation-ja-en" }
+    { "source": "ja-JP", "target": "en", "pollyVoice": "Joanna" }
   ]
 }
 ```
@@ -96,7 +95,7 @@ only (not a `cdk.json` key); `-c channels='<json>'` overrides it under the exist
 | `target` | Translate code | required | Language of the lane's listeners. Also the **channel id** (`ja`, `en`) used in URLs, track names and events. |
 | `pollyVoice` | string | **required on every lane** (no fallback to the flat key, see below) | Polly voice that speaks `target`. Default choice for an `en` lane: `Joanna` (neural, `en-US`). |
 | `transcribeVocabulary` | string | a lane with source `en-US` and target `ja`: `dictionaries.transcribeVocabulary` (context `transcribeVocabularyName`); every other lane: `""` (see [Dictionary defaults follow the direction](#dictionary-defaults-follow-the-direction)) | Transcribe custom vocabulary for `source`. |
-| `translateTerminology` | string | a lane with source `en-US` and target `ja`: `dictionaries.translateTerminology` (context `translateTerminologyName`); every other lane: `""` | Translate terminology for `source` to `target`. With the LLM engine it must be set (the LLM reads its glossary from it), as today. |
+| `translateTerminology` | string | every lane: `dictionaries.translateTerminology` (context `translateTerminologyName`), one multi-directional terminology for both directions | Translate terminology for `source` to `target`. With the LLM engine it must be set (the LLM reads its glossary from it), as today. |
 | `translateEngine` | `translate` or `llm` | the global `translateEngine` | *Optional, can be dropped from the first version.* Lets channel 2 run on Amazon Translate while channel 1 uses the LLM, or the reverse. |
 
 Channel keys are the only per-lane settings in the first version. Chunking, LLM timeouts and caption settings stay
@@ -134,13 +133,14 @@ lanes. Each lane uses the key pair that fits its source language, see the
 
 ### Dictionary defaults follow the direction
 
-The dictionary names default from `dictionaries.*` by **direction, not by position in the list**. Only a lane with
-source `en-US` and target `ja` takes `dictionaries.transcribeVocabulary` and `dictionaries.translateTerminology` as
-defaults. Every other lane defaults to `""`, because those resources are English-source and English-to-Japanese. A lane
-with the LLM engine and an empty terminology fails validation with a message that names the lane. CDK resolves the
-names and writes them into `CHANNELS` (two lanes) or the flat variables (one lane), so the app never applies
-defaults itself. Tests cover `ja-JP` to `en` as the only channel (flat variables, empty names, LLM engine rejected
-without a terminology) and the `en` lane listed second or first.
+The Transcribe vocabulary defaults from `dictionaries.*` by **direction, not by position in the list**: only a lane with
+source `en-US` and target `ja` takes `dictionaries.transcribeVocabulary`; every other lane defaults to `""`, because that
+vocabulary is English. The Translate terminology is one multi-directional resource, so **every lane** defaults to
+`dictionaries.translateTerminology`, and a `ja-JP` to `en` lane needs only `source`, `target` and `pollyVoice`. A lane with the
+LLM engine and an explicit empty terminology fails validation with a message that names the lane. CDK resolves the names and
+writes them into `CHANNELS` (two lanes) or the flat variables (one lane), so the app never applies defaults itself. Tests cover
+`ja-JP` to `en` as the only channel (shared terminology, LLM engine accepted, an empty one rejected) and the `en` lane listed
+second or first.
 
 ### Validation (CDK synth and app start, same rules in both)
 
@@ -446,16 +446,17 @@ The prompt for `ja` to `en`:
 - Personal names: Western order (given name first), unless the glossary says otherwise (decided, see [Decisions](#decisions) question 6).
 - Fillers and hesitations (`えーと`, `あの`) are not translated.
 
-The glossary for this lane comes from the **ja-to-en terminology** (next section). The same cached-prompt design is
+The glossary for this lane comes from the **shared multi-directional terminology** (the lane's `translateTerminology` defaults
+to the first lane's name; see Dictionaries). The same cached-prompt design is
 used; the cache is per lane, so the second lane adds its own `cachePoint` and keep-warm call (see [Cost](#cost)).
 
 **Glossary loading for the reverse direction.** `glossary.ts` today reads a CSV of `[en, ja]` rows, skips a header
 only when it is `en,ja`, and keeps the first row of a duplicate English key. It gets a **direction parameter** taken
-from the lane (`en-ja` is today's behaviour and the default argument). For `ja-en` it reads the ja-to-en terminology
-file with header `ja,en`, **keys on the source column** (the Japanese side; the first row of a duplicate Japanese key
-wins, as for English today), and writes prompt lines in the form `ja = en`. Terminology order is the order in the
-file, which the builder fixes with `translate_ja_en_pos` (see Dictionaries). Several Japanese spellings of one English
-value are several rows of that file.
+from the lane (`en-ja` is today's behaviour and the default argument). For `ja-en` it reads the same terminology file as
+`en-ja` (header `en,ja`, columns swapped; a file with header `ja,en` still works), **keys on the Japanese column** (the
+first row of a duplicate Japanese key wins), and writes prompt lines in the form `ja = en`. Terminology order is the order in
+the file. When several English terms share one Japanese term, the builder puts the row with `display_as` first among them
+(else file order is kept), so "first row wins" picks the intended one.
 
 A **name check** runs after the model answers, in code, not in the prompt. The rule: take each glossary row whose
 source side occurs in the source chunk, matching by **exact substring after NFKC normalisation** of both strings (width
@@ -502,39 +503,40 @@ engine, as today.
 ## Dictionaries per direction
 
 Today `terms.csv` has one text column per language (`en`, `ja`), a katakana `reading` for the Japanese Polly voice, and
-direction-named flags. The builder reserves `transcribe_ja`, `translate_ja_en` and `polly_en`, accepts them, ignores
-them and prints a note ([dictionaries.md](dictionaries.md)). The design uses those three flags.
+direction-named flags ([dictionaries.md](dictionaries.md)). Built behavior: `transcribe_ja` is derived (every row with a
+`reading` is in the Japanese vocabulary unless `transcribe_ja=n`), `polly_en` stays a flag, and `translate_ja_en` no longer
+selects rows because there is one multi-directional terminology (see below).
 
 ### Columns
 
 | Column | Status | Meaning |
 |---|---|---|
-| `transcribe_ja` | reserved today | `y`: write a Transcribe vocabulary row for `ja-JP`. |
-| `translate_ja_en` | reserved today | `y`: write a Translate terminology row, Japanese source to English target. |
-| `polly_en` | reserved today | `y`: write a Polly reading used when the app speaks English. |
+| `transcribe_ja` | optional | `n`: leave the row out of the Japanese vocabulary. Without it every row with a `reading` (or `phrase_ja`) is in. |
+| `translate_ja_en` | optional, no effect on the file | `n` is accepted and warns: a multi-directional terminology cannot exclude a row from one direction. `y` on a row without `translate_en_ja=y` is ignored with a warning. |
+| `polly_en` | optional | `y`: write a Polly reading used when the app speaks English. |
 | `reading_en` | **new, optional** | The spoken English alias for the English Polly voice. Required when `polly_en=y`. |
 | `ja_variants` | **new, optional; can be dropped** | Other Japanese spellings that should map to the same `en`, separated by `|`. Each becomes its own terminology row. It extends the alias-row rule below, so it is only needed if the alias-row form is too clumsy in practice. |
 | `translate_ja_en_pos`, `transcribe_ja_pos`, `polly_en_pos` | **new, optional** | Ordering columns, like the existing `*_pos` columns: the position of the row in the generated file. Without them the file order of `terms.csv` is used. The LLM prompt lists the glossary in terminology order, so this order is visible to the model. |
 
-For a row with `translate_ja_en=y` the Japanese side is `ja` (the spelling to match) plus `reading` and each of
-`ja_variants`; the English side is `en`. **Alias rows.** The existing rule stays: several rows with the same `en` are
-allowed only as alias rows with an empty `ja` and `reading`. An additional Japanese spelling is written either as a
-`ja_variants` entry on the main row or as an alias row that has `ja` filled and `translate_ja_en=y`; the validator
-accepts that second form only with `ja` non-empty and rejects any other duplicate `en`. **Uniqueness on the Japanese
-side:** in the generated terminology the `ja` source column is unique (case-insensitive, after NFKC), as the English
-side is today; a Japanese spelling that two different `en` values claim is an error. Product names keep their English spelling as the target, which is how they
-appear unchanged in English output. The rule from the English direction holds here: `en` is never respelled.
+The terminology has one row per `translate_en_ja=y` row (`en`, `ja`), exactly as before. **Alias rows.** The existing rule
+stays: several rows with the same `en` are allowed only as alias rows with an empty `ja` and `reading`. Extra Japanese
+spellings (`ja_variants`, `reading` as a source) are not written to the shared terminology, because one file serves both
+directions and a second `ja` column entry would also change the en to ja direction. **Several English terms for one Japanese
+term** (for example `channel` and `channels`) are all kept, so en to ja is unchanged; the reverse direction uses the row with
+`display_as` set, else the first in file order, and the builder prints a warning listing them. Product names keep their English
+spelling as the target, which is how they appear unchanged in English output. The rule from the English direction holds here:
+`en` is never respelled.
 
-### Generated files (only written when at least one row has the flag)
+### Generated files
 
 | File | For | Uploaded as |
 |---|---|---|
-| `transcribe-vocabulary-ja.txt` | lane `ja-JP` source | Transcribe vocabulary `<name>-ja` (language `ja-JP`) |
-| `translate-terminology-ja-en.csv` | lane `ja-JP` to `en` | Translate terminology `<name>-ja-en`, uni-directional (`ja`, `en` columns) |
+| `transcribe-vocabulary-ja.txt` | lane `ja-JP` source | Transcribe vocabulary `<name>-ja` (language `ja-JP`); generated when a row has a `reading` |
 | `polly-readings-en.csv` | English voice readings | Packaged into the app image, like `polly-readings.csv` |
 
-The existing example dictionary has none of the new flags, so `generate` writes the same three files as today, and
-`generate --check` on the example is unchanged (tested). Without a flag, no new file appears.
+`translate-terminology.csv` is one file for both directions. The example dictionary has readings, so `generate` also writes
+`transcribe-vocabulary-ja.txt` for it; the other three files are byte-identical to before (tested). `polly-readings-en.csv`
+appears only when a row has `polly_en=y`.
 
 ### Transcribe vocabulary for Japanese
 
@@ -559,40 +561,61 @@ and the owner's `create-vocabulary` test decides. The fallback below applies if 
 **The acceptance test is deferred.** Creating a test vocabulary in `ja-JP` is an AWS write (`create-vocabulary`), which
 this work does not run. The build relies on the documented rules above, and the owner runs one `create-vocabulary`
 test later (state `READY` rather than `FAILED`, and a short clip returning the `DisplayAs` form). The builder writes
-`transcribe-vocabulary-ja.txt` only when `transcribe_ja` rows exist. If the test fails, the fallback is a `Phrase` that
+`transcribe-vocabulary-ja.txt` only when at least one row has a reading. If the test fails, the fallback is a `Phrase` that
 is accepted with no `DisplayAs`, and the glossary maps the transcript form back to the English name at translation
 time; if no Japanese vocabulary works, channel 2 runs without one and `doctor` warns.
 
-#### `terms.csv` input for `transcribe_ja` rows
+#### `terms.csv` input for the Japanese vocabulary
 
 | Vocabulary field | Source in `terms.csv` |
 |---|---|
-| `Phrase` | the new optional column `phrase_ja` if set, else `reading` (the katakana reading) |
+| `Phrase` | the optional column `phrase_ja` if set, else `reading` (the katakana reading) with spaces written as hyphens |
 | `DisplayAs` | `en` (so the transcript shows the product name in Latin script, the form the glossary and the English output use) |
 
 `phrase` and `display_as` stay English (`en-US`) only. An alias row (empty `ja` and `reading`) adds no Japanese
-vocabulary row of its own; the main row carries the entry. Rows that have `transcribe_ja=y` but neither `phrase_ja` nor
-`reading` are a validation error naming the row. The `phrase_ja` column is optional, so an existing `terms.csv` is
-valid unchanged.
+vocabulary row of its own; the main row carries the entry. No flag is needed: every row with a `reading` (or a `phrase_ja`)
+is in, unless it has `transcribe_ja=n`. A reading that is not a valid ja-JP `Phrase` (digits, Latin letters such as `AWS`) or
+repeats an earlier `Phrase` is left out with a warning that names the row; set `phrase_ja` on it or `transcribe_ja=n`. Two
+rows with the same explicit `phrase_ja` are an error. The `phrase_ja` column is optional, so an existing `terms.csv` is valid
+unchanged. Product names (`en`, `display_as`) are never changed; katakana appears only in `reading` and `phrase_ja`.
 
 #### Generated names and warnings
 
-The generated resource names are `<transcribeVocabulary>-ja` and `<translateTerminology>-ja-en`, where the part in
-angle brackets is the lane 1 value (`dictionaries.*` name). The upload script reads two optional environment variables to
-override them (`DICT_NAME_JA`, `DICT_NAME_JA_EN`), and the lane keys `transcribeVocabulary` and `translateTerminology` of the
-`ja-JP` channel carry the name the app uses (there is no separate `dictionaries.*` key for them). When the generated file
-`transcribe-vocabulary-ja.txt` exists (so `transcribe_ja` rows exist) but the `ja-JP` lane has no vocabulary set, CDK
-synth prints a warning (not an error) and `doctor` warns.
+The generated vocabulary name is `<transcribeVocabulary>-ja`, where the part in angle brackets is the lane 1 value
+(`dictionaries.*` name). The upload script reads an optional environment variable to override it (`DICT_NAME_JA`), and the lane
+key `transcribeVocabulary` of the `ja-JP` channel carries the name the app uses (there is no separate `dictionaries.*` key
+for it; `dictionaries.sh` prints the value to set). The Japanese vocabulary is optional, so the lane does not default to a name
+that may not exist yet. When the generated file `transcribe-vocabulary-ja.txt` exists but the `ja-JP` lane has no vocabulary
+set, CDK synth prints a warning (not an error) and `doctor` warns.
 
-### Translate terminology: separate resource
+### Translate terminology: one multi-directional resource
+**Owner decision (replaces open question 10's separate `-ja-en` terminology):** one terminology `<name>` for both lanes,
+imported with `Directionality=MULTI` from `translate-terminology.csv` (header `en,ja`). Channel 1 translates en to ja with it as
+before (the en to ja entries are the same, tested). Channel 2 uses it in reverse, both with Translate (`TerminologyNames`) and as
+the LLM glossary (the `ja-en` loader reads the same file). There is no second terminology resource and no reverse flag per row.
 
-Translate supports multi-directional terminologies (see
-[Creating a custom terminology](https://docs.aws.amazon.com/translate/latest/dg/creating-custom-terminology.html),
-read 2026-11-22: the first column of a uni-directional CSV is the source language, written as a header such as `ja,en`),
-but the deployed English-to-Japanese terminology is uni-directional,
-and replacing it would change a resource channel 1 depends on. The design therefore creates a **second terminology**,
-`<name>-ja-en`, and leaves `<name>` untouched. Either lane's engine reads its own terminology (for the LLM the glossary,
-for Translate the `TerminologyNames` parameter). The deployed names are not renamed.
+What the Amazon Translate documentation says (read 2026-11-22):
+- [Creating a custom terminology](https://docs.aws.amazon.com/translate/latest/dg/creating-custom-terminology.html): in a
+  multi-directional terminology any language can be source or target, and the CSV header holds the language codes (here `en,ja`).
+- [TerminologyData](https://docs.aws.amazon.com/translate/latest/APIReference/API_TerminologyData.html): `Directionality` is
+  `UNI` or `MULTI`; a terminology created without it behaves as uni-directional and reports no value.
+- [ImportTerminology](https://docs.aws.amazon.com/translate/latest/APIReference/API_ImportTerminology.html): the only merge
+  strategy is `OVERWRITE`, the imported terminology replaces the one of the same name, and it takes up to 10 minutes to propagate.
+  **Nothing says that an overwrite can change the directionality.** The script therefore does not rely on it.
+- [GetTerminology](https://docs.aws.amazon.com/translate/latest/APIReference/API_GetTerminology.html): returns the properties
+  (including `Directionality`) and a presigned location of the imported file, in the imported format. The LLM loader reads that file.
+  Not documented: how Translate treats two English terms with the same Japanese term in the reverse direction. The builder warns
+  for that case.
+
+`dictionaries.sh` reads the directionality first. Missing: import. `MULTI`: import (`OVERWRITE`). `UNI` or unset: it explains the
+impact, asks `[y/N]` (`--yes` answers it; with no terminal and no `--yes` it stops without changing anything), deletes the
+terminology and imports it again as `MULTI`. Between delete and import (seconds) the deployed lanes have no glossary, and the
+change reaches running tasks after the propagation time. `--dry-run` prints this plan without any call. The first run against a
+deployment created before this change hits the delete and re-create path, once.
+
+A multi-directional file cannot exclude a row from one direction, so `translate_ja_en=n` only produces a warning, and a row with
+`translate_ja_en=y` but no `translate_en_ja=y` is not written. Either lane's engine reads the same terminology (for the LLM
+the glossary, for Translate the `TerminologyNames` parameter). The deployed name is not renamed.
 
 ### Builder, validator, upload
 
@@ -601,12 +624,13 @@ for Translate the `TerminologyNames` parameter). The deployed names are not rena
 - `validate.mjs` gets rules for each new file: Japanese vocabulary phrase characters, terminology column order and
   language names, `polly-readings-en.csv` alias without katakana, uniqueness per file, no comma, quote, TAB or newline
   in a field (as for the others).
-- `dictionaries.sh` uploads `transcribe-vocabulary-ja.txt` and `translate-terminology-ja-en.csv` only if the files
-  exist, with the same dry-run and `--restart-app` behaviour. It is not run as part of this design.
+- `dictionaries.sh` uploads `transcribe-vocabulary-ja.txt` only if the file exists and imports the one terminology as
+  `MULTI` (directionality check, prompt and `--yes` as described above), with the same dry-run and `--restart-app` behaviour.
+  It is not run as part of this design.
 - `suggest` (and the optional Bedrock helper) gets a direction: in a bilingual deployment it proposes the Japanese
   spelling and the reading for terms heard on the Japanese side. *Optional, can be dropped from the first version.*
-- IAM: the task role needs `translate:GetTerminology` on the second terminology (the CDK stack already scopes it to
-  one name; it becomes a list).
+- IAM: both lanes use the same terminology, so the single `translate:GetTerminology` resource pair stays as it is (the stack
+  de-duplicates equal names).
 
 ## LiveKit
 
@@ -1026,7 +1050,8 @@ The design review left four findings open. They are resolved in this page as fol
 2. **Dictionary defaults bind to direction, not position.**
    [Dictionary defaults follow the direction](#dictionary-defaults-follow-the-direction).
 3. **Japanese Transcribe vocabulary columns.** [Transcribe vocabulary for Japanese](#transcribe-vocabulary-for-japanese):
-   `Phrase` from `phrase_ja` or `reading`, `DisplayAs` from `en`, generated names, and a synth and `doctor` warning.
+   `Phrase` from `phrase_ja` or `reading`, `DisplayAs` from `en`, generated names, and a synth and `doctor` warning. Since the
+   first live run the vocabulary is derived from every row with a `reading` (no flag) and there is one shared terminology.
 4. **Small items.** Channel 2 uses the same 230 ms caption offset until measured (see
    [Captions per channel](#captions-per-channel)); the 1.2% flip figure is cited as a private probe summary.
 
@@ -1045,7 +1070,7 @@ The owner answered all 13 questions as recommended. Each is decided and is built
 | 7 | Quality floor for channel 2 | The owner scores 30 chunks later (the e2e report prints a scoring sheet); pass at channel 1's median minus 0.5. |
 | 8 | Listeners | Venue listeners only. A remote mix is a separate issue. |
 | 9 | Lane start failure | If lane 2 cannot start, lane 1 starts anyway; the failure is logged and `doctor` reports it. |
-| 10 | Translate terminology | A second, separate uni-directional terminology `<name>-ja-en`. |
+| 10 | Translate terminology | **Changed by the owner after the first live run:** one multi-directional terminology `<name>` for both lanes (see [Translate terminology](#translate-terminology-one-multi-directional-resource)); the Japanese Transcribe vocabulary is derived from `reading`, no flag. The earlier answer, a separate uni-directional second terminology, is withdrawn. |
 | 11 | Per-lane chunk settings | None now. Global keys plus the new `ja*` keys. |
 | 12 | Unknown `?ch` | The page shows "not available" and disables Listen. |
 | 13 | English area size on channel 2 | Keeps 3 lines and the language-fixed layout. |
@@ -1065,4 +1090,5 @@ architecture diagram shows the two output channels while its input side stays SR
   SRT-only picture; a line under it says that with two channels the translation path runs once per direction. The two channels
   are shown in a separate landing diagram, [overview.drawio.svg](overview.drawio.svg), at the top of the README. The browser
   and RTMPS inputs remain described in [alternative-inputs.md](alternative-inputs.md), not in a diagram.
-- Any deploy, `dictionaries.sh` run or other AWS change.
+- Any deploy, `dictionaries.sh` run or other AWS change. Known gaps: whether Translate accepts several English terms for one
+  Japanese term in the reverse direction, and whether Transcribe ja-JP accepts an English `DisplayAs`, are not verified until the first upload.

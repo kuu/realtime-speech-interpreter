@@ -80,13 +80,11 @@ and `suggest` appends rows without touching the rest of the file. Nothing here n
 
 **Both directions.** The flag names say their direction (`translate_en_ja`) and the text columns are neutral (`en`,
 `ja`). The Japanese to English direction ([#9](https://github.com/kuu/realtime-speech-interpreter/issues/9)) uses the
-flags `transcribe_ja`, `translate_ja_en` and `polly_en` in this same file, with the optional columns `reading_en`,
-`phrase_ja`, `ja_variants` and the `*_pos` columns `transcribe_ja_pos`, `translate_ja_en_pos`, `polly_en_pos`. All of
-them are optional: a `terms.csv` without them is valid and generates exactly today's three files. The builder writes
-`transcribe-vocabulary-ja.txt`, `translate-terminology-ja-en.csv` and `polly-readings-en.csv` only when at least one row
-has the matching flag (design: [bilingual-channels.md](bilingual-channels.md#dictionaries-per-direction)); the full guide
-for the new columns lands with the two-channel documentation. Any other unknown column is an error, so a typo does not
-go unnoticed.
+flag `polly_en` in this same file, with the optional columns `transcribe_ja`, `translate_ja_en`, `reading_en`, `phrase_ja`,
+`ja_variants` and the `*_pos` columns `transcribe_ja_pos`, `translate_ja_en_pos`, `polly_en_pos`. All of them are optional: a
+`terms.csv` without them is valid. The builder writes `transcribe-vocabulary-ja.txt` when at least one row has a `reading`, and
+`polly-readings-en.csv` only when a row has `polly_en=y` (design: [bilingual-channels.md](bilingual-channels.md#dictionaries-per-direction)).
+Any other unknown column is an error, so a typo does not go unnoticed.
 **Rules.**
 
 - A flag set without its required field is an error that names the line. A row is never skipped silently.
@@ -122,18 +120,26 @@ still feeds every generated dictionary:
 
 | Column | Meaning |
 |---|---|
-| `transcribe_ja` | `y`: a row in `transcribe-vocabulary-ja.txt` (Transcribe ja-JP). `Phrase` = `phrase_ja` if set, else `reading`; `DisplayAs` = `en`. |
-| `translate_ja_en` | `y`: rows in `translate-terminology-ja-en.csv` (header `ja,en`): `ja`, `reading` and every `ja_variants` entry map to `en`. |
+| `transcribe_ja` | Not needed: every row with a `reading` (or `phrase_ja`) is in `transcribe-vocabulary-ja.txt` (Transcribe ja-JP). `Phrase` = `phrase_ja` if set, else `reading` with spaces as hyphens; `DisplayAs` = `en`. `n` leaves the row out. |
+| `translate_ja_en` | No effect on the file: there is one multi-directional terminology (below). `n` is accepted and only produces a warning, `y` on a row without `translate_en_ja=y` is ignored with a warning. |
 | `polly_en` | `y`: a row in `polly-readings-en.csv` (`en,reading_en`) for the English voice. |
 | `reading_en` | The spoken English alias; English letters only, no katakana. Required with `polly_en=y`. |
 | `phrase_ja` | Optional Japanese `Phrase` (hiragana, katakana, kanji, `ー`, hyphen between words). |
 | `ja_variants` | Other Japanese spellings of the same `en`, separated by `\|`. |
 | `transcribe_ja_pos`, `translate_ja_en_pos`, `polly_en_pos` | Position in the generated file, as for the other `*_pos` columns. |
 
-The files are written only when at least one row has the flag; without any flag nothing new appears. Upload names: the vocabulary
-as `<name>-ja` (ja-JP) and the terminology as `<name>-ja-en` (uni-directional), by `cdk/scripts/dictionaries.sh` (override with
-`DICT_NAME_JA`, `DICT_NAME_JA_EN`); put the same names on the `ja-JP` channel in `event.json` (`transcribeVocabulary`,
-`translateTerminology`). Product names keep their English spelling as the target and are never respelled.
+**One terminology for both directions.** `translate-terminology.csv` (header `en,ja`, the `translate_en_ja=y` rows) is imported by
+`cdk/scripts/dictionaries.sh` with `Directionality=MULTI`, so the Japanese to English channel uses the same resource: Translate
+reads it in reverse, and the LLM glossary reads the same file with the columns swapped. The en to ja entries are unchanged. If
+several English terms map to one Japanese term (`channel`, `channels`), the reverse direction uses the row with `display_as` set,
+else the first in file order, and `generate` prints a warning that lists them. Re-importing over an existing uni-directional
+terminology is not documented to change its directionality, so the script asks before it deletes and re-creates it (`--yes` skips
+the question; `--dry-run` shows the plan). Details: [bilingual-channels.md](bilingual-channels.md#translate-terminology-one-multi-directional-resource).
+**Japanese vocabulary.** It is uploaded as `<name>-ja` (ja-JP) by the same script (override the name with `DICT_NAME_JA`). The
+`ja-JP` channel in `event.json` takes it with `transcribeVocabulary` (optional; the script prints the name) and uses the shared
+terminology by default. A reading that is no valid ja-JP `Phrase` (digits, Latin letters) or repeats an earlier one is left out
+with a warning; set `phrase_ja` on that row or `transcribe_ja=n`. Product names keep their English spelling as the target and
+are never respelled; katakana appears only in `reading` and `phrase_ja`.
 **Caveat for the Japanese vocabulary.** The Transcribe page on character sets lists hiragana, katakana, kanji and full-width capital
 letters as supported for `DisplayAs` in ja-JP. `DisplayAs` = the English name is outside that set, so `validate.mjs` prints a warning
 and the first upload is the test: create the vocabulary once and check that its state is `READY`. If it fails, remove `DisplayAs`

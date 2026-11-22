@@ -45,7 +45,7 @@ Plain JSON. Comments (`//` and `/* */`) are accepted by the loader, so you can a
 | `sourceLanguage` | string | `"en-US"` | `sourceLanguage`, `translateSource` | Transcribe code of the speaker's language. Must be in `languageOptions` (advanced, default `en-US,ja-JP`). `translateSource` is its prefix (`en`). |
 | `targetLanguage` | string | `"ja"` | `translateTarget` | Translate code of the listeners' language. The Polly voice must speak it. |
 | `pollyVoice` | string | `"Kazuha"` | `pollyVoice` | Polly voice for the target language. |
-| `channels` | list of 1 or 2 lanes | `[{"source":"en-US","target":"ja","pollyVoice":"Kazuha"},{"source":"ja-JP","target":"en","pollyVoice":"Joanna","transcribeVocabulary":"simul-translation-ja","translateTerminology":"simul-translation-ja-en"}]` | `channels` (event key only; `-c channels='<json>'` overrides it) | Output channels, see [bilingual-channels.md](bilingual-channels.md). Absent = one English-to-Japanese channel from the flat keys (today). Per lane: `source` (Transcribe code, in `languageOptions`), `target` (Translate code and channel id), `pollyVoice` (required), `transcribeVocabulary`, `translateTerminology` (a lane other than English to Japanese defaults them to `""`), `translateEngine` (optional). Replaces `sourceLanguage`, `targetLanguage` and `pollyVoice`: combining them with `channels` is rejected. Two lanes need `languageFilter=langid` and add the `CHANNELS` variable, the `ListenerUrl<Id>` output and the channel list in `config.json`; one lane uses the flat variables. |
+| `channels` | list of 1 or 2 lanes | `[{"source":"en-US","target":"ja","pollyVoice":"Kazuha"},{"source":"ja-JP","target":"en","pollyVoice":"Joanna"}]` | `channels` (event key only; `-c channels='<json>'` overrides it) | Output channels, see [bilingual-channels.md](bilingual-channels.md). Absent = one English-to-Japanese channel from the flat keys (today). Per lane: `source` (Transcribe code, in `languageOptions`), `target` (Translate code and channel id), `pollyVoice` (required), `transcribeVocabulary` (an English-to-Japanese lane defaults to `dictionaries.transcribeVocabulary`, any other lane to `""`), `translateTerminology` (every lane defaults to `dictionaries.translateTerminology`: one multi-directional terminology serves both directions), `translateEngine` (optional). Replaces `sourceLanguage`, `targetLanguage` and `pollyVoice`: combining them with `channels` is rejected. Two lanes need `languageFilter=langid` and add the `CHANNELS` variable, the `ListenerUrl<Id>` output and the channel list in `config.json`; one lane uses the flat variables. |
 | `pollyReadings` | true/false | `true` | `pollyReadings` | `true` = apply the pronunciation readings (SSML `sub` aliases) from the generated `polly-readings.csv` of your dictionary folder (see `dictionaryDir`). The displayed text is never changed. |
 | `translateEngine` | string | `"llm"` | `translateEngine` | `translate` = Amazon Translate. `llm` = Bedrock model per chunk, Translate stays as fallback. |
 | `llmModelId` | string | `"jp.anthropic.claude-haiku-4-5-20251001-v1:0"` | `llmModelId` | Bedrock Japan cross-Region inference profile id (must start with `jp.`). Used only with `translateEngine=llm`. |
@@ -64,15 +64,15 @@ Unknown top-level keys are rejected with the list of allowed ones, so a typo can
   "profile": "fast",
   "channels": [
     { "source": "en-US", "target": "ja", "pollyVoice": "Kazuha" },
-    { "source": "ja-JP", "target": "en", "pollyVoice": "Joanna",
-      "transcribeVocabulary": "simul-translation-ja", "translateTerminology": "simul-translation-ja-en" }
+    { "source": "ja-JP", "target": "en", "pollyVoice": "Joanna" }
   ]
 }
 ```
+The second channel needs only `source`, `target` and `pollyVoice`: it uses the same Translate terminology as the first (`dictionaries.translateTerminology`, one multi-directional resource), so the LLM engine works for it without more configuration. Add `"transcribeVocabulary": "simul-translation-ja"` to it once `dictionaries.sh` has uploaded the Japanese vocabulary (optional).
 The first channel is the default one: its listener URL has no parameter and it keeps the names `publisher-app`, `translation-audio` and
 `captions`. The second channel's page is `?ch=en`. Do not combine `channels` with `sourceLanguage`, `targetLanguage` or `pollyVoice`. A channel
-other than English to Japanese defaults its vocabulary and terminology to empty; with the LLM engine every such channel needs a
-`translateTerminology`. `synth` prints a warning when the dictionary folder has `transcribe-vocabulary-ja.txt` and the Japanese channel
+other than English to Japanese defaults its vocabulary to empty and its terminology to the shared one; with the LLM engine a channel needs a non-empty
+`translateTerminology` (an explicit empty value is rejected). `synth` prints a warning when the dictionary folder has `transcribe-vocabulary-ja.txt` and the Japanese channel
 has no vocabulary. A single channel (for example only `ja-JP` to `en`) is allowed and uses the flat variables.
 
 ## Profiles

@@ -1084,9 +1084,15 @@ def _progress(line: str, t_start: float) -> None:
 def _print_done(run_dir: Path) -> None:
     say("")
     say(f"Done: {run_dir}")
-    for n in ("translation.wav", "side-by-side.wav", "source-clip.wav", "app.log", "report.md"):
+    two = sorted(run_dir.glob("side-by-side-*.wav"))
+    names = ([p.name.replace("side-by-side", "translation") for p in two] + [p.name for p in two] + ["scoring-sheet.md"]
+             if two else ["translation.wav", "side-by-side.wav"])
+    for n in (*names, "source-clip.wav", "app.log", "report.md"):
         say(f"   {run_dir / n}")
-    say(f"Listen:  open '{run_dir / 'side-by-side.wav'}'   (left = English source, right = Japanese)")
+    if two:
+        say("Listen:  " + "; ".join(f"open '{p}'" for p in two) + "   (left = source, right = translation)")
+    else:
+        say(f"Listen:  open '{run_dir / 'side-by-side.wav'}'   (left = English source, right = Japanese)")
     say(f"Judge:   fill in the HUMAN JUDGEMENT section of '{run_dir / 'report.md'}'")
 
 
@@ -1260,7 +1266,7 @@ def cmd_run(args) -> int:
         session = session or _find_session(group, stream, stream_start, wait=20)
         meta["session"] = session
         if session:
-            _drain(group, stream, stream_start, session, args.drain_timeout)
+            _drain(group, stream, stream_start, session, args.drain_timeout, [c["id"] for c in chans] or None)
         else:
             say("   the app never reported a session for this stream; no translation to collect")
         time.sleep(3)  # last chunk's audio is still in LiveKit's ~1 s playout queue
@@ -1373,7 +1379,7 @@ def _find_session(group: str, stream: str, start_ms: int, wait: int = 0) -> int 
         time.sleep(5)
 
 
-def _drain(group: str, stream: str, start_ms: int, session: int, timeout: int) -> None:
+def _drain(group: str, stream: str, start_ms: int, session: int, timeout: int, lanes: list[str] | None = None) -> None:
     """Wait until the session summary is logged and every committed chunk reached a final state."""
     say(f"   waiting for the backlog to drain (session {session}; timeout {timeout} s) ...")
     deadline = time.time() + timeout
@@ -1384,12 +1390,15 @@ def _drain(group: str, stream: str, start_ms: int, session: int, timeout: int) -
             time.sleep(5)
             continue
         lines = [m for _, m in ev]
-        summary = any(f"[summary] session={session} " in m for m in lines)
-        parsed = rpt.parse_log(lines)
-        open_chunks = [c["n"] for c in parsed["chunks"].values() if c["status"] in ("queued", "synth")]
-        last_played = max((c.get("playedTs", 0) for c in parsed["chunks"].values()), default=0)
+        summary, open_chunks = bilingual.drain_state(lines, session, lanes)
+        n_chunks = 0
+        last_played = 0
+        for ls in (bilingual.split_channel_lines(lines, lanes).values() if bilingual.has_channels(lines) else [lines]):
+            parsed = rpt.parse_log(ls)
+            n_chunks += len(parsed["chunks"])
+            last_played = max([last_played] + [c.get("playedTs", 0) for c in parsed["chunks"].values()])
         if summary and not open_chunks and now_ms() - last_played > 3000:
-            say(f"   drained: summary logged, {len(parsed['chunks'])} chunks finished")
+            say(f"   drained: summary logged, {n_chunks} chunks finished")
             return
         say(f"   ... summary={'yes' if summary else 'no'} unfinished chunks={len(open_chunks)}")
         time.sleep(5)

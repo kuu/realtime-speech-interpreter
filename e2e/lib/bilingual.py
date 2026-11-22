@@ -62,10 +62,16 @@ def _to_legacy(msg: str) -> str:
     return msg
 
 
-def split_channel_lines(lines: list[str]) -> "OrderedDict[str, list[str]]":
+def _ordered(found: list[str], order: list[str] | None) -> list[str]:
+    """Channels in the configured order (channels of config.json), then any others in the order the log shows them."""
+    first = [c for c in (order or []) if c in found]
+    return first + [c for c in found if c not in first]
+
+
+def split_channel_lines(lines: list[str], order: list[str] | None = None) -> "OrderedDict[str, list[str]]":
     """Per channel: its own lines (legacy format) plus the shared lines (session starts, errors). [verify] lines carry
     no lane, so they are left out of every channel (the run-level count is in the main report)."""
-    chans = channels_in(lines)
+    chans = _ordered(channels_in(lines), order)
     out: "OrderedDict[str, list[str]]" = OrderedDict((c, []) for c in chans)
     for raw in lines:
         prefix, msg = _split_line(raw)
@@ -82,11 +88,11 @@ def split_channel_lines(lines: list[str]) -> "OrderedDict[str, list[str]]":
     return out
 
 
-def main_lines(lines: list[str]) -> list[str]:
+def main_lines(lines: list[str], order: list[str] | None = None) -> list[str]:
     """The log the standard report is built from: the whole log for a one-channel run, the first (default) channel for a
     two-lane run, and the log with src/out renamed for a run whose only lane has a Japanese source."""
     if has_channels(lines):
-        chans = split_channel_lines(lines)
+        chans = split_channel_lines(lines, order)
         return next(iter(chans.values())) if chans else lines
     if has_ja_source(lines):
         out = []
@@ -101,9 +107,9 @@ def _pct(vals: list[float], p: int):
     return rpt.pct(vals, p)
 
 
-def channel_metrics(lines: list[str], clip_sec: float | None = None) -> "OrderedDict[str, dict]":
+def channel_metrics(lines: list[str], clip_sec: float | None = None, order: list[str] | None = None) -> "OrderedDict[str, dict]":
     out: "OrderedDict[str, dict]" = OrderedDict()
-    for ch, ls in split_channel_lines(lines).items():
+    for ch, ls in split_channel_lines(lines, order).items():
         parsed = rpt.parse_log(ls)
         m = rpt.metrics(parsed, clip_sec)
         m["switches"] = _switch_stats(list(parsed["chunks"].values()))
@@ -157,10 +163,11 @@ ROWS = [
 
 def section(lines: list[str], meta: dict | None = None, clip_sec: float | None = None) -> list[str]:
     """Markdown lines for a two-lane run: one metrics column per channel, routing counts, first chunk after a switch."""
-    chans = channel_metrics(lines, clip_sec)
+    chans = channel_metrics(lines, clip_sec, (meta or {}).get("channels"))
     ids = list(chans)
     L = ["", "## Channels (two-lane run)", ""]
-    L.append("Each channel is computed from its own log lines (`ch=<id>`). The main report above is the first channel.")
+    L.append("Each channel is computed from its own log lines (`ch=<id>`). The main report above is the first channel in "
+             f"the configured `channels` order (`{ids[0] if ids else '-'}`).")
     L.append("")
     L.append("| Metric | " + " | ".join(f"`{c}`" for c in ids) + " |")
     L.append("|---|" + "---|" * len(ids))
@@ -263,6 +270,38 @@ def compare_section(lines_a: list[str], lines_b: list[str]) -> str:
 
 
 # ---------------------------------------------------------------- recorder
+def drain_state(lines: list[str], session: int, lanes: list[str] | None = None) -> tuple[bool, list[tuple[str, int]]]:
+    """(every lane logged its [summary] for this session, chunks not yet final as (channel, number)).
+    One-lane logs have an untagged `[summary] session=<n> ` and untagged chunks (channel ""); with lanes, a tagged
+    summary is required for every lane (the configured ones, else those seen in the log)."""
+    tagged = has_channels(lines) or bool(lanes and len(lanes) > 1)
+    need = (list(lanes) if lanes else channels_in(lines)) if tagged else []
+    seen = set()
+    for x in lines:
+        _, msg = _split_line(x)
+        m = re.match(rf"\[summary\] (?:ch=(\w+) )?session={session} ", msg or x)
+        if m:
+            seen.add(m.group(1) or "")
+    summary_ok = all(c in seen for c in need) if need else bool(seen)
+    pairs = split_channel_lines(lines).items() if tagged else [("", lines)]
+    open_chunks: list[tuple[str, int]] = []
+    for ch, ls in pairs:
+        parsed = rpt.parse_log(ls)
+        open_chunks += [(ch, c["n"]) for c in parsed["chunks"].values() if c["status"] in ("queued", "synth")]
+    return summary_ok, open_chunks
+
+
+def files_line(channels: list[str]) -> str:
+    """The `Files:` line of report.md for a run with these channels (empty or one: the one-channel line)."""
+    if len(channels) < 2:
+        return ("Files: `translation.wav` (Japanese output, sample 0 = stream start), `source-clip.wav` (English input), "
+                "`side-by-side.wav` (left = source, right = translation, time-aligned), `app.log`, `report.md`.")
+    per = ", ".join(f"`{wav_name(c)}`" for c in channels)
+    sbs = ", ".join(f"`side-by-side-{c}.wav`" for c in channels)
+    return (f"Files: {per} (one output per channel, sample 0 = stream start), `source-clip.wav` (input), {sbs} "
+            "(left = source, right = translation, time-aligned), `scoring-sheet.md`, `app.log`, `report.md`.")
+
+
 def wav_name(channel: str | None) -> str:
     """translation.wav for one channel; translation-<id>.wav for each channel of a two-lane run."""
     return "translation.wav" if not channel else f"translation-{channel}.wav"

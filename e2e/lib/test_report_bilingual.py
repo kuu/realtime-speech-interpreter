@@ -138,6 +138,24 @@ class ReportTest(unittest.TestCase):
         self.assertIn("## Channels (two-lane run)", text)
         self.assertEqual(data["metrics"]["chunks"], 2, "the main metrics are the first channel")
 
+    def test_two_lane_main_report_is_the_first_configured_channel(self):
+        # the log shows the en lane first (a Q&A slice); the configured order is ja, en
+        log = [x for x in two_lane_log() if "ch=ja" not in x] + [x for x in two_lane_log() if "ch=ja" in x]
+        text, data = self._build(log, dict(clipDurationSec=120, channels=["ja", "en"]))
+        self.assertEqual(data["metrics"]["chunks"], 2, "ja has 2 chunks, en has 3")
+        self.assertIn("first channel in the configured `channels` order (`ja`)", text)
+        self.assertIn("| Metric | `ja` | `en` |", text)
+        self.assertEqual(self._build(log, dict(clipDurationSec=120, channels=["en", "ja"]))[1]["metrics"]["chunks"], 3)
+
+    def test_two_lane_files_line_names_the_channel_files(self):
+        text, _ = self._build(two_lane_log(), dict(clipDurationSec=120, channels=["ja", "en"]))
+        files = next(x for x in text.splitlines() if x.startswith("Files:"))
+        for name in ("translation-ja.wav", "translation-en.wav", "side-by-side-ja.wav", "side-by-side-en.wav", "scoring-sheet.md",
+                     "source-clip.wav", "app.log", "report.md"):
+            self.assertIn(f"`{name}`", files)
+        self.assertNotIn("`translation.wav`", files)
+        self.assertNotIn("`side-by-side.wav`", files)
+
     def test_japanese_only_note(self):
         text, _ = self._build(T.NEW_LOG.splitlines(), {"japaneseOnly": True})
         self.assertIn("Test mode: **Japanese only**", text)

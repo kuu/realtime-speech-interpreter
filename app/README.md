@@ -152,7 +152,7 @@ The app exits after the file is fully played and prints a `[summary]` line.
   - `SHORT_SENTENCE_JOIN=on` (default, `off` = revert): held sentences of at most `SHORT_SENTENCE_WORDS`
     (default 3, 1-6) words wait `SHORT_JOIN_PAUSE_MS` (default 1000, 0 = `MERGE_PAUSE_MS`) and are sent to Translate
     comma-joined ("There's small, medium, and large."); tokens used by `[verify]` are not changed.
-  - `TRANSLATE_ENGINE=translate` (default; `llm` = Bedrock LLM with Translate fallback, see "LLM translation engine" below).
+  - `TRANSLATE_ENGINE=llm` (default; `translate` = low-cost mode, Amazon Translate only; the LLM falls back to Translate, see "LLM translation engine" below).
   - `TRANSLATE_FORMALITY=FORMAL` (default; `INFORMAL` or `off` = revert): Translate formality setting.
 - SRT input probing (`SRT_ANALYZE_MS`, default 500): ffmpeg's default probing (~5 s for MPEG-TS) holds
   the first seconds of every SRT connection and releases them at once. A plain en-US Transcribe stream
@@ -228,19 +228,23 @@ target|slew|hold|hyst|urgent|reset|steps|off, sinkQueuedMs, queueDepth, engine=t
 pcmBytes, e2eFirstWordMs/e2eLastWordMs = when the Japanese starts playing relative to the first/last
 English word), `DROPPED` (backlog cap), `SKIPPED` (filler-only), `FAILED`. Plus `[verify]` per Transcribe final (OK / MISMATCH) and `[summary]`.
 
-## LLM translation engine (optional, off by default)
+## LLM translation engine (the default)
 
-`TRANSLATE_ENGINE=translate` (default) calls Amazon Translate exactly as before; no Bedrock client is
-created and no Bedrock SDK code is loaded. `TRANSLATE_ENGINE=llm` translates each chunk with Claude Haiku 4.5
+`TRANSLATE_ENGINE=llm` (default) translates each chunk with Claude Haiku 4.5
 on Amazon Bedrock (Converse API, Japan cross-region profile `jp.anthropic.claude-haiku-4-5-20251001-v1:0`)
 and **always keeps Translate as the per-chunk fallback**. Corrections and the English filler filter run
 before the engine, the Japanese filler safety net runs after it, for both engines. Segmentation, language
 gate and speed control are unchanged.
+`TRANSLATE_ENGINE=translate` (low-cost mode, no Bedrock access needed) calls Amazon Translate as before; no Bedrock client is
+created and no Bedrock SDK code is loaded. The CDK stack always sets `LLM_MODEL_ID` (and the timing settings) for the
+Region it is deployed in. When you run the app locally outside the Japan Regions, set `LLM_MODEL_ID` yourself to the geo
+profile of your Region (table in [docs/configuration.md](../docs/configuration.md)) or use `TRANSLATE_ENGINE=translate`.
+The local defaults of the timing settings are the previous (careful) values; the CDK default bundle is tuned differently.
 
 | Variable | Default | Range | Meaning |
 |---|---|---|---|
-| `TRANSLATE_ENGINE` | `translate` | `translate`, `llm` | Engine switch. Revert = `translate` (or unset). |
-| `LLM_MODEL_ID` | `jp.anthropic.claude-haiku-4-5-20251001-v1:0` | non-empty | Inference profile. Bare model IDs fail; the CDK IAM scoping only supports `jp.` profiles. |
+| `TRANSLATE_ENGINE` | `llm` | `translate`, `llm` | Engine switch. Low-cost mode = `translate`. |
+| `LLM_MODEL_ID` | `jp.anthropic.claude-haiku-4-5-20251001-v1:0` | non-empty | Inference profile. Bare model IDs fail; the prefix must match your Region (`jp.`, `us.`, `eu.`, `au.`, `in.`); the CDK sets it from the stack Region. |
 | `LLM_TIMEOUT_MS` | `1500` | 200-10000 | Per-call limit (AbortSignal plus a race). Benchmark warm Converse: median 667, p90 795, max 2522 ms. |
 | `LLM_CONTEXT_CHUNKS` | `3` | 0-6 | Previous chunks (English sent + Japanese spoken) given as context. 0 = none. |
 | `LLM_CONTEXT_RESET_MS` | `60000` | 0-600000 | Context is cleared after this much silence in source time, and at a new session. 0 = never on silence. |
@@ -326,7 +330,7 @@ BREAKER/startup lines show them). `skip-backlog` is counted as `skipBacklog`, no
 
 **Check it against the real APIs** (cents; needs AWS credentials for the account): `npm run probe:llm`
 (glossary load, cache write then read, three injection chunks, forced timeout, bad model id).
-**Revert:** `TRANSLATE_ENGINE=translate` (or unset it; in CDK `-c translateEngine=translate`).
+**Low-cost mode:** `TRANSLATE_ENGINE=translate` (in CDK `-c translateEngine=translate`).
 
 ## Configuration
 

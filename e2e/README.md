@@ -62,8 +62,8 @@ cd path/to/your/clone
 #    ...with the settings of the deployed task definition instead, or with an extra override:
 ./e2e/e2e.sh local --file 1 --start 00:10:00 --duration 5m --label deployed-cfg --config deployed
 ./e2e/e2e.sh local --file 1 --start 00:10:00 --duration 5m --label minwords10 --env CHUNK_MIN_WORDS=10
-#    ...with the LLM translation engine (Bedrock; the default is Amazon Translate):
-./e2e/e2e.sh local --file 1 --start 00:10:00 --duration 5m --label llm-haiku --env TRANSLATE_ENGINE=llm
+#    ...with Amazon Translate only (low-cost mode; the default engine is the Bedrock LLM and needs Bedrock access):
+./e2e/e2e.sh local --file 1 --start 00:10:00 --duration 5m --label translate-only --env TRANSLATE_ENGINE=translate
 
 # 4. Compare two runs (prints the table and writes e2e/runs/compare_<A>__vs__<B>.md)
 ./e2e/e2e.sh compare e2e/runs/<run-A-folder> e2e/runs/<run-B-folder>

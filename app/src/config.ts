@@ -114,7 +114,8 @@ export function captionsJapaneseSpeech(env: NodeJS.ProcessEnv): "on" | "off" {
   return envOneOf(env, "CAPTIONS_JA_SPEECH", "on", ["on", "off"] as const);
 }
 export function translateEngine(env: NodeJS.ProcessEnv): TranslateEngineName {
-  return envOneOf(env, "TRANSLATE_ENGINE", "translate", ["translate", "llm"] as const);
+  // llm is the default (the CDK default too); translate = low-cost mode, Amazon Translate only.
+  return envOneOf(env, "TRANSLATE_ENGINE", "llm", ["translate", "llm"] as const);
 }
 export function llmConfig(env: NodeJS.ProcessEnv): LlmConfig {
   const modelRaw = env.LLM_MODEL_ID;

@@ -476,8 +476,9 @@ export class Segmenter {
 
   // Language gate: an already-forwarded result turned out to be another language (late flip).
   // Removes its not-yet-emitted tokens from pending and closes it without a MISMATCH.
-  closeResult(id: string, lang: string, now: number): void {
-    if (!this.results.has(id)) return;
+  // Returns how many of its tokens were already emitted (spoken or queued) and how many were removed.
+  closeResult(id: string, lang: string, now: number): { emitted: number; removed: number } {
+    if (!this.results.has(id)) return { emitted: 0, removed: 0 };
     this.results.delete(id);
     try {
       this.tap?.onRetract(id);
@@ -494,6 +495,7 @@ export class Segmenter {
         `LANGDROP lang=${lang} (language switched after commit)`,
     );
     this.runCuts(now);
+    return { emitted, removed };
   }
 
   // No more results are coming (input ended or Transcribe failed): commit everything

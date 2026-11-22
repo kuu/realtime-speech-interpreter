@@ -9,7 +9,9 @@ import type { StartStreamTranscriptionCommandInput } from "@aws-sdk/client-trans
 
 export interface TranscribeSettings {
   languageCode: string;
-  vocabularyName: string;
+  // One name (a one-lane deploy) or one per lane; empty names are skipped. Language identification takes the
+  // comma list in VocabularyNames (one vocabulary per language).
+  vocabularyName: string | readonly string[];
   partialResultsStability: string;
 }
 export interface LanguageFilterSettings {
@@ -17,17 +19,23 @@ export interface LanguageFilterSettings {
   options: readonly string[];
 }
 
+function vocabularyList(v: string | readonly string[]): string {
+  const names = typeof v === "string" ? [v] : v;
+  return names.map((n) => n.trim()).filter(Boolean).join(",");
+}
+
 export function transcribeParams(
   t: TranscribeSettings,
   sampleRateHertz: number,
   lf: LanguageFilterSettings,
 ): Omit<StartStreamTranscriptionCommandInput, "AudioStream"> {
+  const vocab = vocabularyList(t.vocabularyName);
   if (lf.mode === "off") {
     return {
       LanguageCode: t.languageCode as any,
       MediaEncoding: "pcm",
       MediaSampleRateHertz: sampleRateHertz,
-      ...(t.vocabularyName ? { VocabularyName: t.vocabularyName } : {}),
+      ...(vocab ? { VocabularyName: vocab.split(",")[0] } : {}),
       EnablePartialResultsStabilization: true,
       PartialResultsStability: t.partialResultsStability as any,
     };
@@ -38,7 +46,7 @@ export function transcribeParams(
     IdentifyMultipleLanguages: true,
     LanguageOptions: lf.options.join(","),
     PreferredLanguage: t.languageCode as any,
-    ...(t.vocabularyName ? { VocabularyNames: t.vocabularyName } : {}),
+    ...(vocab ? { VocabularyNames: vocab } : {}),
     EnablePartialResultsStabilization: true,
     PartialResultsStability: t.partialResultsStability as any,
   };

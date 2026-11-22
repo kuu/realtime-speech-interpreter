@@ -17,8 +17,9 @@ import {
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
 import { log } from "./log.js";
-import { Segmenter } from "./segmenter.js";
-import { LanguageGate, createResultSink } from "./language-gate.js";
+import { Segmenter, type Chunk, type SegmenterTap } from "./segmenter.js";
+import { LanguageGate, createResultSink, type GateSegmenter, type ResultSink } from "./language-gate.js";
+import { LaneRouter } from "./lane-router.js";
 import { transcribeParams } from "./transcribe-params.js";
 import type { ChunkPlayer } from "./chunk-player.js";
 import type { CaptionPublisher } from "./caption-publisher.js";
@@ -26,6 +27,17 @@ import type { CaptionPublisher } from "./caption-publisher.js";
 const transcribeClient = new TranscribeStreamingClient({ region: config.region });
 
 const TICK_MS = 200;
+
+// One output lane of the pipeline (a one-lane deploy passes none and gets today's single lane).
+export interface PipelineLane {
+  id: string; // channel id (ja, en)
+  source: string; // Transcribe code of the speech this lane translates
+  player: ChunkPlayer;
+  captions?: CaptionPublisher;
+  vocabulary?: string; // Transcribe custom vocabulary of the lane's source language
+  // Builds the lane's segmenter. Default: the English Segmenter with config.segmentation.
+  makeSegmenter?: (onChunk: (chunk: Chunk) => void, tap?: SegmenterTap) => GateSegmenter & ResultSink & { tick(now: number): void };
+}
 
 // Run one input session (one SRT connection or one INPUT_FILE). Resolves when the
 // audio input ends and the transcript has been fully flushed into the player.
@@ -36,7 +48,14 @@ export async function runPipeline(
   player: ChunkPlayer,
   session: number,
   captions?: CaptionPublisher,
+  lanesIn?: readonly PipelineLane[],
 ): Promise<void> {
+  const lanes: readonly PipelineLane[] =
+    lanesIn && lanesIn.length > 0 ? lanesIn : [{ id: "ja", source: config.transcribe.languageCode, player, captions }];
+  const multi = lanes.length > 1;
+  const transcribeSettings = multi
+    ? { ...config.transcribe, vocabularyName: lanes.map((l) => l.vocabulary ?? "") }
+    : config.transcribe;
   // Transcribe starts a 15s "no new audio" timer the moment the request opens.
   // Wait for the first real audio frame before starting the stream so a slow-to-
   // connect sender (OBS / mic / SRT caller) does not trip a spurious timeout.
@@ -112,37 +131,43 @@ export async function runPipeline(
       }
     }
 
-    const extraFillers = config.fillers.enabled ? new Set(config.fillers.words.map((w) => w.toLowerCase())) : new Set<string>();
-    const segmenter = new Segmenter(
-      config.segmentation,
-      (chunk) => player.enqueue({ ...chunk, t0, session }),
-      captions?.tapFor(session, () => t0, (w) => extraFillers.has(w.toLowerCase())),
-    );
-    // LANGUAGE_FILTER=off: the segmenter itself (old behavior); langid: drops non-English results.
     const lf = config.languageFilter;
-    const sink = createResultSink(
-      lf.mode,
-      segmenter,
-      {
-        source: config.transcribe.languageCode,
-        settleWords: lf.settleWords,
-        settleMode: lf.settleMode,
-        settleWordsDefault: lf.settleWordsDefault,
-        settleWordsAfterJa: lf.settleWordsAfterJa,
-        settleItems: lf.settleItems,
-        settleItemsDefault: lf.settleItemsDefault,
-        settleItemsAfterEn: lf.settleItemsAfterEn,
-        jaMemoryMs: lf.jaMemoryMs,
-        shortWords: lf.shortWords,
-        shortMinConf: lf.shortMinConf,
-        jaFillers: config.fillers.enabled ? config.fillers.jaPatterns : [],
-      },
-      () => t0,
-      captions?.japaneseTapFor(session, () => t0),
-    );
+    const built = lanes.map((lane) => {
+      const extraFillers = config.fillers.enabled ? new Set(config.fillers.words.map((w) => w.toLowerCase())) : new Set<string>();
+      const onChunk = (chunk: Chunk) => lane.player.enqueue({ ...chunk, t0, session });
+      const tap = lane.captions?.tapFor(session, () => t0, (w) => extraFillers.has(w.toLowerCase()));
+      const segmenter = lane.makeSegmenter ? lane.makeSegmenter(onChunk, tap) : new Segmenter(config.segmentation, onChunk, tap);
+      // LANGUAGE_FILTER=off: the segmenter itself (old behavior); langid: drops results of the other language.
+      const sink = createResultSink(
+        lf.mode,
+        segmenter,
+        {
+          ...(multi ? { laneId: lane.id } : {}),
+          source: lane.source,
+          settleWords: lf.settleWords,
+          settleMode: lf.settleMode,
+          settleWordsDefault: lf.settleWordsDefault,
+          settleWordsAfterJa: lf.settleWordsAfterJa,
+          settleItems: lf.settleItems,
+          settleItemsDefault: lf.settleItemsDefault,
+          settleItemsAfterEn: lf.settleItemsAfterEn,
+          jaMemoryMs: lf.jaMemoryMs,
+          shortWords: lf.shortWords,
+          shortMinConf: lf.shortMinConf,
+          jaFillers: config.fillers.enabled && /^ja(-|$)/i.test(lane.source) === false ? config.fillers.jaPatterns : [],
+        },
+        () => t0,
+        lane.captions?.japaneseTapFor(session, () => t0),
+      );
+      return { id: lane.id, sink, tick: (now: number) => segmenter.tick(now) };
+    });
+    // One lane: its gate directly (today's path, no router). Two lanes: every result goes to both gates, each isolated.
+    const router = multi ? new LaneRouter(built) : null;
+    const sink: ResultSink = router ?? built[0].sink;
     const ticker = setInterval(() => {
       try {
-        segmenter.tick(Date.now());
+        if (router) router.tick(Date.now());
+        else built[0].tick(Date.now());
       } catch (err) {
         log.error("[pipeline] tick error:", err);
       }
@@ -151,7 +176,7 @@ export async function runPipeline(
     try {
       const response = await transcribeClient.send(
         new StartStreamTranscriptionCommand({
-          ...transcribeParams(config.transcribe, config.audio.sampleRateHertz, lf),
+          ...transcribeParams(transcribeSettings, config.audio.sampleRateHertz, lf),
           AudioStream: toTranscribe(),
         }),
       );
@@ -176,7 +201,7 @@ export async function runPipeline(
       active = false;
       clearInterval(ticker);
       logBurst();
-      if (sink instanceof LanguageGate) log.info(sink.summary(attempt));
+      for (const b of built) if (b.sink instanceof LanguageGate) log.info(b.sink.summary(attempt));
     }
     if (!inputEnded) {
       // Input keeps buffering in the PcmQueue meanwhile, so nothing is lost by waiting.

@@ -1,9 +1,9 @@
 # Two-channel bilingual mode (design)
 
-**Status: planned, not built.** This page is the design for [issue #9](https://github.com/kuu/realtime-speech-interpreter/issues/9).
-No code, setting, file name or log line described here exists yet. Everything in "Hypotheses" and every number marked
-*estimate* has to be measured before it is relied on. Questions that need an answer from the project owner are in
-[Open questions](#open-questions).
+**Status: approved, in implementation.** This page is the design for [issue #9](https://github.com/kuu/realtime-speech-interpreter/issues/9).
+Parts of it are built step by step on the branch that implements the issue; a setting or file named here exists only
+once the matching change has landed. Everything in "Hypotheses" and every number marked *estimate* has to be measured
+before it is relied on. The owner has answered all questions; see [Decisions](#decisions).
 
 ## Goal
 
@@ -45,7 +45,7 @@ Fixed constraints (decided, not reopened here):
 14. [Failure isolation](#failure-isolation)
 15. [Single-channel parity](#single-channel-parity)
 16. [Acceptance criteria and tests](#acceptance-criteria-and-tests)
-17. [Open questions](#open-questions)
+17. [Decisions](#decisions)
 18. [Not in scope](#not-in-scope)
 
 ## Design in one picture
@@ -94,8 +94,8 @@ only (not a `cdk.json` key); `-c channels='<json>'` overrides it under the exist
 | `source` | Transcribe code | required | Language of the speech this lane translates. Must be in `languageOptions`. |
 | `target` | Translate code | required | Language of the lane's listeners. Also the **channel id** (`ja`, `en`) used in URLs, track names and events. |
 | `pollyVoice` | string | **required on every lane** (no fallback to the flat key, see below) | Polly voice that speaks `target`. Default choice for an `en` lane: `Joanna` (neural, `en-US`). |
-| `transcribeVocabulary` | string | lane 1: `dictionaries.transcribeVocabulary` (context `transcribeVocabularyName`); lane 2: `""` | Transcribe custom vocabulary for `source`. |
-| `translateTerminology` | string | lane 1: `dictionaries.translateTerminology` (context `translateTerminologyName`); lane 2: `""` | Translate terminology for `source` to `target`. With the LLM engine it must be set (the LLM reads its glossary from it), as today. |
+| `transcribeVocabulary` | string | a lane with source `en-US` and target `ja`: `dictionaries.transcribeVocabulary` (context `transcribeVocabularyName`); every other lane: `""` (see [Dictionary defaults follow the direction](#dictionary-defaults-follow-the-direction)) | Transcribe custom vocabulary for `source`. |
+| `translateTerminology` | string | a lane with source `en-US` and target `ja`: `dictionaries.translateTerminology` (context `translateTerminologyName`); every other lane: `""` | Translate terminology for `source` to `target`. With the LLM engine it must be set (the LLM reads its glossary from it), as today. |
 | `translateEngine` | `translate` or `llm` | the global `translateEngine` | *Optional, can be dropped from the first version.* Lets channel 2 run on Amazon Translate while channel 1 uses the LLM, or the reverse. |
 
 Channel keys are the only per-lane settings in the first version. Chunking, LLM timeouts and caption settings stay
@@ -105,8 +105,8 @@ not a global key for lane 2: it is **derived from the lane's target language**. 
 `speedMode` and speed keys (the global keys apply to the lane whose target is `ja`, and to a one-lane default deploy);
 an `en` target has speed control off (100% only) until a measured English `speedMsPerChar` exists. There is no
 `speedMode` channel key. Settle mode is the existing global `LANGID_SETTLE_MODE` (default `fixed`) and applies to both
-lanes; lane 2 therefore starts on `fixed` with 3 stable items, and `dynamic` is evaluated in the measurement plan. A
-per-lane override can be added later without a breaking change.
+lanes. Each lane uses the key pair that fits its source language, see the
+[settle threshold table](#settle-threshold-table). A per-lane override can be added later without a breaking change.
 
 ### Default and compatibility
 
@@ -130,6 +130,16 @@ per-lane override can be added later without a breaking change.
   `languageFilter=langid` the stream is multi-language with `PreferredLanguage=ja-JP`; with `languageFilter=off` it is a
   single-language stream with `LanguageCode=ja-JP` (`transcribe-params.ts` already supports `off`). The config tests
   include this case (flat variables only, no `CHANNELS`, correct source/target).
+
+### Dictionary defaults follow the direction
+
+The dictionary names default from `dictionaries.*` by **direction, not by position in the list**. Only a lane with
+source `en-US` and target `ja` takes `dictionaries.transcribeVocabulary` and `dictionaries.translateTerminology` as
+defaults. Every other lane defaults to `""`, because those resources are English-source and English-to-Japanese. A lane
+with the LLM engine and an empty terminology fails validation with a message that names the lane. CDK resolves the
+names and writes them into `CHANNELS` (two lanes) or the flat variables (one lane), so the app never applies
+defaults itself. Tests cover `ja-JP` to `en` as the only channel (flat variables, empty names, LLM engine rejected
+without a terminology) and the `en` lane listed second or first.
 
 ### Validation (CDK synth and app start, same rules in both)
 
@@ -187,7 +197,7 @@ path):
 |---|---|---|
 | Source test | `lang === opts.source` | same |
 | As-said tap | results tagged Japanese, check for a Japanese character | results in the lane's **target** language (`ja` or `en`), with a script check per language (Japanese character for `ja`, Latin letter for `en`) |
-| Settle rule | `langidSettleWords` or dynamic (3, or 5 within 60 s after Japanese) | same, in "stable items" for Japanese: 3, or 5 within 60 s after the other language (`JA_SETTLE_ITEMS` is already 3 for the as-said path) |
+| Settle rule | `langidSettleWords` (fixed) or dynamic (3, or 5 within 60 s after Japanese) | same rule in "stable items" for a Japanese source, with its own keys; see the [settle threshold table](#settle-threshold-table). `JA_SETTLE_ITEMS` (3) stays the as-said path's own threshold. |
 | Short low-confidence rule | English result of at most 4 words with mean confidence below 0.6 right after a non-source final: dropped | Japanese result of at most `jaShortChars` characters (default 4) with the same confidence rule, right after a non-source final: dropped. Same intent: fragments of the other language inside a passage. |
 | Late flip | words already forwarded to the segmenter are removed (`closeResult`) | same |
 
@@ -198,7 +208,7 @@ Rules for lane L with source `s` (written for channel 2, `s = ja-JP`; channel 1 
 | Event | Lane `ja-JP` does | Lane `en-US` does (as today) |
 |---|---|---|
 | Partial tagged `ja-JP` | After the settle rule, forwards the stable items to its segmenter. | Treats it as as-said Japanese (existing path). |
-| Partial tagged `en-US` | Never forwards. If the result had been forwarded, waits for the final (no early retract: the code flips back in 1.2% of partial pairs). | Settle rule, then forward. |
+| Partial tagged `en-US` | Never forwards. If the result had been forwarded, waits for the final (no early retract: the code flips back in 1.2% of partial pairs, 45 of 3,742 pairs; private probe summary, not reproducible from this repository). | Settle rule, then forward. |
 | Final tagged `ja-JP` after the partials were tagged `ja-JP` | Commit the rest and verify, as the English lane does. | Drop (`non-source`). |
 | Final tagged `en-US` after partials that were `ja-JP` | The words that are not yet in a chunk are removed (`non-source-late`). A chunk already cut and spoken cannot be recalled: this is counted (`lateSpoken`) and is an acceptance metric. | Forward (the result was held while settling; the first words wait for the settle rule). |
 | Final of a result never forwarded | Dropped, or shown as said if it is in the lane's target language. | same |
@@ -206,9 +216,27 @@ Rules for lane L with source `s` (written for channel 2, `s = ja-JP`; channel 1 
 The time a language switch costs is the same for both lanes: the first result after a switch is tagged with the old
 language for a while (about 3.8 s in the probe), so the lane of the new language starts that long after the switch
 begins. This is the dominant source of channel-2 delay when the room alternates, and the reason an optional
-dynamic settle threshold exists (`LANGID_SETTLE_MODE=dynamic`; the default is `fixed`, and both lanes start on
-`fixed`). For Japanese the same mechanism applies; whether 3 and 5 stable items are the right values, and whether
-`dynamic` helps, is a measurement (`lateSpoken` against the first-chunk delay after a switch).
+dynamic settle threshold exists (`LANGID_SETTLE_MODE=dynamic`; the default is `fixed`). Both lanes follow the one
+global mode. For Japanese the same mechanism applies; whether the values below are right, and whether `dynamic` helps,
+is a measurement (`lateSpoken` against the first-chunk delay after a switch).
+
+#### Settle threshold table
+
+One threshold per mode and source language. The unit is words for an `en-US` source and stable items (punctuation
+excluded) for a `ja-JP` source. The `ja-JP` values mirror the English ones so the Japanese lane is not looser than
+lane 1; they are starting values for the measurement, not results.
+
+| Mode (`LANGID_SETTLE_MODE`) | Source | cdk.json key / environment variable | Default | Unit |
+|---|---|---|---|---|
+| `fixed` | `en-US` | `langidSettleWords` / `LANGID_SETTLE_WORDS` | 5 | words |
+| `dynamic` | `en-US` | `langidSettleWordsDefault` / `LANGID_SETTLE_WORDS_DEFAULT` | 3 | words |
+| `dynamic`, within `LANGID_JA_MEMORY_MS` (60000 ms) after Japanese | `en-US` | `langidSettleWordsAfterJa` / `LANGID_SETTLE_WORDS_AFTER_JA` | 5 | words |
+| `fixed` | `ja-JP` | `langidSettleItems` / `LANGID_SETTLE_ITEMS` (new) | 5 | stable items |
+| `dynamic` | `ja-JP` | `langidSettleItemsDefault` / `LANGID_SETTLE_ITEMS_DEFAULT` (new) | 3 | stable items |
+| `dynamic`, within the same memory window after English | `ja-JP` | `langidSettleItemsAfterEn` / `LANGID_SETTLE_ITEMS_AFTER_EN` (new) | 5 | stable items |
+| as-said path (text shown, not spoken) | any | constant `JA_SETTLE_ITEMS` | 3 | stable items |
+
+The `talk` profile sets `dynamic`, so a `talk` deploy uses the `dynamic` rows for both lanes.
 
 ### Short interjections
 
@@ -217,7 +245,7 @@ Without speaker labels the language of the *result* is all we know. Examples, wi
 | Situation | Result language | Channel 1 | Channel 2 |
 |---|---|---|---|
 | A Japanese moderator says "Thank you" in English | `en-US`, short | Translated and spoken as today (the English lane cannot know who spoke). | Shown as said (English, `― `). Not spoken. |
-| An English speaker says one Japanese word ("はい") | `ja-JP`, 1 to 3 characters | Shown as said, as today. | Held back by the settle rule (3 stable items) and then dropped by the short rule if its confidence is low. A real short Japanese reply that passes the rules is translated ("Yes"). |
+| An English speaker says one Japanese word ("はい") | `ja-JP`, 1 to 3 characters | Shown as said, as today. | Held back by the settle rule (see the [settle threshold table](#settle-threshold-table)) and then dropped by the short rule if its confidence is low. A real short Japanese reply that passes the rules is translated ("Yes"). |
 | Japanese fragments or English fragments inside a passage of the other language | mixed codes | The existing short low-confidence rule. | The mirrored rule above. |
 
 This is the accepted behaviour until #8 can label speakers reliably. It is the same trade-off the English lane
@@ -252,10 +280,11 @@ segmenter through a small interface (`ResultSink` plus `closeResult`) so both fi
 ### Cut rules
 
 **Owner decision: start simple.** Japanese delimiters are as simple as English ones: `。` ends a sentence, `、` is a
-comma, `「` `」` are quotes (no cut), and Transcribe already splits the text into tokens. The first build uses only
-rules 1 (sentence end), 2 (every stable `、`, with no minimum length and no dangling test), 6 (maximum wait) and 7
-(final). The fuller rule set below (dangling test D, clause endings, minimum lengths, pause, maximum characters) is an
-**experiment variant**: run both on the same recordings in one e2e comparison and keep the extra rules only if they
+comma, `「` `」` are quotes (no cut), and Transcribe already splits the text into tokens. The default mode,
+`jaSegmentationMode=simple`, cuts at a stable `。？！`, at every stable `、` (no minimum length, no dangling test), after
+`jaMaxWaitMs`, and on the final: rules 1, 2, 6 and 7 below with the simplifications named here. The fuller rule set
+below (dangling test D, clause endings, minimum lengths, pause, maximum characters) is the opt-in experiment variant
+`jaSegmentationMode=full`, default off. Both can be compared in one e2e run, and the extra rules are kept only if they
 give a clear quality gain without extra latency. The known risk of the simple rule is that a clause before `、` often
 has no verb yet (Japanese is verb-final), so the English translation may have to guess or wait; the comparison measures
 that.
@@ -331,7 +360,7 @@ requires each one to be listed in `configuration.md`. Precedence is the existing
 
 | Key | `cdk.json` default (= `careful`) | `talk` | `fast` | Mirrors today's key |
 |---|---|---|---|---|
-| `jaSegmentationMode` | `clause` | `clause` | `clause` | (new; `sentence` reverts to rules 1, 5, 6, 7) |
+| `jaSegmentationMode` | `simple` | `simple` | `simple` | (new; `simple` or `full`, default `simple`) |
 | `jaSentenceMinChars` | 6 | 6 (idle: `mergeShort` off) | 6 (idle) | `sentenceMinWords` (8) |
 | `jaClauseMinChars` | 12 | 8 | 8 | `chunkMinWords` (8 / 5) |
 | `jaMaxChars` | 40 | 30 | 30 | `chunkMaxWords` (22) |
@@ -342,7 +371,9 @@ requires each one to be listed in `configuration.md`. Precedence is the existing
 | `jaShortChars`, `jaShortMinConf` | 4, 0.6 | same | same | the English short rule |
 
 
-`qa` and `default` follow `careful`. These are starting values to be tuned by the evaluation, not results; a profile
+In `simple` mode only `jaMaxWaitMs` applies (and `jaSentenceMinChars` only when the existing `mergeShort` key is on); the
+other `ja*` keys, `jaClauseEndings` and `jaDanglingTokens` are read only in `full` mode. `qa` and `default` follow
+`careful`. These are starting values to be tuned by the evaluation, not results; a profile
 file gains the `ja*` rows only in the pull request that builds the feature, together with the tuned values.
 (Before building, the 900 and 600 ms values are read off `chunkPauseMs` in `cdk.json` and `talk.json`; the others are
 scaled the same way and are to be checked.)
@@ -411,7 +442,7 @@ The prompt for `ja` to `en`:
   respells a name.
 - Japanese is verb-final and often drops the subject: the prompt tells the model to produce the English of the clause
   seen so far, to use the previous chunks to resolve the subject, and not to invent a subject when the context has none.
-- Personal names: Western order (given name first), unless the glossary says otherwise (see open question 6).
+- Personal names: Western order (given name first), unless the glossary says otherwise (decided, see [Decisions](#decisions) question 6).
 - Fillers and hesitations (`えーと`, `あの`) are not translated.
 
 The glossary for this lane comes from the **ja-to-en terminology** (next section). The same cached-prompt design is
@@ -448,9 +479,12 @@ engine, as today.
   by default) and applies to both lanes, so each lane's voice must support it; `doctor` checks that. There is no
   per-channel engine key in the first version. `Joanna` is the starting point because channel 1 already runs on a neural voice and its synthesis time (about 0.16 s per chunk) is part of
   the measured budget. Polly also offers generative voices; evaluating one is optional and can be dropped, because its latency and
-  Region availability have to be measured before it is chosen, and the first byte time is what matters here. `doctor` checks the chosen
-  voice with `aws polly describe-voices --region <region> --engine <engine> --language-code en-US`. The voice name is
-  open question 3 asks the owner to confirm `Joanna` or pick another listed voice; it is a channel key, so it is a deploy-time choice.
+  Region availability have to be measured before it is chosen, and the first byte time is what matters here. **Checked 2026-11-22** with
+  `aws polly describe-voices --region ap-northeast-1 --engine neural --language-code en-US` (read-only): 13 neural
+  `en-US` voices are listed (Danielle, Gregory, Joanna, Ruth, Kevin, Salli, Matthew, Kimberly, Kendra, Justin, Joey, Ivy,
+  Stephen), including `Joanna`. `doctor` checks the chosen
+  voice with `aws polly describe-voices --region <region> --engine <engine> --language-code en-US`. `Joanna` is the decided
+  default (see [Decisions](#decisions) question 3); another listed voice is a channel key, so it is a deploy-time choice.
 - **Speed control.** The speed levels (100 to 145%) exist because Japanese output is slow. Speed control is derived
   from the lane's target language (see [Configuration](#configuration)): the lane with target `ja` keeps the global
   `speedMode` and speed keys, a lane with target `en` has it **off (100% only)**, with no new key. It stays off until a
@@ -506,19 +540,50 @@ The existing example dictionary has none of the new flags, so `generate` writes 
 Multi-language identification takes **one vocabulary per language** (`VocabularyNames`, comma separated, each matching
 a language option); today it is one name. With two lanes the app passes both. A Japanese vocabulary has its own rules
 for allowed characters in `Phrase` (the English acronym rule `A.B.C.` does not apply). The validator checks the
-`ja-JP` rules from the Transcribe documentation, which have to be read again at build time because they can change;
-the candidate vocabulary row is the `reading` (katakana) as `Phrase` and `en` as `DisplayAs`, which would also make the
-transcript show product names in Latin script. **This is unverified.** Step 0 of the build is an experiment gate: create
-a small test vocabulary in `ja-JP` through the same upload path and see whether Transcribe accepts it (state `READY`,
-not `FAILED`) and whether a short test clip returns the `DisplayAs` form. Fallback decisions: if the katakana `Phrase`
-with Latin `DisplayAs` is rejected, use a `Phrase` that is accepted (for example the Japanese spelling in `ja`) with no
-`DisplayAs`, and let the glossary map the transcript form back to the English name at translation time; if no Japanese
-vocabulary works at all, the `transcribe_ja` flag stays reserved and channel 2 runs without a vocabulary
-(`doctor` warns). The builder is not written before the gate is decided.
+`ja-JP` rules from the Transcribe documentation, which can change and are read again whenever the builder changes.
+**Documented constraints** (read 2026-11-22 on the Transcribe developer guide page
+[Creating a custom vocabulary using a table](https://docs.aws.amazon.com/transcribe/latest/dg/custom-vocabulary-create-table.html)):
+the table has the four columns `Phrase`, `SoundsLike`, `IPA` and `DisplayAs`, TAB or comma separated, saved as plain
+text with LF or CRLF; `SoundsLike` and `IPA` are ignored and stay empty; `Phrase` must be present on every row, takes only
+characters from the language's character set page, no spaces (words joined by a hyphen), no digits, and none of the
+leading, trailing or repeated hyphen, period and apostrophe patterns; `DisplayAs` is optional, may hold spaces, digits
+and symbols, and replaces the phrase in the output. The page does not list per-language exceptions for `DisplayAs`, so
+a Latin `DisplayAs` for a Japanese `Phrase` is expected to work but is **unverified**.
+
+**The acceptance test is deferred.** Creating a test vocabulary in `ja-JP` is an AWS write (`create-vocabulary`), which
+this work does not run. The build relies on the documented rules above, and the owner runs one `create-vocabulary`
+test later (state `READY` rather than `FAILED`, and a short clip returning the `DisplayAs` form). The builder writes
+`transcribe-vocabulary-ja.txt` only when `transcribe_ja` rows exist. If the test fails, the fallback is a `Phrase` that
+is accepted with no `DisplayAs`, and the glossary maps the transcript form back to the English name at translation
+time; if no Japanese vocabulary works, channel 2 runs without one and `doctor` warns.
+
+#### `terms.csv` input for `transcribe_ja` rows
+
+| Vocabulary field | Source in `terms.csv` |
+|---|---|
+| `Phrase` | the new optional column `phrase_ja` if set, else `reading` (the katakana reading) |
+| `DisplayAs` | `en` (so the transcript shows the product name in Latin script, the form the glossary and the English output use) |
+
+`phrase` and `display_as` stay English (`en-US`) only. An alias row (empty `ja` and `reading`) adds no Japanese
+vocabulary row of its own; the main row carries the entry. Rows that have `transcribe_ja=y` but neither `phrase_ja` nor
+`reading` are a validation error naming the row. The `phrase_ja` column is optional, so an existing `terms.csv` is
+valid unchanged.
+
+#### Generated names and warnings
+
+The generated resource names are `<transcribeVocabulary>-ja` and `<translateTerminology>-ja-en`, where the part in
+angle brackets is the lane 1 value (`dictionaries.*` name). Two optional keys override them:
+`dictionaries.transcribeVocabularyJa` and `dictionaries.translateTerminologyJaEn` set the lane keys
+`transcribeVocabulary` and `translateTerminology` of the `ja-JP` lane. When the generated file
+`transcribe-vocabulary-ja.txt` exists (so `transcribe_ja` rows exist) but the `ja-JP` lane has no vocabulary set, CDK
+synth prints a warning (not an error) and `doctor` warns.
 
 ### Translate terminology: separate resource
 
-Translate supports multi-directional terminologies, but the deployed English-to-Japanese terminology is uni-directional,
+Translate supports multi-directional terminologies (see
+[Creating a custom terminology](https://docs.aws.amazon.com/translate/latest/dg/creating-custom-terminology.html),
+read 2026-11-22: the first column of a uni-directional CSV is the source language, written as a header such as `ja,en`),
+but the deployed English-to-Japanese terminology is uni-directional,
 and replacing it would change a resource channel 1 depends on. The design therefore creates a **second terminology**,
 `<name>-ja-en`, and leaves `<name>` untouched. Either lane's engine reads its own terminology (for the LLM the glossary,
 for Translate the `TerminologyNames` parameter). The deployed names are not renamed.
@@ -597,6 +662,9 @@ Tests: a late joiner subscribes to the selected track only; a missing track show
 plays when it is published; a reconnect re-subscribes; no bytes arrive for the other track.
 
 ## Captions per channel
+
+The listener page delays captions by 230 ms (`CAPTION_OFFSET_MS`) so text and audio line up. Channel 2 uses the same
+230 ms until a measurement of the English lane's caption-to-audio offset exists.
 
 ### Events
 
@@ -695,7 +763,7 @@ translated sentence for up to 3 s.
   channels.
 
 `captions=off` still turns off all captions of all channels; `captionsJapaneseSpeech` (as-said text) governs the as-said
-text of every lane, see open question 4.
+text of every lane, see [Decisions](#decisions) question 4.
 
 ## Listener page and URL scheme
 
@@ -724,7 +792,7 @@ text of every lane, see open question 4.
   into the page as HTML, and never sent to the server.
 - A listener who joins during a pause hears nothing from channel 2 until Japanese is spoken, as a human interpreter's
   channel would be quiet. Hearing the **original** speech when its language is the listener's own is out of scope: this
-  mode assumes listeners in the venue, who hear the room and use the channel for the other language (open question 8).
+  mode assumes listeners in the venue, who hear the room and use the channel for the other language ([Decisions](#decisions) question 8).
 
 `config.json` for a two-lane deploy (generated by the stack):
 
@@ -774,7 +842,7 @@ never prints a secret.
   after each language switch.
 - Reference script: `samples/scripts/qa-bilingual.txt` (English speaker, Japanese questions, fictional company) already
   exists and names the second channel as its purpose. It stays the primary bilingual test; a longer single-speaker
-  Japanese sample is needed for the pure monologue measurement (open question 5).
+  Japanese sample is needed for the pure monologue measurement ([Decisions](#decisions) question 5).
 - `e2e.sh run` keeps `--input srt|rtmps`; a `--channel <id>` option limits the report to one channel, the default is all (*optional, can be dropped*).
 - `./e2e/e2e.sh langscan` is unchanged; it finds language switches in a recording and is used to place measurement
   windows.
@@ -838,7 +906,7 @@ for rule 3, 4, 5 or 6. For the first utterance after a switch: add up to about 3
 
 **Pass test for channel 2:** p50 of `e2eFirstWordMs` at most channel 1's p50 + 2 s on the same recording, p90 at most
 12 s, `lateSpoken` at most 1 in 50 spoken chunks, and quality score no worse than a floor that the project owner sets
-(open question 7). Failing means tuning the segmenter parameters, not accepting the latency.
+(decided: the owner scores 30 chunks, pass at channel 1's median minus 0.5, see [Decisions](#decisions) question 7). Failing means tuning the segmenter parameters, not accepting the latency.
 
 ### Method
 
@@ -849,11 +917,16 @@ for rule 3, 4, 5 or 6. For the first utterance after a switch: add up to about 3
    sets; record per channel `e2eFirstWordMs`, `commitLagMs`, `lateSpoken`, first-chunk delay after a switch.
 3. **Pure Japanese monologue.** The probe data is multi-language mode with short utterances. One 10-minute single-
    speaker Japanese recording through a stream in the production configuration (multi-language, as the app runs it)
-   (about 10 min of Transcribe: 600 s at $0.0001667 per s, about $0.10, see [cost.md](cost.md)). Needs the
-   owner's approval (question 5). It decides whether the character cap and rule 3 are right for long sentences.
+   would cost about 10 min of Transcribe (600 s at $0.0001667 per s, about $0.10, see [cost.md](cost.md)). The owner
+   approved the measurement and **arranges the recording later**. This work provides the script
+   (`samples/scripts/monologue-ja.txt`), a fixture and an e2e mode; nothing is streamed. The measurement decides
+   whether the character cap and rule 3 of the `full` variant are right for long sentences.
 4. **Per-chunk ground truth.** Each chunk logs the first and last source word's audio time (as today for English), so
    `e2eFirstWordMs` is source-time based and does not depend on listening.
-5. **Report.** `e2e report` prints both channels side by side with the table above filled with measured values. The
+5. **Scoring sheet and variant comparison.** `e2e report` prints a scoring sheet of 30 chunks (the owner scores each
+   chunk from 1 to 5; pass at channel 1's median minus 0.5). One e2e run can carry both Japanese chunking variants
+   (`simple` and `full`) so the same recording is compared chunk by chunk, with latency and score side by side.
+6. **Report.** `e2e report` prints both channels side by side with the table above filled with measured values. The
    hypothesis row in this page is replaced by the measured row in the same pull request that builds the feature.
 
 ## Failure isolation
@@ -875,8 +948,7 @@ A channel-2 problem must not delay channel 1. This is by construction, and teste
 - **Start-up.** If lane 2 fails to start (a missing voice, a missing terminology), the app **starts lane 1 anyway**,
   logs `lane en disabled: <reason>` as an error, and adds a field to the body of the health endpoint response. The
   endpoint in `main.ts` is minimal and serves the load balancer check, so the **status stays 200** and only the body
-  field is added. It does not exit. A mis-set lane 1 still stops the app as today. (Open question 9 asks whether the owner prefers
-  fail-fast.)
+  field is added. It does not exit. A mis-set lane 1 still stops the app as today. (Decided: lane 1 starts, see [Decisions](#decisions) question 9.)
 - **Transcribe.** One stream: a stream error ends and reopens it for both lanes together, as today. This is the one
   shared failure, and it is not a new one.
 - **Test.** A fault-injection test: lane 2's engine hangs and throws; assert lane 1's chunk times are within noise of a
@@ -939,66 +1011,42 @@ One channel configured must equal today's behavior exactly. The evidence is test
 | e2e | `report.md` per channel; recorder with two tracks; `--channel`; fault injection on lane 2. |
 | Doctor | Per-channel checks, warning without a Japanese vocabulary. |
 
-## Known gaps (to fix during implementation)
+## Known gaps (resolved)
 
-The design review stopped after three rounds with these findings open. The implementation must resolve them first.
+The design review left four findings open. They are resolved in this page as follows.
 
-1. **Settle threshold for the Japanese lane.** The text above says both lanes start on `fixed` with 3 stable items.
-   That is wrong: the existing `fixed` mode uses `langidSettleWords` (default 5) and the `talk` profile uses `dynamic`
-   mode (3/5); the constant 3 belongs only to the as-said path. Define one table (fixed and dynamic mode, en-US key in
-   words, ja-JP key in stable items, with named keys), and state that both lanes follow the global
-   `LANGID_SETTLE_MODE`.
-2. **Dictionary defaults bind to direction, not position.** Only a lane whose source is `en-US` and target is `ja`
-   defaults to `dictionaries.*`; every other lane defaults to `""`, and an LLM lane with an empty terminology fails
-   validation with a message naming the lane. Tests: `ja-JP` to `en` as the only channel, and `en` listed second.
-3. **Japanese Transcribe vocabulary columns.** Specify the `terms.csv` input for `transcribe_ja` rows (for example
-   `Phrase = reading`, `DisplayAs = en`, an optional `phrase_ja` override; `phrase` and `display_as` stay en-US only;
-   alias rows), the generated names (`<transcribeVocabulary>-ja`, `<translateTerminology>-ja-en`), and a `doctor`/CDK
-   warning when `transcribe_ja` rows exist but lane 2 has no vocabulary set.
-4. Small: channel 2 uses the same caption offset (230 ms) until measured; the "1.2% of partial pairs" flip figure needs
-   a source or is dropped.
+1. **Settle threshold for the Japanese lane.** One table per mode and source language, with named keys:
+   [Settle threshold table](#settle-threshold-table). Both lanes follow the global `LANGID_SETTLE_MODE`.
+2. **Dictionary defaults bind to direction, not position.**
+   [Dictionary defaults follow the direction](#dictionary-defaults-follow-the-direction).
+3. **Japanese Transcribe vocabulary columns.** [Transcribe vocabulary for Japanese](#transcribe-vocabulary-for-japanese):
+   `Phrase` from `phrase_ja` or `reading`, `DisplayAs` from `en`, generated names, and a synth and `doctor` warning.
+4. **Small items.** Channel 2 uses the same 230 ms caption offset until measured (see
+   [Captions per channel](#captions-per-channel)); the 1.2% flip figure is cited as a private probe summary.
 
-## Open questions
+## Decisions
 
-Each has a recommended answer. The design assumes the recommendation until told otherwise.
+The owner answered all 13 questions as recommended. Each is decided and is built as written.
 
-1. **URL scheme.** `?ch=<target language>` on the one page, or a path (`/en/`)? *Recommended:* `?ch=en`. It needs no
-   CloudFront or S3 change and matches `?source=off`.
-2. **Default channel and legacy names.** The first channel in `channels` is the default and keeps `publisher-app`,
-   `translation-audio` and `captions`. *Recommended:* yes; put Japanese first (as today). Order then decides which
-   lane has the legacy names.
-3. **English voice.** Which voice, and neural or generative? *Recommended:* `Joanna` on the neural engine (shared
-   `pollyEngine`), after `describe-voices` confirms it for the stack's Region; consider a generative voice only if
-   its measured first-byte time is within 0.1 s of neural and it is available there.
-4. **As-said English on channel 2.** Show English speech in the English translation element (`#captions-en`) with `― `, controlled by the
-   existing `captionsJapaneseSpeech` key? *Recommended:* yes, same key (its meaning becomes "speech in the listeners'
-   language"); a per-channel switch only if someone asks.
-5. **Pure Japanese measurement.** Approve one 10-minute single-speaker Japanese recording through a real stream (about
-   $0.10 of Transcribe, 600 s at the list price in [cost.md](cost.md), plus Translate or Bedrock and Polly if run end to end)? Who
-   records it (the sample must not contain a real attendee's voice without consent)? *Recommended:* yes, a script read
-   by a colleague, synthetic content.
-6. **Personal names in English output.** Western order (given name first) or as spoken? *Recommended:* Western order
-   unless the dictionary says otherwise; names are rare and the check is simple.
-7. **Quality floor for channel 2.** What is the minimum acceptable score on the judgement scale, and who scores?
-   *Recommended:* the owner scores 30 chunks on the 1 to 5 scale used for the LLM benchmark; pass at the same median as
-   channel 1 minus 0.5.
-8. **Listeners.** Is the channel for listeners **in the venue** (they hear the floor audio themselves), or also remote
-   listeners who would need the original speech when their own language is spoken? *Recommended:* in the venue only. A
-   remote mix (original audio ducked under interpretation, a third track) is a separate issue.
-9. **Lane start failure.** If lane 2 cannot start, start lane 1 anyway and say so (recommended), or refuse to start?
-   *Recommended:* start lane 1; the event must not lose its main channel to an optional one. `doctor` catches it
-   earlier.
-10. **Translate terminology.** A second uni-directional terminology `<name>-ja-en` (recommended) or a single
-    multi-directional terminology replacing the deployed one? *Recommended:* the second one, so nothing channel 1 uses
-    changes.
-11. **Per-lane chunk settings.** Should a channel have its own chunk and speed settings in `channels`? *Recommended:* not
-    now; global keys plus the new `ja*` keys, add per-channel overrides when a measurement needs them.
-12. **Unknown `?ch`.** Show "not available" and disable Listen (recommended), or fall back to the default channel?
-    *Recommended:* not available. A fallback plays the wrong language without a hint.
+| # | Question | Decision |
+|---|---|---|
+| 1 | URL scheme | `?ch=<target language>` on the one page (`?ch=en`). No CloudFront or S3 change. |
+| 2 | Default channel and legacy names | The first channel in `channels` is the default and keeps `publisher-app`, `translation-audio` and `captions`. Japanese goes first, as today. |
+| 3 | English voice | `Joanna` on the neural engine (shared `pollyEngine`). Read-only `describe-voices` for `ap-northeast-1` on 2026-11-22 lists 13 neural `en-US` voices including `Joanna`. |
+| 4 | As-said English on channel 2 | Shown in the English translation element with `― `, under the existing `captionsJapaneseSpeech` key. |
+| 5 | Pure Japanese measurement | Approved. The owner arranges the recording later; this work prepares the script, fixture and e2e mode and streams nothing. |
+| 6 | Personal names in English output | Western order (given name first), unless the dictionary says otherwise. |
+| 7 | Quality floor for channel 2 | The owner scores 30 chunks later (the e2e report prints a scoring sheet); pass at channel 1's median minus 0.5. |
+| 8 | Listeners | Venue listeners only. A remote mix is a separate issue. |
+| 9 | Lane start failure | If lane 2 cannot start, lane 1 starts anyway; the failure is logged and `doctor` reports it. |
+| 10 | Translate terminology | A second, separate uni-directional terminology `<name>-ja-en`. |
+| 11 | Per-lane chunk settings | None now. Global keys plus the new `ja*` keys. |
+| 12 | Unknown `?ch` | The page shows "not available" and disables Listen. |
+| 13 | English area size on channel 2 | Keeps 3 lines and the language-fixed layout. |
 
-13. **English translation area size on channel 2.** The English element is pinned at the bottom with 3 lines, as
-    today. *Recommended:* keep 3 lines and the language-fixed layout; raise the English line count for channel 2 only if
-    the rehearsal shows clipped English at the five viewports (a layout change, not a new control).
+Also decided by the owner: Japanese chunking starts simple (`jaSegmentationMode=simple`), the fuller rule set is the
+opt-in `full` experiment variant, there is one LiveKit room with two audio tracks and one listener page, and the
+architecture diagram shows the two output channels while its input side stays SRT only.
 
 ## Not in scope
 
@@ -1007,8 +1055,8 @@ Each has a recommended answer. The design assumes the recommendation until told 
   leaves a hook: a lane's gate can take a speaker-to-language hint later.
 - Changes to the dictionary builder's suggestion heuristics beyond direction support ([#7](https://github.com/kuu/realtime-speech-interpreter/issues/7)).
 - Accessible caption presentation beyond the `lang` and `aria-live` rules above ([#12](https://github.com/kuu/realtime-speech-interpreter/issues/12)).
-- `architecture.drawio.svg` is not changed by this design. When the feature is built, the diagram and the step table in
-  [architecture.md](architecture.md) are updated in that pull request to show the two output channels (owner
-  decision). The input side of the diagram stays SRT only: the browser and RTMPS inputs remain described in
+- Browser, RTMPS and Caddy inputs in the architecture diagram. The diagram and the step table in
+  [architecture.md](architecture.md) are updated in the pull request that builds the feature to show the two output
+  channels (owner decision). The input side of the diagram stays SRT only: the browser and RTMPS inputs remain described in
   [alternative-inputs.md](alternative-inputs.md), not in the diagram.
 - Any deploy, `dictionaries.sh` run or other AWS change.

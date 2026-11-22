@@ -1,6 +1,6 @@
 # Architecture
 
-![Architecture diagram: venue, SRT, Fargate app, AI services, LiveKit, listener browsers](architecture.drawio.svg)
+![Architecture diagram: venue, SRT, Fargate app, AI services (Bedrock default, Translate backup), LiveKit, listener browsers](architecture.drawio.svg)
 
 The diagram shows one channel; with two channels the translation path runs once per direction ([bilingual-channels.md](bilingual-channels.md)).
 
@@ -36,7 +36,7 @@ The numbers match the diagram.
 | 3 | The load balancer passes it to the Fargate app. ffmpeg decodes it to 16 kHz PCM. |
 | 4 | The app streams the audio to Transcribe streaming, with language identification. |
 | 5 | Transcribe returns text. The app drops non-English results and cuts chunks. |
-| 6 | A Bedrock model (the default) translates each chunk. Amazon Translate is the fallback and the low-cost engine (`translateEngine=translate`). The diagram still draws Translate as the main box and Bedrock dashed. |
+| 6 | A Bedrock model (the default) translates each chunk. Amazon Translate is the fallback and the low-cost engine (`translateEngine=translate`). |
 | 7 | Polly speaks the Japanese text, with readings for product names. |
 | 8 | The app publishes the audio to LiveKit over WebRTC (Opus), and the caption text as data packets. |
 | 9 | The listener's browser plays the audio and shows the captions from LiveKit (subscribe only). |

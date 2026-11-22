@@ -1,6 +1,8 @@
 # Architecture
 
-![Architecture diagram: venue, SRT, Fargate app with two lanes (English to Japanese, Japanese to English), AI services, one LiveKit room with two audio tracks, listener browsers choosing a channel by URL](architecture.drawio.svg)
+![Architecture diagram: venue, SRT, Fargate app, AI services, LiveKit, listener browsers](architecture.drawio.svg)
+
+The diagram shows one channel; with two channels the translation path runs once per direction ([bilingual-channels.md](bilingual-channels.md)).
 
 The diagram is one editable file, [`architecture.drawio.svg`](architecture.drawio.svg). It is a normal SVG with the
 draw.io diagram embedded, so GitHub shows it as an image and draw.io opens it for editing. It uses draw.io's AWS
@@ -12,11 +14,11 @@ draw.io diagram embedded, so GitHub shows it as an image and draw.io opens it fo
 |---|---|---|---|
 | Venue encoder | OBS or any SRT encoder | Sends the venue audio as SRT with Opus. | outside the stack |
 | SRT entry | Network Load Balancer (UDP 9000) with static Elastic IPs, security groups | Accepts SRT from the venue IP only. | `cdk/lib/simul-translation-stack.ts` |
-| App | ECS on Fargate (1 task, ARM64) | Decodes audio, calls the AI services, publishes audio to LiveKit. With two channels it runs two lanes (English to Japanese, Japanese to English) on the one Transcribe stream. | `app/src/`, `cdk/lib/` |
+| App | ECS on Fargate (1 task, ARM64) | Decodes audio, calls the AI services, publishes audio to LiveKit. | `app/src/`, `cdk/lib/` |
 | Speech to text | Amazon Transcribe streaming | Text with partial results and per-result language. | `app/src/pipeline.ts` |
-| Translation | Amazon Translate, or Amazon Bedrock (optional) | Per chunk, in the direction of the lane (English to Japanese; Japanese to English with two channels). | `app/src/translate-engine.ts`, `app/src/bedrock-llm.ts` |
-| Text to speech | Amazon Polly | Japanese speech, and with two channels English speech (Joanna by default). Readings for product names. | `app/src/chunk-player.ts`, `app/src/polly-readings.ts` |
-| Media server | LiveKit (container) and Caddy (TLS) on one EC2 instance with an Elastic IP | Delivers the audio to browsers over WebRTC: one room, one audio track per channel. | `cdk/lib/livekit-user-data.ts` |
+| Translation | Amazon Translate, or Amazon Bedrock (optional) | English to Japanese per chunk. | `app/src/translate-engine.ts`, `app/src/bedrock-llm.ts` |
+| Text to speech | Amazon Polly | Japanese speech. Readings for product names. | `app/src/chunk-player.ts`, `app/src/polly-readings.ts` |
+| Media server | LiveKit (container) and Caddy (TLS) on one EC2 instance with an Elastic IP | Delivers the audio to browsers over WebRTC. | `cdk/lib/livekit-user-data.ts` |
 | Listener page | CloudFront, private S3 bucket | Static page with the LiveKit client. Plays the audio and shows the captions. | `app/web/` |
 | Token endpoint | Lambda function URL behind CloudFront (`/token`) | Issues subscribe-only LiveKit tokens. | `cdk/lambda/token/` |
 | Publisher page and endpoint (optional) | CloudFront (`/publish`), Lambda function URL (`/publisher-token`) | Speaker page and the publish token for it, only with `inputSource=browser`. | `app/publisher/`, `cdk/lambda/publisher-token/` |
@@ -25,7 +27,7 @@ draw.io diagram embedded, so GitHub shows it as an image and draw.io opens it fo
 
 ## Data flow
 
-The numbers match the diagram. With one channel configured (the default) only lane 1 and the Japanese listeners exist; the lanes, the English voice and the second track appear with `channels` in `event.json` ([bilingual-channels.md](bilingual-channels.md)).
+The numbers match the diagram.
 
 | Step | What happens |
 |---|---|
@@ -33,11 +35,11 @@ The numbers match the diagram. With one channel configured (the default) only la
 | 2 | OBS sends SRT with Opus audio over the internet to the load balancer (UDP, venue IP only). |
 | 3 | The load balancer passes it to the Fargate app. ffmpeg decodes it to 16 kHz PCM. |
 | 4 | The app streams the audio to Transcribe streaming, with language identification. |
-| 5 | Transcribe returns text. The app sends each result to the lane of its language (English to lane 1, Japanese to lane 2) and cuts chunks. |
-| 6 | Each lane translates its chunks: Translate (default) or a Bedrock model (optional, dashed), with its own dictionary. |
-| 7 | Polly speaks lane 1 in a Japanese voice (with readings for product names) and lane 2 in an English voice. |
-| 8 | The app publishes two audio tracks to one LiveKit room over WebRTC (Opus), channel 1 Japanese and channel 2 English, and each channel's captions as data packets. |
-| 9 | The listener's browser plays the channel its URL names (`?ch=en` for English, no parameter for Japanese) and shows its captions (subscribe only). |
+| 5 | Transcribe returns text. The app drops non-English results and cuts chunks. |
+| 6 | Translate (default) or a Bedrock model (optional, dashed) translates each chunk. |
+| 7 | Polly speaks the Japanese text, with readings for product names. |
+| 8 | The app publishes the audio to LiveKit over WebRTC (Opus), and the caption text as data packets. |
+| 9 | The listener's browser plays the audio and shows the captions from LiveKit (subscribe only). |
 | 10 | The browser loads the page from CloudFront and asks for a token. |
 | 11 | CloudFront serves the page from a private S3 bucket. |
 | 12 | CloudFront calls the token Lambda, which returns a subscribe-only token. |
@@ -94,7 +96,7 @@ supports a passphrase. The Network Load Balancer gives static IPs, so the venue 
 
 **Browser microphone input (optional, `inputSource=browser`).** A second input next to SRT, for venues without an audio line out: a desktop browser page (`/publish`) captures the microphone and publishes it to a separate LiveKit ingest room; the app subscribes and feeds the same `PcmQueue` and pipeline as SRT. One input is active at a time (`INPUT_SOURCE=srt|browser|rtmps`). The security model is in [security.md](security.md#browser-microphone-input) (issue #10).
 
-**RTMPS input (optional, `inputSource=rtmps`).** For venues that block outbound UDP: OBS sends RTMPS to TCP 443 of the LiveKit host, where Caddy's layer4 route (selected by the TLS server name, venue IPs only) decrypts it and forwards plain RTMP through a TCP listener on the existing NLB to the app, which decodes it into the same `PcmQueue` (issue #11). It adds no buffering: in a local loopback test the path through Caddy was about 5 ms slower than direct RTMP. The diagram above shows only SRT and the two output channels.
+**RTMPS input (optional, `inputSource=rtmps`).** For venues that block outbound UDP: OBS sends RTMPS to TCP 443 of the LiveKit host, where Caddy's layer4 route (selected by the TLS server name, venue IPs only) decrypts it and forwards plain RTMP through a TCP listener on the existing NLB to the app, which decodes it into the same `PcmQueue` (issue #11). It adds no buffering: in a local loopback test the path through Caddy was about 5 ms slower than direct RTMP. The diagram above shows only SRT.
 
 **Alternative inputs.** The browser and RTMPS paths, with diagrams and the reasons for each design decision, are in [alternative-inputs.md](alternative-inputs.md).
 
@@ -103,7 +105,7 @@ words and translated into nonsense. Transcribe identifies the language of every 
 are not the source language. Short low-confidence English fragments inside Japanese speech are dropped too.
 `LANGUAGE_FILTER=off` restores the old behavior.
 
-**Planned: two channels.** The dropped Japanese speech is meant to feed a second, Japanese-to-English channel with its own segmenter, translation, English voice and LiveKit track, from the same single Transcribe stream. This is a design only, not built: [bilingual-channels.md](bilingual-channels.md) (issue #9).
+**Two channels (built, live tests pending).** With `channels` set, the Japanese speech feeds a second, Japanese-to-English channel with its own segmenter, translation, English voice and LiveKit track, from the same single Transcribe stream: [bilingual-channels.md](bilingual-channels.md) (issue #9).
 
 **Chunking with merge and dangling rules.** The segmenter cuts at sentence ends, at clauses once a chunk has
 enough words, and on pauses. Two rules keep chunks translatable:
@@ -164,7 +166,7 @@ One versioned contract with three event types. The builders are in `app/src/capt
 | `type` | `caption` (Japanese chunk), `source` (English words) or `speech` (Japanese speech as said). Unknown types are ignored. |
 | `seq` | Increases across both types within one app run. |
 | `id`, `session` | `caption`: `<session>-<chunk number>` (as `[chunk N]` in the logs). `source`: `<session>-<batch number>`. |
-| `channel`, `lang` | `ja` / `en` today. Reserved for the two-channel bilingual mode; the planned use (a new `ch` field and a topic per channel, channel 1 unchanged) is in [bilingual-channels.md](bilingual-channels.md#captions-per-channel). |
+| `channel`, `lang` | `ja` / `en` today. Used by the two-channel bilingual mode (a `ch` field and a topic per channel, channel 1 unchanged), see [bilingual-channels.md](bilingual-channels.md#captions-per-channel). |
 | `speaker` | `null` today. Reserved for speaker detection. |
 | `text` | `caption`: the Japanese exactly as sent to Polly, before the SSML `<sub>` readings are applied, so product names are never replaced by readings. `source`: the words of this batch, fillers removed. At most 600 characters. |
 | `sourceText`, `sourceLang` | `caption` only: the English that was translated (fillers removed, corrections applied). The page does not show it (the English line comes from `source` events). |
@@ -291,7 +293,7 @@ The fade is turned off for `prefers-reduced-motion`. The Japanese area is `aria-
 English area is not announced, as it changes several times a second.
 
 ## Edit the diagram
-`docs/architecture.drawio.svg` is the only source of the diagram. There is no generator. When a change touches the
+`docs/architecture.drawio.svg` and `docs/overview.drawio.svg` (the landing diagram in the README) are the only sources of their diagrams. Export either with `scripts/export-diagram.sh FILE`. There is no generator. When a change touches the
 architecture (a new service, a new data path), update the diagram and the step table above in the same pull request.
 
 **By hand.** Open the file in draw.io Desktop (`brew install --cask drawio`) or at https://app.diagrams.net

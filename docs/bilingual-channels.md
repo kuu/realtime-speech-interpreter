@@ -1061,8 +1061,8 @@ architecture diagram shows the two output channels while its input side stays SR
   leaves a hook: a lane's gate can take a speaker-to-language hint later.
 - Changes to the dictionary builder's suggestion heuristics beyond direction support ([#7](https://github.com/kuu/realtime-speech-interpreter/issues/7)).
 - Accessible caption presentation beyond the `lang` and `aria-live` rules above ([#12](https://github.com/kuu/realtime-speech-interpreter/issues/12)).
-- Browser, RTMPS and Caddy inputs in the architecture diagram. The diagram and the step table in
-  [architecture.md](architecture.md) were updated with the feature to show the two output
-  channels (owner decision). The input side of the diagram stays SRT only: the browser and RTMPS inputs remain described in
-  [alternative-inputs.md](alternative-inputs.md), not in the diagram.
+- Changes to `docs/architecture.drawio.svg` (owner decision, option B). The architecture diagram stays the one-channel,
+  SRT-only picture; a line under it says that with two channels the translation path runs once per direction. The two channels
+  are shown in a separate landing diagram, [overview.drawio.svg](overview.drawio.svg), at the top of the README. The browser
+  and RTMPS inputs remain described in [alternative-inputs.md](alternative-inputs.md), not in a diagram.
 - Any deploy, `dictionaries.sh` run or other AWS change.

@@ -1,17 +1,20 @@
 # Realtime Speech Interpreter
 
+![Overview: live speech from one venue audio feed goes to an AI interpreter running in your own AWS account. Channel 1 turns English into Japanese, channel 2 turns Japanese into English. Japanese and English listeners hear the voice and read live captions on their own phones in a browser, with no app to install. A few seconds of delay, one CDK deploy, custom dictionaries keep product names right.](docs/overview.drawio.svg)
+
 Real-time speech-to-speech interpretation on AWS, English to Japanese first. A speaker talks English at an event.
 Attendees open a web page on their phones and hear Japanese about 6 seconds later. The audio goes from OBS over SRT
 to an app on AWS Fargate. The app uses Amazon Transcribe to get text, Amazon Translate or an Amazon Bedrock model
 to translate it, and Amazon Polly to speak it. A self-hosted LiveKit server delivers the audio to the browsers.
 
+
 This is a personal, unofficial open-source project. It is not an AWS product, it is not affiliated with, endorsed or
 supported by Amazon Web Services, and AWS Support will not help with it. AWS, Amazon Transcribe, Amazon Translate,
 Amazon Polly, Amazon Bedrock and AWS Fargate are trademarks of Amazon.com, Inc. or its affiliates.
 
-![Architecture: venue, SRT, Fargate app with two lanes, Transcribe, Translate or Bedrock, Polly, LiveKit with two audio tracks, listener browsers](docs/architecture.drawio.svg)
+![Architecture: venue, SRT, Fargate app, Transcribe, Translate or Bedrock, Polly, LiveKit, listener browsers](docs/architecture.drawio.svg)
 
-Details of the diagram: [docs/architecture.md](docs/architecture.md).
+Details of the diagram: [docs/architecture.md](docs/architecture.md). The diagram above shows one channel; with two channels the translation path runs once per direction ([docs/bilingual-channels.md](docs/bilingual-channels.md)).
 
 ## What works today
 
@@ -244,7 +247,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, latency budget, design choices |
 | [docs/alternative-inputs.md](docs/alternative-inputs.md) | Browser microphone and RTMPS inputs: when to use them, how they work |
-| [docs/bilingual-channels.md](docs/bilingual-channels.md) | Design (planned, not built): second channel, Japanese to English |
+| [docs/bilingual-channels.md](docs/bilingual-channels.md) | Two channels, English to Japanese and Japanese to English: design, settings and measurement steps (built, live tests pending) |
 | [docs/configuration.md](docs/configuration.md) | All settings |
 | [docs/dictionaries.md](docs/dictionaries.md) | Vocabulary, terminology, readings, corrections |
 | [docs/operations.md](docs/operations.md) | Event-day runbook, monitoring, tear down |

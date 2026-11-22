@@ -19,9 +19,9 @@ function capture() {
 test("English target: no Settings.Formality, the lane's terminology and languages", async () => {
   const c = capture();
   try {
-    const lane = laneSettingsFor({ source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "t-ja-en" }, 1);
+    const lane = laneSettingsFor({ source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "t-lane2" }, 1);
     await translateTextFor(lane.translate)("今日は晴れです。");
-    assert.deepEqual(c.sent[0], { Text: "今日は晴れです。", SourceLanguageCode: "ja", TargetLanguageCode: "en", TerminologyNames: ["t-ja-en"] });
+    assert.deepEqual(c.sent[0], { Text: "今日は晴れです。", SourceLanguageCode: "ja", TargetLanguageCode: "en", TerminologyNames: ["t-lane2"] });
   } finally {
     c.restore();
   }
@@ -106,10 +106,10 @@ test("each lane's engine has its own circuit breaker and stats", () => {
   assert.notEqual(a.stats, b.stats);
 });
 test("createTranslationEngine with a lane: translate engine for a Translate lane; direction and glossary name for an LLM lane", async () => {
-  const lane = laneSettingsFor({ source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "t-ja-en", translateEngine: "translate" }, 1);
+  const lane = laneSettingsFor({ source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "t-lane2", translateEngine: "translate" }, 1);
   const eng = await createTranslationEngine({ lane, translate: async () => "x" });
   assert.ok(eng instanceof TranslateOnlyEngine);
-  const llmLane = laneSettingsFor({ source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "t-ja-en", translateEngine: "llm" }, 1);
+  const llmLane = laneSettingsFor({ source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "t-lane2", translateEngine: "llm" }, 1);
   let loaded = 0;
   const eng2 = await createTranslationEngine({
     lane: llmLane,

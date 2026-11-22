@@ -102,7 +102,7 @@ export function checkDir(dir) {
 
 /** Generate the three files into `dir`. Output is validated in a temp dir first; invalid output never replaces good files. */
 export function generate(dir) {
-  const { rows, notices } = readTerms(dir);
+  const { rows, notices, warnings: termWarnings } = readTerms(dir);
   const files = renderAll(rows);
   const tmp = mkdtempSync(join(tmpdir(), "dict-gen-"));
   try {
@@ -116,7 +116,7 @@ export function generate(dir) {
     }
     // A generated optional file whose rows are gone is removed, so a stale vocabulary or terminology is never uploaded.
     for (const name of Object.keys(OPTIONAL_OUTPUT_FILES)) if (!(name in files)) rmSync(join(dir, name), { force: true });
-    return { counts: v.counts, warnings: v.warnings, notices };
+    return { counts: v.counts, warnings: [...termWarnings, ...v.warnings], notices };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -143,7 +143,6 @@ function cmdGenerate(argv) {
   out(`  translate-terminology.csv: ${r.counts.terminology.entries} entries`);
   out(`  polly-readings.csv: ${r.counts.readings.entries} entries`);
   if (r.counts.vocabularyJa) out(`  transcribe-vocabulary-ja.txt: ${r.counts.vocabularyJa.entries} entries`);
-  if (r.counts.terminologyJaEn) out(`  translate-terminology-ja-en.csv: ${r.counts.terminologyJaEn.entries} entries`);
   if (r.counts.readingsEn) out(`  polly-readings-en.csv: ${r.counts.readingsEn.entries} entries`);
   for (const w of r.warnings) out(`WARN ${w}`);
   return 0;

@@ -165,9 +165,9 @@ if $EXTRA_LANES; then
     pass "lane $N: $L_SRC to $L_TGT, voice $L_VOICE, engine $L_ENG, vocabulary '${L_VOC:-none}', terminology '${L_TERM:-none}'"
     if [[ "$L_SRC" == ja-* && -z "$L_VOC" ]]; then
       if [[ -n "$DDIR" && -f "$DDIR/transcribe-vocabulary-ja.txt" ]]; then
-        warn "lane $N ($L_SRC to $L_TGT) has no Transcribe vocabulary, but $DDIR has transcribe-vocabulary-ja.txt (transcribe_ja rows exist)" "set \"transcribeVocabulary\" on that channel in event.json to the name dictionaries.sh uploads it as (<transcribeVocabulary>-ja, or DICT_NAME_JA)"
+        warn "lane $N ($L_SRC to $L_TGT) has no Transcribe vocabulary, but $DDIR has transcribe-vocabulary-ja.txt (generated from the readings in terms.csv)" "set \"transcribeVocabulary\" on that channel in event.json to the name dictionaries.sh uploads it as (<transcribeVocabulary>-ja, or DICT_NAME_JA)"
       else
-        warn "lane $N ($L_SRC to $L_TGT) has no Transcribe vocabulary: product names spoken in Japanese may be misrecognised" "add transcribe_ja rows to terms.csv, run node dictionaries/build.mjs generate and cd cdk && ./scripts/dictionaries.sh, then set the channel's transcribeVocabulary"
+        warn "lane $N ($L_SRC to $L_TGT) has no Transcribe vocabulary: product names spoken in Japanese may be misrecognised" "add readings (reading column) to terms.csv, run node dictionaries/build.mjs generate and cd cdk && ./scripts/dictionaries.sh, then set the channel's transcribeVocabulary"
       fi
     fi
     if [[ "$L_ENG" == "llm" && -z "$L_TERM" ]]; then
@@ -262,10 +262,10 @@ else
               fail "lane $N: Translate terminology '$L_TERM' not found in $REGION" "$DICT_FIX"
             else
               read -r TSRC TTGT TDIR <<<"$TQ"
-              if [[ "$TSRC" != "$L_SRC_LANG" || "$TTGT" != "$L_TGT" ]]; then
-                fail "lane $N: Translate terminology '$L_TERM' translates $TSRC to $TTGT, the lane needs $L_SRC_LANG to $L_TGT" "import it with the right first column (ja,en for Japanese to English); cd cdk && ./scripts/dictionaries.sh"
-              elif [[ "$TDIR" != "UNI" ]]; then
-                warn "lane $N: Translate terminology '$L_TERM' is $TDIR-directional; the generated file is uni-directional" "re-import it uni-directional (cd cdk && ./scripts/dictionaries.sh)"
+              if [[ "$TDIR" == "MULTI" ]]; then
+                pass "lane $N: Translate terminology '$L_TERM' is multi-directional (usable for $L_SRC_LANG to $L_TGT)"
+              elif [[ "$TSRC" != "$L_SRC_LANG" || "$TTGT" != "$L_TGT" ]]; then
+                fail "lane $N: Translate terminology '$L_TERM' is uni-directional $TSRC to $TTGT, the lane needs $L_SRC_LANG to $L_TGT" "import one multi-directional terminology for both lanes: cd cdk && ./scripts/dictionaries.sh (it asks before it deletes the old uni-directional one)"
               else
                 pass "lane $N: Translate terminology '$L_TERM' is $TSRC to $TTGT (UNI)"
               fi

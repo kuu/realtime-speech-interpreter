@@ -10,7 +10,9 @@ export type GlossaryDirection = "en-ja" | "ja-en";
 
 // Parse CSV text: optional BOM, CRLF or LF, quoted fields ("" escapes a quote, quoted commas),
 // header row `en,ja`, blank lines ignored. A duplicate English key keeps the first entry.
-// Direction ja-en: header `ja,en`, entries are [ja, en] and the duplicate key is the NFKC-normalised Japanese column.
+// Direction ja-en: entries are [ja, en] and the duplicate key is the NFKC-normalised Japanese column (the first row wins). It
+// reads the deployed multi-directional terminology (header `en,ja`, the same file the en-ja lane reads, columns swapped) and,
+// for older deployments, a uni-directional file with header `ja,en`.
 export function parseTerminologyCsv(csv: string, direction: GlossaryDirection = "en-ja"): GlossaryEntry[] {
   const text = csv.replace(/^\uFEFF/, "");
   const rows: string[][] = [];
@@ -44,6 +46,8 @@ export function parseTerminologyCsv(csv: string, direction: GlossaryDirection = 
   }
   const out: GlossaryEntry[] = [];
   const seen = new Set<string>();
+  const first = rows.find((r) => r.length >= 2);
+  const swapped = !!first && first[0].trim().toLowerCase() === "en" && first[1].trim().toLowerCase() === "ja";
   for (const r of rows) {
     if (r.length < 2) continue;
     const en = r[0].trim();
@@ -51,10 +55,12 @@ export function parseTerminologyCsv(csv: string, direction: GlossaryDirection = 
     if (!en || !ja) continue;
     if (direction === "ja-en") {
       if (en.toLowerCase() === "ja" && ja.toLowerCase() === "en") continue;
-      const jaKey = en.normalize("NFKC").toLowerCase();
+      if (swapped && en.toLowerCase() === "en" && ja.toLowerCase() === "ja") continue;
+      const [jaTerm, enTerm] = swapped ? [ja, en] : [en, ja];
+      const jaKey = jaTerm.normalize("NFKC").toLowerCase();
       if (seen.has(jaKey)) continue;
       seen.add(jaKey);
-      out.push([en, ja]);
+      out.push([jaTerm, enTerm]);
       continue;
     }
     if (en.toLowerCase() === "en" && ja.toLowerCase() === "ja") continue;

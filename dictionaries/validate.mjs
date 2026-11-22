@@ -342,61 +342,6 @@ function validateVocabularyJa(file) {
   }
   return { entries, size };
 }
-function validateTerminologyJaEn(file) {
-  const name = "translate-terminology-ja-en.csv";
-  const buf = readFileSync(file);
-  const size = statSync(file).size;
-  if (size > TERM_MAX_FILE_BYTES) err(name, 0, `file is ${size} bytes; must be <= ${TERM_MAX_FILE_BYTES}`);
-  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) err(name, 1, "file starts with a UTF-8 BOM");
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-  if (text.includes("\uFFFD")) err(name, 0, "file is not valid UTF-8");
-  if (!text.endsWith("\n")) err(name, 0, "file must end with a newline");
-  let rows;
-  try {
-    rows = parseCsv(text);
-  } catch (e) {
-    err(name, 0, `CSV parse error: ${e.message}`);
-    return { entries: 0, size };
-  }
-  if (rows.length === 0) {
-    err(name, 1, "file is empty");
-    return { entries: 0, size };
-  }
-  const header = rows[0].cells.map((c) => c.v);
-  // Uni-directional terminology: the first column is the source language (Translate developer guide, "Creating a custom
-  // terminology": the first language in the file is the source, all others are targets).
-  if (header.length !== 2 || header[0] !== "ja" || header[1] !== "en") err(name, 1, `header must be exactly "ja,en" (source first), got "${header.join(",")}"`);
-  const seen = new Map();
-  let entries = 0;
-  for (const { line, cells } of rows.slice(1)) {
-    if (cells.length === 1 && cells[0].v === "") {
-      err(name, line, "blank line");
-      continue;
-    }
-    if (cells.length !== 2) {
-      err(name, line, `expected 2 columns, got ${cells.length}`);
-      continue;
-    }
-    entries++;
-    const [ja, en] = cells.map((c) => c.v);
-    for (const [col, v] of [["ja", ja], ["en", en]]) {
-      if (v.trim() === "") err(name, line, `${col} is empty`);
-      if (v !== v.trim()) err(name, line, `${col} "${v}" has leading/trailing whitespace`);
-      if (/[\t\r\n]/.test(v)) err(name, line, `${col} contains TAB or newline`);
-      if (/[\u00a0\u3000]/.test(v)) err(name, line, `${col} contains a non-ASCII space (NBSP or full-width)`);
-      const bytes = Buffer.byteLength(v, "utf8");
-      if (bytes > TERM_MAX_FIELD_BYTES) err(name, line, `${col} is ${bytes} bytes; max ${TERM_MAX_FIELD_BYTES}`);
-    }
-    if (cells.some((c) => c.q)) err(name, line, "quoted field (contract: no quoting needed; avoid commas/quotes in terms)");
-    const key = ja.normalize("NFKC").trim().toLowerCase();
-    if (seen.has(key)) err(name, line, `duplicate ja "${ja}" (case-insensitive, after NFKC; first on line ${seen.get(key)})`);
-    else seen.set(key, line);
-    if ([...ja.normalize("NFKC")].length < 3) {
-      warnings.push(`${name}:${line}: ja "${ja}" is one or two characters; the app's name check skips it (it would match inside too many words)`);
-    }
-  }
-  return { entries, size };
-}
 function validateReadingsEn(file) {
   const name = "polly-readings-en.csv";
   const buf = readFileSync(file);
@@ -460,7 +405,6 @@ export function validateDictionaryDir(dir, readingsFile) {
   // The reverse-direction files exist only when terms.csv has rows for them.
   for (const [key, file, fn] of [
     ["vocabularyJa", "transcribe-vocabulary-ja.txt", validateVocabularyJa],
-    ["terminologyJaEn", "translate-terminology-ja-en.csv", validateTerminologyJaEn],
     ["readingsEn", "polly-readings-en.csv", validateReadingsEn],
   ]) {
     const f = join(dir, file);
@@ -485,7 +429,6 @@ function main() {
   console.log(`translate-terminology.csv: ${counts.terminology.entries} entries, ${counts.terminology.size} bytes`);
   console.log(`polly-readings.csv: ${counts.readings.entries} entries`);
   if (counts.vocabularyJa) console.log(`transcribe-vocabulary-ja.txt: ${counts.vocabularyJa.entries} entries, ${counts.vocabularyJa.size} bytes`);
-  if (counts.terminologyJaEn) console.log(`translate-terminology-ja-en.csv: ${counts.terminologyJaEn.entries} entries, ${counts.terminologyJaEn.size} bytes`);
   if (counts.readingsEn) console.log(`polly-readings-en.csv: ${counts.readingsEn.entries} entries`);
   for (const w of warns) console.warn(`WARN ${w}`);
   if (errs.length) {

@@ -37,7 +37,7 @@ const EX = ["-c", "dictionaryDir=dictionaries/example"];
 const lanes = (l2 = {}) =>
   JSON.stringify([
     { source: "en-US", target: "ja", pollyVoice: "Kazuha" },
-    { source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "simul-translation-ja", translateTerminology: "simul-translation-ja-en", ...l2 },
+    { source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "simul-translation-ja", ...l2 },
   ]);
 // Every recorded call is "<service> <verb> ..." or "--version"; the verb must be a read.
 const readOnly = (calls) => calls.split("\n").filter(Boolean).every((l) => l.startsWith("--version") || /^[a-z0-9]+ (get|list|describe)-/.test(l));
@@ -64,41 +64,43 @@ test("two lanes with everything in place: per-lane pass lines for vocabulary, te
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /== Channels/);
   assert.match(r.out, /PASS  lane 1: en-US to ja, voice Kazuha, engine translate, vocabulary 'simul-translation', terminology 'simul-translation'/);
-  assert.match(r.out, /PASS  lane 2: ja-JP to en, voice Joanna, engine translate, vocabulary 'simul-translation-ja', terminology 'simul-translation-ja-en'/);
+  assert.match(r.out, /PASS  lane 2: ja-JP to en, voice Joanna, engine translate, vocabulary 'simul-translation-ja', terminology 'simul-translation'/);
   assert.match(r.out, /PASS  lane 2: Transcribe vocabulary 'simul-translation-ja' is READY \(ja-JP\)/);
-  assert.match(r.out, /PASS  lane 2: Translate terminology 'simul-translation-ja-en' is ja to en \(UNI\)/);
+  assert.match(r.out, /PASS  lane 2: Translate terminology 'simul-translation' is multi-directional \(usable for ja to en\)/);
   assert.match(r.out, /PASS  lane 2: Polly voice Joanna exists for en-US with the neural engine in ap-northeast-1/);
   assert.match(r.out, /PASS  lane 1: Polly voice Kazuha exists for ja-JP/);
   assert.match(r.out, /Summary: \d+ pass, \d+ warn, 0 fail/);
   assert.match(r.calls, /polly describe-voices --engine neural --language-code en-US/);
-  assert.match(r.calls, /translate get-terminology --name simul-translation-ja-en/);
+  assert.match(r.calls, /translate get-terminology --name simul-translation /);
   assert.ok(readOnly(r.calls), `a write call was recorded:\n${r.calls}`);
 });
 test("two lanes: wrong vocabulary language, wrong terminology direction, missing Polly voice are failures with a fix", () => {
-  const r = doctor([...EX, "-c", `channels=${lanes()}`], { STUB_VOCAB_JA: "READY en-US", STUB_TERM_JA_EN: "en ja UNI", STUB_POLLY_EN: "" });
+  const r = doctor([...EX, "-c", `channels=${lanes()}`], { STUB_VOCAB_JA: "READY en-US", STUB_TERM: "en ja UNI", STUB_POLLY_EN: "" });
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /FAIL  lane 2: Transcribe vocabulary 'simul-translation-ja' has language en-US, the lane's source is ja-JP/);
-  assert.match(r.out, /FAIL  lane 2: Translate terminology 'simul-translation-ja-en' translates en to ja, the lane needs ja to en/);
+  assert.match(r.out, /FAIL  lane 2: Translate terminology 'simul-translation' is uni-directional en to ja, the lane needs ja to en/);
   assert.match(r.out, /FAIL  lane 2: Polly voice 'Joanna' not found for en-US with the neural engine/);
   assert.match(r.out, /fix: .*describe-voices/);
 });
-test("two lanes: a vocabulary or terminology that does not exist fails; a multi-directional terminology warns", () => {
+test("two lanes: a vocabulary or terminology that does not exist fails; a multi-directional terminology passes", () => {
   const r = doctor([...EX, "-c", `channels=${lanes({ transcribeVocabulary: "missing-vocab", translateTerminology: "missing-term" })}`]);
   assert.match(r.out, /FAIL  lane 2: Transcribe vocabulary 'missing-vocab' not found/);
   assert.match(r.out, /FAIL  lane 2: Translate terminology 'missing-term' not found/);
-  const m = doctor([...EX, "-c", `channels=${lanes()}`], { STUB_TERM_JA_EN: "ja en MULTI" });
-  assert.match(m.out, /WARN  lane 2: Translate terminology 'simul-translation-ja-en' is MULTI-directional/);
+  const m = doctor([...EX, "-c", `channels=${lanes()}`], { STUB_TERM: "en ja MULTI" });
+  assert.match(m.out, /PASS  lane 2: Translate terminology 'simul-translation' is multi-directional/);
+  const unset = doctor([...EX, "-c", `channels=${lanes()}`], { STUB_TERM: "en ja None" });
+  assert.match(unset.out, /FAIL  lane 2: Translate terminology 'simul-translation' is uni-directional en to ja/, "an unset directionality behaves as UNI");
 });
 test("a Japanese lane without a vocabulary warns; with a generated Japanese vocabulary file in the folder the warning names it", () => {
-  const noVoc = doctor([...EX, "--skip-aws", "-c", `channels=${lanes({ transcribeVocabulary: "" })}`]);
-  assert.match(noVoc.out, /WARN  lane 2 \(ja-JP to en\) has no Transcribe vocabulary: product names spoken in Japanese may be misrecognised/);
   const dir = mkdtempSync(join(tmpdir(), "doctor-dict-"));
   try {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "polly-readings.csv"), "term,reading\n");
+    const noVoc = doctor(["--skip-aws", "-c", `dictionaryDir=${dir}`, "-c", `channels=${lanes({ transcribeVocabulary: "" })}`]);
+    assert.match(noVoc.out, /WARN  lane 2 \(ja-JP to en\) has no Transcribe vocabulary: product names spoken in Japanese may be misrecognised/);
     writeFileSync(join(dir, "transcribe-vocabulary-ja.txt"), "Phrase\tSoundsLike\tIPA\tDisplayAs\n");
     const withFile = doctor(["--skip-aws", "-c", `dictionaryDir=${dir}`, "-c", `channels=${lanes({ transcribeVocabulary: "" })}`]);
-    assert.match(withFile.out, /has no Transcribe vocabulary, but .* has transcribe-vocabulary-ja\.txt \(transcribe_ja rows exist\)/);
+    assert.match(withFile.out, /has no Transcribe vocabulary, but .* has transcribe-vocabulary-ja\.txt \(generated from the readings in terms\.csv\)/);
     assert.match(withFile.out, /fix: set "transcribeVocabulary" on that channel/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -107,7 +109,7 @@ test("a Japanese lane without a vocabulary warns; with a generated Japanese voca
 test("a single ja-JP to en lane gets the per-lane checks too", () => {
   const one = JSON.stringify([{ source: "ja-JP", target: "en", pollyVoice: "Joanna" }]);
   const r = doctor([...EX, "-c", `channels=${one}`]);
-  assert.match(r.out, /PASS  lane 1: ja-JP to en, voice Joanna, engine translate, vocabulary 'none', terminology 'none'/);
+  assert.match(r.out, /PASS  lane 1: ja-JP to en, voice Joanna, engine translate, vocabulary 'none', terminology 'simul-translation'/);
   assert.match(r.out, /WARN  lane 1 \(ja-JP to en\) has no Transcribe vocabulary/);
   assert.match(r.out, /PASS  lane 1: Polly voice Joanna exists for en-US/);
 });

@@ -40,31 +40,33 @@ function withEvent(event: unknown, fn: (path: string) => void): void {
 }
 
 // ---- dictionary defaults follow the direction (gap 2) ----
-test("only an en-US to ja lane takes dictionaries.* as defaults; every other lane gets \"\"", () => {
+test("every lane defaults to the one multi-directional terminology; only an en-US to ja lane takes the Transcribe vocabulary", () => {
   const [a, b] = resolveChannels([DEFAULT_LANE, EN_LANE], ctxBase);
   assert.deepEqual([a.transcribeVocabulary, a.translateTerminology], ["dv", "dt"]);
-  assert.deepEqual([b.transcribeVocabulary, b.translateTerminology], ["", ""]);
+  assert.deepEqual([b.transcribeVocabulary, b.translateTerminology], ["", "dt"]);
 });
-test("the en lane listed first still gets \"\" and the ja lane second gets the names", () => {
+test("the en lane listed first still gets no vocabulary, and the ja lane second gets both names", () => {
   const [a, b] = resolveChannels([EN_LANE, DEFAULT_LANE], ctxBase);
-  assert.deepEqual([a.transcribeVocabulary, a.translateTerminology], ["", ""]);
+  assert.deepEqual([a.transcribeVocabulary, a.translateTerminology], ["", "dt"]);
   assert.deepEqual([b.transcribeVocabulary, b.translateTerminology], ["dv", "dt"]);
 });
-test("ja-JP to en as the only channel: names are \"\" and the llm engine is rejected naming the lane", () => {
+test("ja-JP to en as the only channel: the shared terminology is the default, so the llm engine works without extra config; an explicit empty name is rejected", () => {
   const [a] = resolveChannels([EN_LANE], ctxBase);
-  assert.deepEqual([a.transcribeVocabulary, a.translateTerminology], ["", ""]);
-  assert.throws(() => resolveChannels([EN_LANE], { ...ctxBase, translateEngine: "llm" }), /lane 1 \(ja-JP to en\) uses the llm engine and needs translateTerminology/);
+  assert.deepEqual([a.transcribeVocabulary, a.translateTerminology], ["", "dt"]);
+  assert.doesNotThrow(() => resolveChannels([EN_LANE], { ...ctxBase, translateEngine: "llm" }));
+  assert.throws(() => resolveChannels([{ ...EN_LANE, translateTerminology: "" }], { ...ctxBase, translateEngine: "llm" }), /lane 1 \(ja-JP to en\) uses the llm engine and needs translateTerminology/);
+  assert.throws(() => resolveChannels([EN_LANE], { ...ctxBase, dictTerminology: "", translateEngine: "llm" }), /needs translateTerminology/);
 });
 test("explicit lane names win; a lane with an explicit name keeps it", () => {
-  const [, b] = resolveChannels([DEFAULT_LANE, { ...EN_LANE, transcribeVocabulary: "v-ja", translateTerminology: "t-ja-en" }], ctxBase);
-  assert.deepEqual([b.transcribeVocabulary, b.translateTerminology], ["v-ja", "t-ja-en"]);
+  const [, b] = resolveChannels([DEFAULT_LANE, { ...EN_LANE, transcribeVocabulary: "v-ja", translateTerminology: "t-lane2" }], ctxBase);
+  assert.deepEqual([b.transcribeVocabulary, b.translateTerminology], ["v-ja", "t-lane2"]);
 });
 test("the CHANNELS value has stable keys and the resolved names, so the app applies no default", () => {
-  const lanes = resolveChannels([DEFAULT_LANE, { ...EN_LANE, translateEngine: "llm", translateTerminology: "t-ja-en" }], ctxBase);
+  const lanes = resolveChannels([DEFAULT_LANE, { ...EN_LANE, translateEngine: "llm", translateTerminology: "t-lane2" }], ctxBase);
   assert.equal(
     channelsEnv(lanes),
     '[{"source":"en-US","target":"ja","pollyVoice":"Kazuha","transcribeVocabulary":"dv","translateTerminology":"dt"},' +
-      '{"source":"ja-JP","target":"en","pollyVoice":"Joanna","transcribeVocabulary":"","translateTerminology":"t-ja-en","translateEngine":"llm"}]',
+      '{"source":"ja-JP","target":"en","pollyVoice":"Joanna","transcribeVocabulary":"","translateTerminology":"t-lane2","translateEngine":"llm"}]',
   );
 });
 
@@ -80,7 +82,7 @@ test("no channels = one lane from the flat keys; channels with one default entry
     assert.equal(one[k], flat[k], k);
   }
 });
-test("a single non-default entry runs through the flat keys (ja-JP to en, empty names)", () => {
+test("a single non-default entry runs through the flat keys (ja-JP to en, shared terminology)", () => {
   const c = cfgFor({ channels: JSON.stringify([EN_LANE]) });
   assert.equal(c.twoLanes, false);
   assert.equal(c.sourceLanguage, "ja-JP");
@@ -88,12 +90,12 @@ test("a single non-default entry runs through the flat keys (ja-JP to en, empty 
   assert.equal(c.translateTarget, "en");
   assert.equal(c.pollyVoice, "Joanna");
   assert.equal(c.transcribeVocabularyName, "");
-  assert.equal(c.translateTerminologyName, "");
+  assert.equal(c.translateTerminologyName, "simul-translation");
 });
-test("a single non-default entry with the llm engine needs a terminology", () => {
-  assert.throws(() => cfgFor({ channels: JSON.stringify([EN_LANE]), translateEngine: "llm", llmModelId: "jp.anthropic.claude-haiku-4-5-20251001-v1:0" }), /lane 1 \(ja-JP to en\)/);
-  const ok = cfgFor({ channels: JSON.stringify([{ ...EN_LANE, translateTerminology: "t-ja-en" }]), translateEngine: "llm" });
-  assert.equal(ok.translateTerminologyName, "t-ja-en");
+test("a single non-default entry with the llm engine needs a terminology (an explicit empty name is rejected)", () => {
+  assert.throws(() => cfgFor({ channels: JSON.stringify([{ ...EN_LANE, translateTerminology: "" }]), translateEngine: "llm", llmModelId: "jp.anthropic.claude-haiku-4-5-20251001-v1:0" }), /lane 1 \(ja-JP to en\)/);
+  const ok = cfgFor({ channels: JSON.stringify([{ ...EN_LANE, translateTerminology: "t-lane2" }]), translateEngine: "llm" });
+  assert.equal(ok.translateTerminologyName, "t-lane2");
 });
 test("two lanes: lane 1 becomes the flat values and CHANNELS is set; the names are resolved by direction", () => {
   const c = cfgFor({ channels: JSON.stringify([EN_LANE, DEFAULT_LANE]) });
@@ -136,7 +138,7 @@ test("validation: three lanes, duplicates, same language, unknown key, languageF
   assert.throws(() => cfgFor({ channels: "{not json" }), /is not valid JSON/);
 });
 test("a two-lane deploy with the llm engine on lane 2 only needs the jp. model id check", () => {
-  const lanes = [DEFAULT_LANE, { ...EN_LANE, translateEngine: "llm", translateTerminology: "t-ja-en" }];
+  const lanes = [DEFAULT_LANE, { ...EN_LANE, translateEngine: "llm", translateTerminology: "t-lane2" }];
   assert.throws(() => cfgFor({ channels: JSON.stringify(lanes), llmModelId: "anthropic.claude" }), /llmModelId must be a Japan inference profile/);
   assert.equal(cfgFor({ channels: JSON.stringify(lanes) }).twoLanes, true);
 });

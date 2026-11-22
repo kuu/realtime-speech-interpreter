@@ -73,14 +73,15 @@ export function resolveChannels(raw: unknown, ctx: ChannelsContext): LaneSpec[] 
     if (target === prefixOf(source)) fail(`lane ${n} translates ${source} into the same language "${target}"`);
     const eng = o.translateEngine;
     if (eng !== undefined && eng !== "translate" && eng !== "llm") fail(`lane ${n} translateEngine must be "translate" or "llm"`);
-    // Dictionary defaults follow the direction, not the position.
+    // Dictionary defaults follow the direction, not the position. The Translate terminology is one multi-directional
+    // resource: every lane defaults to it. The Transcribe vocabulary is English: only the en to ja lane defaults to it.
     const dflt = isDefaultLane({ source, target });
     const spec: LaneSpec = {
       source,
       target,
       pollyVoice,
       transcribeVocabulary: text("transcribeVocabulary", false) ?? (dflt ? (ctx.dictVocabulary ?? "") : ""),
-      translateTerminology: text("translateTerminology", false) ?? (dflt ? (ctx.dictTerminology ?? "") : ""),
+      translateTerminology: text("translateTerminology", false) ?? (ctx.dictTerminology ?? ""),
     };
     if (eng !== undefined) spec.translateEngine = eng;
     return spec;

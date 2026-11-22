@@ -24,3 +24,25 @@ test("loadDeployedGlossary passes the direction to the parser", async () => {
   const e = await loadDeployedGlossary(client, "t-ja-en", fetchFn, 1000, "ja-en");
   assert.deepEqual(e, [["メディアライブ", "MediaLive"]]);
 });
+// The deployed terminology is one multi-directional file (header en,ja) read by both lanes.
+const MULTI = "en,ja\r\nMediaLive,メディアライブ\r\nchannel,チャンネル\r\nchannels,チャンネル\r\nSRT,ＳＲＴ\r\n";
+test("one multi-directional file: en-ja reads it as written, ja-en gets [ja, en] pairs; the first row wins for a shared Japanese term", () => {
+  assert.deepEqual(parseTerminologyCsv(MULTI), [
+    ["MediaLive", "メディアライブ"],
+    ["channel", "チャンネル"],
+    ["channels", "チャンネル"],
+    ["SRT", "ＳＲＴ"],
+  ]);
+  assert.deepEqual(parseTerminologyCsv(MULTI, "ja-en"), [
+    ["メディアライブ", "MediaLive"],
+    ["チャンネル", "channel"],
+    ["ＳＲＴ", "SRT"],
+  ]);
+  assert.equal(glossaryLines(parseTerminologyCsv(MULTI, "ja-en")).split("\n")[1], "チャンネル = channel");
+});
+test("one multi-directional file: loadDeployedGlossary of the same name serves both directions", async () => {
+  const client = { send: async () => ({ TerminologyDataLocation: { Location: "https://example.invalid/t.csv" } }) };
+  const fetchFn = async () => ({ ok: true, status: 200, text: async () => MULTI });
+  assert.equal((await loadDeployedGlossary(client, "shared", fetchFn, 1000, "en-ja")).length, 4);
+  assert.deepEqual((await loadDeployedGlossary(client, "shared", fetchFn, 1000, "ja-en"))[0], ["メディアライブ", "MediaLive"]);
+});

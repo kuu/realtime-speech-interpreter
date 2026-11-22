@@ -34,10 +34,14 @@ export const REVERSE_COLUMNS = [
 export const RESERVED_COLUMNS = [];
 const FLAGS = ["transcribe_en", "translate_en_ja", "polly_ja"];
 const RFLAGS = ["transcribe_ja", "translate_ja_en", "polly_en"];
+// Flags that also accept "n" (an explicit opt-out of a derived default): transcribe_ja and translate_ja_en.
+const OPT_OUT = ["transcribe_ja", "translate_ja_en"];
 const POS = ["transcribe_en_pos", "translate_en_ja_pos", "polly_ja_pos", "transcribe_ja_pos", "translate_ja_en_pos", "polly_en_pos"];
 const TEXT_FIELDS = ["en", "ja", "reading", "phrase", "display_as", "reading_en", "phrase_ja"];
 const KATAKANA = /[\u30a0-\u30ff]/;
 const nfkc = (s) => s.normalize("NFKC");
+// One word of a ja-JP Transcribe Phrase: hiragana, katakana, kanji, 々 and the long-vowel mark (validate.mjs checks the same set).
+export const JA_PHRASE_WORD = /^[\u3041-\u3096\u30a1-\u30fa\u30fc\u3005\u3400-\u4dbf\u4e00-\u9fff]+$/u;
 
 export class TermsError extends Error {
   constructor(errors) {
@@ -113,7 +117,9 @@ export function parseTerms(text, label = "terms.csv") {
     }
     for (const f of [...FLAGS, ...RFLAGS]) {
       const v = r[f].trim().toLowerCase();
-      if (v !== "" && v !== "y") err(`${f} must be "y" or empty, got "${r[f]}"`);
+      if (v !== "" && v !== "y" && !(v === "n" && OPT_OUT.includes(f))) {
+        err(`${f} must be ${OPT_OUT.includes(f) ? '"y", "n"' : '"y"'} or empty, got "${r[f]}"`);
+      }
       r[f] = v;
     }
     for (const p of POS) {
@@ -139,6 +145,9 @@ export function parseTerms(text, label = "terms.csv") {
     }
     r._line = line;
     r._index = rows.length;
+    // The Japanese vocabulary needs no flag: a row with a reading (or phrase_ja) is in it unless transcribe_ja=n.
+    r._vocab_ja = r.transcribe_ja !== "n" && (r.phrase_ja !== "" || r.reading !== "") ? "y" : "";
+    r._phrase_ja = r.phrase_ja || r.reading.replace(/ /g, "-");
     r._display = r.display_as || r.en;
     if (r.transcribe_en === "y" && r.en !== "") {
       try {
@@ -184,36 +193,89 @@ export function parseTerms(text, label = "terms.csv") {
   dup("translate_en_ja", (r) => r.en, "terminology en (case-insensitive)", true);
   dup("polly_ja", (r) => r.en, "Polly term", false);
   // Reverse direction. Japanese phrase of the vocabulary: unique. English alias: one row per English term.
-  dup("transcribe_ja", (r) => r.phrase_ja || r.reading, "Transcribe ja-JP phrase", false);
+  // An explicit phrase_ja is checked like any other phrase; a phrase derived from a reading is skipped with a warning instead.
+  dup("_vocab_ja", (r) => r.phrase_ja || undefined, "Transcribe ja-JP phrase", false);
   dup("polly_en", (r) => r.en, "Polly English term", false);
-  // Terminology source side (ja, reading, ja_variants of every translate_ja_en row): unique after NFKC, case-insensitive;
-  // the same Japanese spelling pointing at the same en twice is harmless (dropped by the renderer), at two en values it is an error.
-  const jaSide = new Map();
-  for (const r of rows) {
-    if (r.translate_ja_en !== "y") continue;
-    for (const src of japaneseSources(r)) {
-      const key = nfkc(src).toLowerCase();
-      const first = jaSide.get(key);
-      if (first && first.en !== r.en) {
-        errors.push(`${label}:${r._line}: Japanese spelling "${src}" maps to "${r.en}" but already maps to "${first.en}" (line ${first.line}); a source term has one target`);
-      } else if (!first) jaSide.set(key, { en: r.en, line: r._line });
-    }
-  }
   if (errors.length) throw new TermsError(errors);
-  return { rows, notices };
+  const warnings = [...terminologyWarnings(rows), ...vocabularyJaWarnings(rows)];
+  return { rows, notices, warnings };
 }
 
-/** The Japanese spellings of a translate_ja_en row, in order: ja, reading, then ja_variants (empty and repeated ones dropped). */
-export function japaneseSources(r) {
-  const seen = new Set();
-  const out = [];
-  for (const v of [r.ja, r.reading, ...r.ja_variants]) {
-    if (v === "" || seen.has(nfkc(v).toLowerCase())) continue;
-    seen.add(nfkc(v).toLowerCase());
-    out.push(v);
+/** Warnings about the single multi-directional terminology (translate_en_ja rows; both lanes read it). */
+export function terminologyWarnings(rows) {
+  const warnings = [];
+  const written = ordered(rows, "translate_en_ja", "translate_en_ja_pos");
+  // Several English terms for one Japanese term: the reverse direction uses one of them.
+  const byJa = new Map();
+  for (const r of written) {
+    const key = nfkc(r.ja).toLowerCase();
+    if (!byJa.has(key)) byJa.set(key, []);
+    byJa.get(key).push(r);
   }
-  return out;
+  const ambiguous = [...byJa.values()].filter((g) => g.length > 1);
+  if (ambiguous.length) {
+    const parts = ambiguous.map((group) => {
+      const use = preferredReverse(group);
+      return `"${group[0].ja}": ${group.map((r) => `"${r.en}" (line ${r._line})`).join(", ")} -> ja to en uses "${use.en}"`;
+    });
+    warnings.push(
+      `${ambiguous.length} Japanese term(s) have several English terms; the reverse direction (ja to en) uses the row with display_as, ` +
+        `else the first in file order: ${parts.join("; ")}.`,
+    );
+  }
+  // A multi-directional terminology cannot exclude a row from one direction.
+  const noReverse = written.filter((r) => r.translate_ja_en === "n");
+  if (noReverse.length) {
+    warnings.push(
+      `translate_ja_en=n on ${noReverse.map((r) => `"${r.en}" (line ${r._line})`).join(", ")}: the terminology is multi-directional, ` +
+        "so these rows are still used in the ja to en direction (one file cannot exclude a row from one direction).",
+    );
+  }
+  // Rows only wanted in reverse are not written (no en to ja entry means no terminology row).
+  const reverseOnly = rows.filter((r) => r.translate_ja_en === "y" && r.translate_en_ja !== "y");
+  if (reverseOnly.length) {
+    warnings.push(
+      `translate_ja_en=y without translate_en_ja=y is ignored (the terminology has no reverse-only rows): ${reverseOnly.map((r) => `"${r.en}" (line ${r._line})`).join(", ")}.`,
+    );
+  }
+  return warnings;
 }
+/**
+ * Rows derived from a reading that cannot be a ja-JP Phrase (digits, Latin letters, middle dot) or repeat an earlier Phrase are
+ * left out of the Japanese vocabulary (sets r._vocab_ja to ""); one warning lists them. Explicit phrase_ja is never touched here.
+ */
+function vocabularyJaWarnings(rows) {
+  const warnings = [];
+  const seen = new Set(rows.filter((r) => r._vocab_ja === "y" && r.phrase_ja).map((r) => r.phrase_ja));
+  const bad = [];
+  const dupes = [];
+  for (const r of rows) {
+    if (r._vocab_ja !== "y" || r.phrase_ja) continue;
+    if (!r._phrase_ja.split("-").every((w) => JA_PHRASE_WORD.test(w))) {
+      r._vocab_ja = "";
+      bad.push(`"${r.en}" (line ${r._line})`);
+    } else if (seen.has(r._phrase_ja)) {
+      r._vocab_ja = "";
+      dupes.push(`"${r.en}" (line ${r._line})`);
+    } else seen.add(r._phrase_ja);
+  }
+  if (bad.length) {
+    warnings.push(
+      `${bad.length} row(s) are not in transcribe-vocabulary-ja.txt because their reading is not a valid ja-JP Phrase (hiragana, katakana, kanji, ー only; no digits or Latin letters): ${bad.join(", ")}. Set phrase_ja on them, or transcribe_ja=n to silence this.`,
+    );
+  }
+  if (dupes.length) {
+    warnings.push(
+      `${dupes.length} row(s) are not in transcribe-vocabulary-ja.txt because an earlier row has the same Phrase: ${dupes.join(", ")}. Set phrase_ja on them, or transcribe_ja=n to silence this.`,
+    );
+  }
+  return warnings;
+}
+/** Of several rows with the same Japanese term: the one the reverse direction uses (display_as set, else the first). */
+function preferredReverse(group) {
+  return group.find((r) => r.display_as) ?? group[0];
+}
+
 /** Rows with a flag, ordered: rows with a position number first (numeric, ties by file order), then the rest in file order. */
 export function ordered(rows, flag, posCol) {
   return rows
@@ -234,9 +296,39 @@ export function renderVocabulary(rows) {
   return lines.join("\n") + "\n";
 }
 
+/**
+ * The one multi-directional Translate terminology (header en,ja) used by both lanes. The rows are the translate_en_ja rows
+ * in today's order. Only when several English terms share one Japanese term, the row the reverse direction should use
+ * (display_as set, else the first) is moved to the front of that group, so a reader that takes the first row per Japanese
+ * term gets the intended one; the set of entries never changes.
+ */
 export function renderTerminology(rows) {
+  const rs = ordered(rows, "translate_en_ja", "translate_en_ja_pos");
+  const groups = new Map();
+  for (const r of rs) {
+    const key = nfkc(r.ja).toLowerCase();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
   const out = [["en", "ja"]];
-  for (const r of ordered(rows, "translate_en_ja", "translate_en_ja_pos")) out.push([r.en, r.ja]);
+  const done = new Set();
+  for (const r of rs) {
+    const key = nfkc(r.ja).toLowerCase();
+    const group = groups.get(key);
+    if (group.length < 2 || !group.some((g) => g.display_as)) {
+      out.push([r.en, r.ja]);
+      continue;
+    }
+    if (done.has(r)) continue;
+    // Group with a preferred row: the preferred row takes the first slot, the others keep their order after it.
+    if (r === group[0]) {
+      const use = preferredReverse(group);
+      for (const g of [use, ...group.filter((x) => x !== use)]) {
+        out.push([g.en, g.ja]);
+        done.add(g);
+      }
+    }
+  }
   return serializeCsv(out);
 }
 
@@ -256,27 +348,16 @@ export const OUTPUT_FILES = {
 export const TERMS_HEADER = COLUMNS.join(",") + "\n";
 
 // ---- reverse direction: generated only when at least one row has the flag (render returns null otherwise) ----
+/** Rows of the Japanese Transcribe vocabulary: every row with a reading (or phrase_ja), unless transcribe_ja=n. */
+export function vocabularyJaRows(rows) {
+  return ordered(rows, "_vocab_ja", "transcribe_ja_pos");
+}
 export function renderVocabularyJa(rows) {
-  const rs = ordered(rows, "transcribe_ja", "transcribe_ja_pos");
+  const rs = vocabularyJaRows(rows);
   if (rs.length === 0) return null;
   const lines = ["Phrase\tSoundsLike\tIPA\tDisplayAs"];
-  for (const r of rs) lines.push(`${r.phrase_ja || r.reading}\t\t\t${r.en}`);
+  for (const r of rs) lines.push(`${r._phrase_ja}\t\t\t${r.en}`);
   return lines.join("\n") + "\n";
-}
-export function renderTerminologyJaEn(rows) {
-  const rs = ordered(rows, "translate_ja_en", "translate_ja_en_pos");
-  if (rs.length === 0) return null;
-  const out = [["ja", "en"]];
-  const seen = new Set();
-  for (const r of rs) {
-    for (const src of japaneseSources(r)) {
-      const key = nfkc(src).toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push([src, r.en]);
-    }
-  }
-  return serializeCsv(out);
 }
 export const POLLY_EN_HEADER_COMMENT = [
   "# Polly pronunciation readings for the English voice: term,reading (UTF-8). Generated from terms.csv by node dictionaries/build.mjs; do not edit by hand.",
@@ -294,6 +375,5 @@ export function renderReadingsEn(rows) {
 /** Files of the reverse direction. Each renderer returns null when no row has its flag: the file is then not written. */
 export const OPTIONAL_OUTPUT_FILES = {
   "transcribe-vocabulary-ja.txt": renderVocabularyJa,
-  "translate-terminology-ja-en.csv": renderTerminologyJaEn,
   "polly-readings-en.csv": renderReadingsEn,
 };

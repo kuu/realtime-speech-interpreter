@@ -234,7 +234,7 @@ test("validate.mjs accepts the shipped file", () => {
   const r = validate(null);
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /polly-readings\.csv: 82 entries/);
-  assert.doesNotMatch(r.out, /WARN/, r.out); // the SCTE-35/104 decision is resolved: no warnings
+  assert.doesNotMatch(r.out, /WARN polly-readings/, r.out); // the SCTE-35/104 decision is resolved: no warnings for the readings file
 });
 
 test("validate.mjs rejects bad readings files", () => {
@@ -264,7 +264,7 @@ test("validate.mjs warns (does not fail) when a longer term's reading disagrees 
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /WARN .*"SCTE-35" contains "SCTE"/);
   const ok = validate("term,reading\nSCTE,スカティ\nSCTE-35,スカティ さんじゅうご\n");
-  assert.doesNotMatch(ok.out, /WARN/);
+  assert.doesNotMatch(ok.out, /WARN polly-readings/);
 });
 
 // Hard constraint: product names are never altered in text; only the alias changes Polly's sound.

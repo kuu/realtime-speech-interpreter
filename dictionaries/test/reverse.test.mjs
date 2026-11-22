@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { OPTIONAL_OUTPUT_FILES, RESERVED_COLUMNS, parseTerms, renderTerminologyJaEn, renderVocabularyJa, renderReadingsEn, TERMS_HEADER, COLUMNS, REVERSE_COLUMNS } from "../lib/terms.mjs";
+import { OPTIONAL_OUTPUT_FILES, RESERVED_COLUMNS, parseTerms, renderTerminology, renderVocabularyJa, renderReadingsEn, TERMS_HEADER, COLUMNS, REVERSE_COLUMNS } from "../lib/terms.mjs";
 import { validateDictionaryDir } from "../validate.mjs";
 import { FIX, HERE, REPO, build, cleanup, makeDict, tmp } from "./helpers.mjs";
 
@@ -33,32 +33,22 @@ test("the fixture parses with no notice and every reverse column filled where us
   assert.equal(rows.length, 5);
   assert.deepEqual(rows[0].ja_variants, ["メディアライヴ", "ＭｅｄｉａＬｉｖｅ"]);
 });
-test("generate writes the three reverse files and today's three, with the documented content", () => {
+test("generate writes the two reverse files and today's three, with the documented content", () => {
   const d = reverseDir();
   try {
     const r = build(["generate", "--dir", d]);
     assert.equal(r.status, 0, r.all);
     assert.match(r.out, /transcribe-vocabulary-ja\.txt: 3 entries/);
-    assert.match(r.out, /translate-terminology-ja-en\.csv: 9 entries/);
+    assert.doesNotMatch(r.out, /ja-en/, "there is no second terminology file");
+    assert.match(r.out, /WARN translate_ja_en=y without translate_en_ja=y is ignored .*"Hanako Sato" \(line 5\)/);
     assert.match(r.out, /polly-readings-en\.csv: 2 entries/);
     assert.equal(
       readFileSync(join(d, "transcribe-vocabulary-ja.txt"), "utf8"),
       "Phrase\tSoundsLike\tIPA\tDisplayAs\nえーだぶりゅーえす\t\t\tAWS\nメディアライブ\t\t\tMediaLive\nエスアールティー\t\t\tSRT\n",
       "Phrase = phrase_ja or reading, DisplayAs = en; transcribe_ja_pos=1 puts AWS first",
     );
-    const term = readFileSync(join(d, "translate-terminology-ja-en.csv"), "utf8").trim().split("\n");
-    assert.deepEqual(term, [
-      "ja,en",
-      "佐藤花子,Hanako Sato", // translate_ja_en_pos=2: rows with a position come first
-      "MediaLive,MediaLive",
-      "メディアライブ,MediaLive",
-      "メディアライヴ,MediaLive", // ja_variants; the full-width spelling is the same key as ja after NFKC and is dropped
-      "SRT,SRT",
-      "エスアールティー,SRT",
-      "AWS,AWS",
-      "エーダブリューエス,AWS",
-      "メディアライブサービス,MediaLive", // the alias row with ja filled
-    ]);
+    assert.equal(existsSync(join(d, "translate-terminology-ja-en.csv")), false);
+    assert.equal(readFileSync(join(d, "translate-terminology.csv"), "utf8"), "en,ja\nMediaLive,MediaLive\nSRT,SRT\nAWS,AWS\n", "the one multi-directional terminology: translate_en_ja rows only");
     const en = readFileSync(join(d, "polly-readings-en.csv"), "utf8");
     assert.match(en, /\nterm,reading\nMediaLive,media live\nSRT,ess are tee\n$/);
     assert.equal(build(["generate", "--check", "--dir", d]).status, 0);
@@ -69,15 +59,8 @@ test("generate writes the three reverse files and today's three, with the docume
     cleanup(d);
   }
 });
-test("translate_ja_en_pos orders the terminology; the alias row with ja filled is accepted and adds its own row", () => {
-  const { rows } = parseTerms(readFileSync(FIXTURE, "utf8"));
-  const lines = renderTerminologyJaEn(rows).trim().split("\n");
-  assert.equal(lines[0], "ja,en");
-  assert.ok(lines.indexOf("佐藤花子,Hanako Sato") < lines.indexOf("MediaLive,MediaLive"), "the row with a position comes first");
-  assert.ok(lines.includes("メディアライブサービス,MediaLive"));
-});
-test("no row has a reverse flag: no reverse file is rendered, written or left behind", () => {
-  const d = makeDict("HLS,HLS,エイチエルエス,y,y,y,,,,,,,\n");
+test("no row has a reading or a reverse flag: no reverse file is rendered, written or left behind", () => {
+  const d = makeDict("HLS,HLS,,y,y,,,,,,,,\n");
   try {
     const { rows } = parseTerms(readFileSync(join(d, "terms.csv"), "utf8"));
     for (const fn of Object.values(OPTIONAL_OUTPUT_FILES)) assert.equal(fn(rows), null);
@@ -103,15 +86,15 @@ test("removing the last flag removes the stale reverse file on generate; --check
     cleanup(d);
   }
 });
-test("the example dictionary is unchanged: generate --check passes and a fresh generate writes exactly the three files", () => {
+test("the example dictionary: generate --check passes; a fresh generate writes today's three files plus the derived Japanese vocabulary", () => {
   const ex = join(REPO, "dictionaries", "example");
   assert.equal(build(["generate", "--check", "--dir", ex]).status, 0);
   const d = tmp();
   try {
     copyFileSync(join(ex, "terms.csv"), join(d, "terms.csv"));
     assert.equal(build(["generate", "--dir", d]).status, 0);
-    assert.deepEqual(readdirSync(d).sort(), ["polly-readings.csv", "terms.csv", "transcribe-vocabulary.txt", "translate-terminology.csv"]);
-    for (const f of ["polly-readings.csv", "transcribe-vocabulary.txt", "translate-terminology.csv"]) {
+    assert.deepEqual(readdirSync(d).sort(), ["polly-readings.csv", "terms.csv", "transcribe-vocabulary-ja.txt", "transcribe-vocabulary.txt", "translate-terminology.csv"]);
+    for (const f of ["polly-readings.csv", "transcribe-vocabulary-ja.txt", "transcribe-vocabulary.txt", "translate-terminology.csv"]) {
       assert.equal(readFileSync(join(d, f), "utf8"), readFileSync(join(ex, f), "utf8"), f);
     }
   } finally {
@@ -133,11 +116,6 @@ test("rules: reading_en must be English letters (no katakana, no kanji)", () => 
   assert.throws(bad("山"), /contains Japanese characters/);
   assert.doesNotThrow(bad("ay"));
 });
-test("rules: the Japanese side is unique after NFKC (case-insensitive); the same target twice is harmless, two targets are an error", () => {
-  assert.throws(() => parseTerms(rev(row("A", "ＳＲＴ", "", "", "y") + row("B", "srt", "", "", "y"))), /Japanese spelling "srt" maps to "B" but already maps to "A"/);
-  const { rows } = parseTerms(rev(row("A", "SRT", "エスアールティー", "", "y").replace(",,,,,,,,,,,,", ",,,,,,,,,,,,") + `A,Ｓｒｔ,,,,,,,,,,,,,y,,,,,,,\n`));
-  assert.equal(renderTerminologyJaEn(rows).trim().split("\n").length, 3, "header, SRT, the reading; the NFKC duplicate is dropped");
-});
 test("rules: ja_variants entries follow the field rules (no comma, quote, TAB)", () => {
   assert.throws(() => parseTerms(rev(`A,あ,,,,,,,,,,,,,y,,,,"x,y",,,\n`)), /ja_variants entry "x,y"/);
 });
@@ -146,10 +124,13 @@ test("rules: an alias row repeats an en only in the two documented forms; transc
   assert.throws(() => parseTerms(rev(row("A", "あ", "", "", "y") + row("A", "い", "", "", "y", "y", "ay"))), /duplicate en "A"/);
   assert.throws(() => parseTerms(rev(row("A", "あ", "", "", "y") + row("A", "", "", "y"))), /duplicate en "A"/);
 });
-test("rules: Transcribe ja-JP phrases are unique", () => {
-  assert.throws(() => parseTerms(rev(row("A", "", "アー", "y") + row("B", "", "アー", "y"))), /duplicate Transcribe ja-JP phrase "アー"/);
+test("rules: an explicit phrase_ja must be unique; a phrase derived from a reading that repeats is skipped with a warning", () => {
+  const phrase = (en, p) => `${en},,,,,,,,,,,,,,,,,${p},,,,\n`;
+  assert.throws(() => parseTerms(rev(phrase("A", "あー") + phrase("B", "あー"))), /duplicate Transcribe ja-JP phrase "あー"/);
+  const { rows, warnings } = parseTerms(rev(row("A", "", "アー") + row("B", "", "アー")));
+  assert.deepEqual(vocabularyJaLines(rows), ["アー\t\t\tA"]);
+  assert.ok(warnings.some((w) => /not in transcribe-vocabulary-ja\.txt because an earlier row has the same Phrase: "B" \(line 3\)/.test(w)));
 });
-
 // ---- validator: accept and reject ----
 function dirWith(files) {
   const d = tmp();
@@ -208,25 +189,6 @@ test("validator ja-JP vocabulary: a Latin DisplayAs is a warning (the documented
   assert.match(r.warnings[0], /2 row\(s\) have a DisplayAs outside hiragana, katakana, kanji and full-width capital letters/);
   assert.match(r.warnings[0], /create-vocabulary test/);
 });
-test("validator terminology ja-en: header ja,en, NFKC uniqueness, columns, short-key warning", () => {
-  const run = (text) => {
-    const d = dirWith({ "translate-terminology-ja-en.csv": text });
-    try {
-      return validateDictionaryDir(d);
-    } finally {
-      cleanup(d);
-    }
-  };
-  const ok = run("ja,en\nメディアライブ,MediaLive\nＳＲＴ,SRT\n");
-  assert.deepEqual(ok.errors, []);
-  assert.equal(ok.counts.terminologyJaEn.entries, 2);
-  assert.ok(run("en,ja\nMediaLive,メディアライブ\n").errors.some((e) => /header must be exactly "ja,en"/.test(e)));
-  assert.ok(run("ja,en\nＳＲＴ,SRT\nsrt,SRT\n").errors.some((e) => /duplicate ja "srt"/.test(e)));
-  assert.ok(run("ja,en\nメディア,Media,X\n").errors.some((e) => /expected 2 columns/.test(e)));
-  assert.ok(run("ja,en\n\"x,y\",Z\n").errors.some((e) => /quoted field/.test(e)));
-  assert.ok(run("ja,en\nあ,A\n").warnings.some((w) => /one or two characters/.test(w)));
-  assert.ok(run("ja,en\nあいう,A \n").errors.some((e) => /leading\/trailing whitespace/.test(e)));
-});
 test("validator polly-readings-en: English alias accepted; katakana, symbols and duplicates rejected", () => {
   const run = (text) => {
     const d = dirWith({ "polly-readings-en.csv": text });
@@ -256,4 +218,67 @@ test("the generated reverse files of the fixture pass the validator (with the do
   } finally {
     cleanup(d);
   }
+});
+
+// ---- one multi-directional terminology (both lanes) ----
+const vocabularyJaLines = (rows) => renderVocabularyJa(rows).trim().split("\n").slice(1);
+// en,ja,reading,transcribe_en,translate_en_ja,polly_ja,phrase,display_as,... (13 columns) then the nine reverse columns
+const term = (en, ja, { reading = "", display = "", ja_en = "", pos = "" } = {}) =>
+  `${en},${ja},${reading},,y,,,${display},,,,${pos},,,${ja_en},,,,,,,\n`;
+test("terminology: the file is the translate_en_ja rows in today's order, header en,ja", () => {
+  const { rows } = parseTerms(rev(term("Zed", "ゼッド") + term("Alpha", "アルファ", { pos: "1" }) + term("Beta", "ベータ")));
+  assert.equal(renderTerminology(rows), "en,ja\nAlpha,アルファ\nZed,ゼッド\nBeta,ベータ\n");
+});
+test("terminology: several English terms for one Japanese term warn, name the row the reverse direction uses, and keep every entry", () => {
+  const first = parseTerms(rev(term("channel", "チャンネル") + term("channels", "チャンネル") + term("other", "その他")));
+  assert.equal(first.warnings.length, 1);
+  assert.match(first.warnings[0], /1 Japanese term\(s\) have several English terms/);
+  assert.match(first.warnings[0], /"チャンネル": "channel" \(line 2\), "channels" \(line 3\) -> ja to en uses "channel"/);
+  assert.equal(renderTerminology(first.rows), "en,ja\nchannel,チャンネル\nchannels,チャンネル\nother,その他\n", "no display_as: file order, byte for byte as before");
+  const shown = parseTerms(rev(term("channel", "チャンネル") + term("Channels", "チャンネル", { display: "Channels" }) + term("other", "その他")));
+  assert.match(shown.warnings[0], /ja to en uses "Channels"/);
+  assert.equal(renderTerminology(shown.rows).trim().split("\n").slice(1).sort().join("|"), "Channels,チャンネル|channel,チャンネル|other,その他", "same entries");
+  assert.equal(renderTerminology(shown.rows).split("\n")[1], "Channels,チャンネル", "the row the reverse direction uses comes first in its group");
+});
+test("terminology: the Japanese key is compared after NFKC and case-insensitively", () => {
+  const { warnings } = parseTerms(rev(term("a srt", "ＳＲＴ") + term("b srt", "srt")));
+  assert.match(warnings[0], /1 Japanese term\(s\)/);
+});
+test("terminology: translate_ja_en=n is accepted, still used in reverse by Translate, and says so; other values are errors", () => {
+  const { warnings, rows } = parseTerms(rev(term("Zed", "ゼッド", { ja_en: "n" })));
+  assert.match(warnings.join("\n"), /translate_ja_en=n on "Zed" \(line 2\).*still used in the ja to en direction/);
+  assert.equal(renderTerminology(rows), "en,ja\nZed,ゼッド\n");
+  assert.throws(() => parseTerms(rev(term("Zed", "ゼッド", { ja_en: "x" }))), /translate_ja_en must be "y", "n" or empty, got "x"/);
+  assert.throws(() => parseTerms(rev(row("A", "あ", "", "", "", "n"))), /polly_en must be "y" or empty/);
+});
+test("terminology: the builder writes one file and no -ja-en file", () => {
+  const d = reverseDir();
+  try {
+    assert.equal(build(["generate", "--dir", d]).status, 0);
+    assert.deepEqual(readdirSync(d).filter((f) => /terminology/.test(f)), ["translate-terminology.csv"]);
+    assert.equal(OPTIONAL_OUTPUT_FILES["translate-terminology-ja-en.csv"], undefined);
+  } finally {
+    cleanup(d);
+  }
+});
+test("terminology: the en to ja entries of the example equal the committed file entry for entry (channel 1 unchanged)", () => {
+  const ex = join(REPO, "dictionaries", "example");
+  const { rows } = parseTerms(readFileSync(join(ex, "terms.csv"), "utf8"));
+  const committed = readFileSync(join(ex, "translate-terminology.csv"), "utf8");
+  assert.equal(renderTerminology(rows), committed);
+  const want = rows.filter((r) => r.translate_en_ja === "y").map((r) => `${r.en},${r.ja}`).sort();
+  assert.deepEqual(committed.trim().split("\n").slice(1).sort(), want);
+});
+// ---- derived Japanese vocabulary ----
+test("vocabulary-ja: every row with a reading is in, Phrase = reading with spaces as hyphens, DisplayAs = en", () => {
+  const { rows } = parseTerms(rev(row("Alpha", "", "アルファ") + row("Two Words", "", "ツー ワーズ") + row("None", "", "")));
+  assert.deepEqual(vocabularyJaLines(rows), ["アルファ\t\t\tAlpha", "ツー-ワーズ\t\t\tTwo Words"]);
+});
+test("vocabulary-ja: transcribe_ja=n leaves a row out; phrase_ja overrides the reading; a reading that is no valid Phrase warns", () => {
+  const { rows, warnings } = parseTerms(
+    rev(row("Alpha", "", "アルファ", "n") + row("Beta", "", "ベータ", "", "", "", "", "べーた") + row("Gamma 3", "", "ガンマ 3") + row("Delta", "", "デルタ")),
+  );
+  assert.deepEqual(vocabularyJaLines(rows), ["べーた\t\t\tBeta", "デルタ\t\t\tDelta"]);
+  assert.ok(warnings.some((w) => /"Gamma 3" \(line 4\).*Set phrase_ja on them, or transcribe_ja=n/.test(w)));
+  assert.ok(!warnings.some((w) => /Alpha/.test(w)));
 });

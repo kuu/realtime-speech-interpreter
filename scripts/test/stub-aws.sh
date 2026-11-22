@@ -12,8 +12,7 @@ case "$*" in
   "transcribe get-vocabulary --vocabulary-name simul-translation-ja "*) echo "${STUB_VOCAB_JA:-READY ja-JP}" ;;
   "transcribe get-vocabulary --vocabulary-name missing-vocab "*) exit 255 ;;
   "translate list-terminologies"*) echo simul-translation ;;
-  "translate get-terminology --name simul-translation "*) echo "en ja UNI" ;;
-  "translate get-terminology --name simul-translation-ja-en "*) echo "${STUB_TERM_JA_EN:-ja en UNI}" ;;
+  "translate get-terminology --name simul-translation "*) echo "${STUB_TERM:-en ja MULTI}" ;;
   "translate get-terminology --name missing-term "*) exit 255 ;;
   "polly describe-voices --engine neural --language-code en-US"*) echo "${STUB_POLLY_EN-Joanna}" ;;
   "polly describe-voices --engine neural --language-code ja-JP"*) echo "${STUB_POLLY_JA-Kazuha}" ;;

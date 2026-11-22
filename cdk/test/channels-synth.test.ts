@@ -33,7 +33,7 @@ test("two lanes: CHANNELS carries both resolved lanes; lane 1 is also the flat v
   const lanes = JSON.parse(e.CHANNELS);
   assert.equal(lanes.length, 2);
   assert.deepEqual(lanes[0], { source: "en-US", target: "ja", pollyVoice: "Kazuha", transcribeVocabulary: "simul-translation", translateTerminology: "simul-translation" });
-  assert.deepEqual(lanes[1], { source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "" });
+  assert.deepEqual(lanes[1], { source: "ja-JP", target: "en", pollyVoice: "Joanna", transcribeVocabulary: "", translateTerminology: "simul-translation" });
   assert.equal(e.SOURCE_LANGUAGE, "en-US");
   assert.equal(e.TRANSLATE_TARGET, "ja");
   assert.equal(e.POLLY_VOICE, "Kazuha");
@@ -67,7 +67,7 @@ test("a single ja-JP to en lane: flat variables, the Japanese keys, no CHANNELS"
   assert.equal(e.TRANSLATE_TARGET, "en");
   assert.equal(e.POLLY_VOICE, "Joanna");
   assert.equal(e.TRANSCRIBE_VOCABULARY, "");
-  assert.equal(e.TRANSLATE_TERMINOLOGY, "");
+  assert.equal(e.TRANSLATE_TERMINOLOGY, "simul-translation", "the one multi-directional terminology is the default of every lane");
   assert.equal(e.JA_SEGMENTATION_MODE, "simple");
 });
 test("ListenerUrlEn is added for the second channel only, with ?ch=<id>", () => {
@@ -83,16 +83,22 @@ test("IAM: the terminology statement lists exactly the llm lanes' terminologies 
   const model = "jp.anthropic.claude-haiku-4-5-20251001-v1:0";
   const one = terminologyResources({ translateEngine: "llm", llmModelId: model });
   assert.equal(one.length, 2);
-  const lanes = JSON.stringify([DEFAULT_LANE, { ...EN_LANE, translateTerminology: "t-ja-en" }]);
+  const lanes = JSON.stringify([DEFAULT_LANE, { ...EN_LANE, translateTerminology: "t-lane2" }]);
   const both = terminologyResources({ channels: lanes, translateEngine: "llm", llmModelId: model });
   assert.equal(both.length, 4);
-  assert.ok(both.some((r) => r.includes("terminology/t-ja-en")));
+  assert.ok(both.some((r) => r.includes("terminology/t-lane2")));
   assert.ok(both.some((r) => r.includes("terminology/simul-translation")));
-  const onlyLane2 = JSON.stringify([DEFAULT_LANE, { ...EN_LANE, translateTerminology: "t-ja-en", translateEngine: "llm" }]);
+  const onlyLane2 = JSON.stringify([DEFAULT_LANE, { ...EN_LANE, translateTerminology: "t-lane2", translateEngine: "llm" }]);
   const l2 = terminologyResources({ channels: onlyLane2, llmModelId: model });
   assert.equal(l2.length, 2, "only the llm lane's terminology");
-  assert.ok(l2.every((r) => r.includes("t-ja-en")));
+  assert.ok(l2.every((r) => r.includes("t-lane2")));
   assert.deepEqual(terminologyResources({ channels: two }), [], "no llm lane: no statement");
+});
+test("IAM: two llm lanes with the default (shared) terminology list one pair, not two", () => {
+  const model = "jp.anthropic.claude-haiku-4-5-20251001-v1:0";
+  const shared = terminologyResources({ channels: two, translateEngine: "llm", llmModelId: model });
+  assert.equal(shared.length, 2);
+  assert.ok(shared.every((r) => r.includes("terminology/simul-translation")));
 });
 test("secrets and listener resources are unchanged by a second channel (same LiveKit key, same room)", () => {
   const count = (o: Record<string, unknown>, type: string) => Object.keys(synthTemplate({ ...base, ...o }).findResources(type)).length;

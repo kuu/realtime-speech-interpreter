@@ -10,7 +10,9 @@ const files = execSync('git ls-files -co --exclude-standard -z', { cwd: root, en
 let bad = 0;
 for (const f of files) {
   const text = readFileSync(join(root, f), 'utf8').replace(/```[\s\S]*?```/g, '');
-  for (const m of text.matchAll(/\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+  // Markdown links and images, and HTML <img src> / <a href> (GitHub allows them; the README landing image uses <img>).
+  const targets = [...text.matchAll(/\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g), ...text.matchAll(/<(?:img|a)\b[^>]*?\s(?:src|href)="([^"]+)"/g)];
+  for (const m of targets) {
     const target = m[1];
     if (/^([a-z][a-z0-9+.-]*:|#|\/\/)/i.test(target)) continue;
     const path = decodeURIComponent(target.split('#')[0].split('?')[0]);

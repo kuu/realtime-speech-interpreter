@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Headless LiveKit SUBSCRIBER used by the E2E harness.
 //
-//   node recorder.cjs record <app-dir> <wss-url> <room> <out.wav> <maxSec>
+//   node recorder.cjs record <app-dir> <wss-url> <room> <out.wav> <maxSec> [tracksJson]
 //   node recorder.cjs probe  <app-dir> <wss-url> <room>
 //
 // Credentials: a JSON object {"apiKey":"...","apiSecret":"..."} is read from STDIN (never
@@ -9,7 +9,9 @@
 // (canPublish=false, canPublishData=false), hidden from other participants, and short-lived.
 //
 // record: joins the room, subscribes to the published audio track (the app publishes as
-//   identity "publisher-app") and writes 16 kHz mono s16le WAV. The file follows the WALL
+//   identity "publisher-app") and writes 16 kHz mono s16le WAV. With tracksJson (a two-channel deploy), a JSON list
+//   [{"id":"ja","publisher":"publisher-app","track":"translation-audio","out":"a.wav"}, ...] records each channel's
+//   track (matched by publisher identity and track name) into its own file, each on the same wall clock. The file follows the WALL
 //   CLOCK from the moment "READY <epochMs>" is printed: gaps with no frames are filled with
 //   silence, so sample 0 = READY time. Stops on SIGINT/SIGTERM or after maxSec.
 // probe: lists the room's participants and their tracks as JSON (no secrets).
@@ -20,7 +22,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
 
-const [cmd, appDir, wssUrl, roomName, outFile, maxSecArg] = process.argv.slice(2);
+const [cmd, appDir, wssUrl, roomName, outFile, maxSecArg, tracksArg] = process.argv.slice(2);
 if (!cmd || !appDir || !wssUrl || !roomName || (cmd === "record" && !outFile)) {
   console.error("usage: recorder.cjs record <app-dir> <wss-url> <room> <out.wav> <maxSec> | probe <app-dir> <wss-url> <room>");
   process.exit(2);
@@ -146,7 +148,12 @@ async function record() {
   });
   const token = await at.toJwt();
 
-  const wav = new WavWriter(outFile);
+  // One target per recorded channel. Without tracksJson: today's single recording (any track of publisher-app).
+  const targets = (tracksArg ? JSON.parse(tracksArg) : [{ id: "", publisher: PUBLISHER, track: null, out: outFile }]).map((t) => ({
+    ...t,
+    wav: new WavWriter(t.out),
+    active: false,
+  }));
   let recStart = 0;
   let frames = 0;
   let loudFrames = 0;
@@ -154,21 +161,21 @@ async function record() {
   const readers = new Set();
 
   // Keep the file on the wall clock: pad with silence when no frames arrived for a while.
-  const padTo = (extraSamples) => {
+  const padTo = (wav, extraSamples) => {
     const expected = Math.floor(((Date.now() - recStart) * SR) / 1000);
     const gap = expected - extraSamples - wav.samples;
     if (gap > SR * 0.3) wav.silence(gap);
   };
-
-  const readTrack = async (track, who) => {
-    console.log(`TRACK ${who} ${Date.now()}`);
+  const readTrack = async (track, who, target) => {
+    const wav = target.wav;
+    console.log(`TRACK ${who}${target.id ? ` ch=${target.id}` : ""} ${Date.now()}`);
     const stream = new AudioStream(track, { sampleRate: SR, numChannels: 1 });
     readers.add(stream);
     try {
       for await (const frame of stream) {
         if (stopping) break;
         if (!recStart) continue;
-        padTo(frame.samplesPerChannel);
+        padTo(wav, frame.samplesPerChannel);
         wav.write(frame.data);
         frames++;
         let peak = 0;
@@ -186,16 +193,20 @@ async function record() {
   };
 
   const room = new Room();
-  let active = null; // one track at a time (the app publishes exactly one)
-  room.on(RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+  room.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
     if (track.kind !== TrackKind.KIND_AUDIO) return;
-    if (active && participant.identity !== PUBLISHER) return;
-    active = track;
-    void readTrack(track, participant.identity);
+    // The target of this track: by publisher identity and track name (a channel list), or today's single target.
+    const target = tracksArg
+      ? targets.find((t) => !t.active && t.publisher === participant.identity && t.track === pub.name)
+      : targets.find((t) => !(t.active && participant.identity !== PUBLISHER));
+    if (!target) return;
+    target.active = true;
+    target.sid = track.sid;
+    void readTrack(track, participant.identity, target);
   });
-  room.on(RoomEvent.TrackUnsubscribed, (_track, _pub, participant) => {
+  room.on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
     console.log(`UNTRACK ${participant.identity} ${Date.now()}`);
-    active = null;
+    for (const t of targets) if (t.sid === track.sid) t.active = false;
   });
   room.on(RoomEvent.Disconnected, (reason) => {
     if (!stopping) console.error(`recorder: disconnected from room (reason=${reason})`);
@@ -208,9 +219,9 @@ async function record() {
   const finish = async (why) => {
     if (stopping) return;
     stopping = true;
-    padTo(0);
-    const durSec = wav.samples / SR;
-    wav.close();
+    for (const t of targets) padTo(t.wav, 0);
+    const durSec = targets[0].wav.samples / SR;
+    for (const t of targets) t.wav.close();
     for (const s of readers) {
       try {
         await s.cancel();

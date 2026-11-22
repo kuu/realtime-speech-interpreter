@@ -787,7 +787,8 @@ def cloud_input(meta: dict) -> str:
 
 def build_report(run_dir: Path, meta: dict, log_lines: list[str], startup_lines: list[str],
                  audio: dict, runs_dir: Path) -> tuple[str, dict]:
-    parsed = parse_log(log_lines)
+    import bilingual  # two-channel runs: the main report is the first channel; a one-channel log is passed through untouched
+    parsed = parse_log(bilingual.main_lines(log_lines))
     clip_start = float(meta.get("clipStartSec", 0))
     stem = meta.get("fileStem", "")
     scan = load_langscan(runs_dir, stem) if stem else []
@@ -817,6 +818,9 @@ def build_report(run_dir: Path, meta: dict, log_lines: list[str], startup_lines:
                                                   if meta.get("mode") == "cloud"
                                                   else " (app run locally with INPUT_FILE + file sink, real AWS AI services)"))
     L.append(f"- Recording: `{meta.get('file')}`")
+    if meta.get("japaneseOnly"):
+        L.append("- Test mode: **Japanese only**: the recording has no English speech; the report is about the Japanese-source channel "
+                 "(scoring sheet: `scoring-sheet.md`)")
     L.append(f"- Clip: start {fmt_hms(clip_start)} ({clip_start:.1f} s), duration {meta.get('clipDurationSec', 0):.1f} s")
     L.append(f"- Run started: {meta.get('startedAt')}  ·  folder `{run_dir.name}`")
     if meta.get("mode") == "cloud":
@@ -982,6 +986,8 @@ def build_report(run_dir: Path, meta: dict, log_lines: list[str], startup_lines:
     m["input"] = cloud_input(meta) if meta.get("mode") == "cloud" else None
     m["file"] = meta.get("fileStem")
     m["clip"] = f"{fmt_hms(clip_start)}+{meta.get('clipDurationSec', 0):.0f}s"
+    if bilingual.has_channels(log_lines):
+        L.extend(bilingual.section(log_lines, meta, float(meta.get("clipDurationSec", 0)) or None))
     return "\n".join(L), dict(metrics=m, chunks=list(parsed["chunks"].values()))
 
 

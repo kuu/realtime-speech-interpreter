@@ -1,0 +1,13 @@
+# monologue-ja: one Japanese speaker, a product talk, no English at all (Japanese voice only).
+# Fictional company "Lumenstream" and fictional products. For the pure Japanese-source measurement of channel 2
+# (Japanese to English) of the two-channel mode: read it aloud or generate it with samples/make-samples.sh.
+# The speaker pauses naturally; sentences are of mixed length, with 、 inside long ones, and product names stay in Latin letters.
+Takumi: 皆さん、こんにちは。本日はLumenstreamの新しい配信サービス、Lumenstream Liveについてご紹介します。
+Takumi: このサービスは、会場の映像と音声をそのままインターネットに届けるための仕組みです。小さなイベントから大きな発表会まで、同じ設定で使えます。
+Takumi: まず、仕組みを簡単に説明します。会場のカメラからSRTという方式で映像を送ると、クラウド上のエンコーダーが複数の画質に変換し、視聴者の端末に合わせて配信します。
+Takumi: 遅延は、通常の設定でおよそ三秒です。もっと短くしたい場合は、Lumenstream Low Latencyという設定に切り替えると、一秒前後まで短くできます。ただし、その場合は費用が少し高くなります。
+Takumi: 次に、料金についてお話しします。料金は、配信した時間と視聴者の数によって決まります。最初の一か月は、検証のために無料でお使いいただけます。
+Takumi: 安全性も大切です。映像は暗号化されて送られ、許可された会場の接続だけを受け付けます。万が一、接続が切れた場合でも、自動的につなぎ直します。
+Takumi: ご質問があれば、この後の休憩時間にスタッフにお声がけください。また、デモ会場では、実際の画面をご覧いただけます。
+Takumi: 最後に、これからの予定です。来年の春には、字幕の自動生成と、複数の言語への同時翻訳に対応する予定です。皆さんのご意見をぜひお聞かせください。
+Takumi: ありがとうございました。引き続き、どうぞよろしくお願いします。

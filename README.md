@@ -21,13 +21,19 @@ Details of the diagram: [docs/architecture.md](docs/architecture.md).
 | Japanese speech in the room is ignored | **Supported** | A language filter drops it, so a moderator or a question is not translated. |
 | Custom dictionaries and pronunciations | **Supported** | Edit files, run a script. See [docs/dictionaries.md](docs/dictionaries.md). |
 | Round table or fireside chat, several speakers | **Planned** | Needs speaker detection and a different voice per speaker. |
-| Q&A in two directions with two channels | **Planned** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. |
+| Q&A in two directions with two channels | **Built, live tests pending** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. Set `channels` in `event.json` (see below and [docs/bilingual-channels.md](docs/bilingual-channels.md)); with no `channels` nothing changes. |
 | Captions on the listener page | **Supported** | After **Listen** is pressed, Japanese captions appear below the button in time with the voice, and the English source as it is recognised; Japanese speech is shown as said with a `―` marker. See below. |
 | Browser microphone as input (`getUserMedia`) | **Optional** (`-c inputSource=browser`), live tests pending | For venues with no audio line out, or no PC to run OBS. See [security.md](docs/security.md#browser-microphone-input). |
 | RTMPS as input (OBS over TCP 443) | **Optional** (`-c inputSource=rtmps`), live tests pending | For venues whose network blocks outbound UDP. See [alternative-inputs.md](docs/alternative-inputs.md). |
 | Dictionary builder (easier than editing files) | **Idea** | A tool that suggests terms from slides or a transcript. |
 | Voice that follows the speaker | **Idea** | Depends on speaker detection. |
 
+## Two channels (English to Japanese and Japanese to English)
+With `channels` in `cdk/config/event.json` the same venue feed is interpreted in both directions: Japanese listeners open the page
+as before, English listeners open the same page with `?ch=en` (the stack prints it as `ListenerUrlEn`). One Transcribe stream
+feeds two lanes, each with its own translation and voice, and both audio tracks are published in one LiveKit room. Channel 1
+(English to Japanese) behaves as without the setting. The input stays SRT. The channel 2 settings, dictionaries and measurement
+steps are in [docs/bilingual-channels.md](docs/bilingual-channels.md); the first listener URL is unchanged.
 ## Input options
 
 SRT is the default, but not the only way to get the speaker's audio in. Pick one per deploy with `-c inputSource=...`;

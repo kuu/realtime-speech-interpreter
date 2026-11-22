@@ -210,9 +210,23 @@ node scripts/estimate-cost.mjs --help
 It reads the task size, instance type and log retention from `cdk/cdk.json`, plus `cdk/config/event.json` (profile, engine, `expectedListeners`,
 `advanced`) when you have one. Options: `--hours`, `--listeners`, `--engine translate|llm`, `--chunks-per-hour`, `--idle-days`,
 `--polly-chars-per-hour`, `--translate-chars-per-hour`, `--llm-in`, `--llm-cache-read`, `--llm-out`, `--llm-call-share`,
-`--bedrock-price regional|global`, `--opus-kbps`, `--instance-type`, `--markdown`, `--json`. It lists all billed resources, the per-hour table and the
+`--bedrock-price regional|global`, `--opus-kbps`, `--instance-type`, `--markdown`, `--json`. `--channels 2` adds the Japanese to English channel (`--ja-share`, the share of the hour spoken in Japanese, default 0.25;
+`--en-chars-per-chunk`, English characters spoken per Japanese chunk, default 55); both are **assumptions** to be replaced by the
+figures of the bilingual e2e run. It lists all billed resources, the per-hour table and the
 idle table. It has no dependencies and calls no AWS API. The tables in this document come from it with `--markdown`.
 
+### Two channels
+Transcribe, Fargate, the LiveKit host and the listener transfer do not grow with channel 2 (one stream, and each listener
+subscribes to one track). What grows is billed per translated speech: Translate or Bedrock calls for the Japanese chunks, Polly characters
+of the English voice, and, with the LLM engine, the second glossary's cache write (once per start) and its keep-warm call every
+four minutes.
+```bash
+node scripts/estimate-cost.mjs --hours 4 --listeners 100 --engine llm --channels 2 --ja-share 0.25
+```
+With the defaults and the LLM engine channel 2 adds about $0.49 per hour (*estimate*; list price; the English characters per chunk
+and the Japanese share are assumed). That is above the earlier planning bound of about $0.33, because that bound assumed the
+Japanese character count per chunk; the English output of a Japanese chunk is longer. Measure `--en-chars-per-chunk` with the
+Japanese-only run of the e2e harness and replace the default.
 ### Check against a measured case
 
 The LLM engine report measured the Haiku 4.5 calls of three recorded talks in local runs. For the longest one it counted

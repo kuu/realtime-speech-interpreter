@@ -35,6 +35,17 @@ Commands run from the repository root unless a `cd` is shown. Replace `ap-northe
 4. **Go live.** Only one SRT sender can be connected at a time. Stop any test encoder first.
 5. **Watch the logs** (see below). After the session, check the `[summary]` line.
 
+## Two channels (only with `channels` in `event.json`)
+- **One QR code per channel.** The stack prints `ListenerUrl` (the first channel in `channels`, the default) and `ListenerUrlEn`
+  (`?ch=en`) for the second one. Print both; a listener who opens an unknown `?ch=` sees "This channel is not available".
+- **Silence is normal.** Each channel is quiet while the other language is spoken. A listener who joins during a pause hears
+  nothing from channel 2 until Japanese is spoken.
+- **Lane 2 failure.** If channel 2 cannot start the log shows `lane en disabled: <reason>` and channel 1 serves as usual; the
+  health body shows it. The listener page for channel 2 shows "Channel not live yet" and stays quiet. Run `./scripts/doctor.sh`
+  (it checks the Japanese vocabulary, the `<name>-ja-en` terminology and the English voice) and restart the task.
+- **Dictionaries.** After editing `terms.csv`, run `node dictionaries/build.mjs generate` and `cd cdk && ./scripts/dictionaries.sh`;
+  it also uploads `<name>-ja` and `<name>-ja-en` when they exist. Set both names on the Japanese channel in `event.json`.
+
 ## Browser microphone input (only with `-c inputSource=browser`)
 
 The stack is closed until you run the operator command. Before the event, and again to rotate the code:
@@ -121,6 +132,9 @@ Add `--filter-pattern` with one of these:
 | `[langfilter] dropped` | Japanese or non-English speech was dropped on purpose. | Many drops while only English is spoken: language filter problem. |
 | `[srt] stream ended` | The encoder disconnected. | Restart the encoder. |
 | `[summary]`, `[llm-summary]` | Totals at the end of a session. | Keep for the report. |
+| `lane en disabled` | Two-lane deploy: lane 2 could not start (LiveKit connect, engine, or the 20 s start-up deadline). Lane 1 keeps running; the health endpoint answers `ok lanes=ja:up,en:disabled`. | Run `./scripts/doctor.sh`, fix the named cause, restart the task. |
+| `ch=en`, `ch=ja` | Two-lane deploy: every per-lane line (`[chunk N ch=en]`, `[langfilter] ch=en`, `[captions] ch=en`, `[summary] ch=en`) names its channel. | Filter on `ch=en` to read one channel. |
+| `lateSpoken=` | In `[langfilter] ch=... stream=...`: late language flips after text was already emitted. | A few per hour is normal in mixed Q&A; many: the settle thresholds are too low (configuration, `langidSettleItems*`). |
 | `captions=on` | Startup line: captions are on (`topic=captions schema=1`). | `captions=off`: the deploy setting is off. |
 | `[captions]` | Caption totals per session: `caption=` Japanese lines sent (equals `played`), `source=` English packets, `retracted=` English results withdrawn after a late language flip, `failed=` packets LiveKit refused, `sourceLagMs(avg/max)=` time from the end of the words to their packet. | `failed` above 0 or `caption=0` while `played` grows: check `[livekit] connected` and the LiveKit host. |
 

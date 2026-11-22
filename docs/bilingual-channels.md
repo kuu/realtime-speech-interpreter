@@ -1,9 +1,10 @@
 # Two-channel bilingual mode (design)
 
-**Status: approved, in implementation.** This page is the design for [issue #9](https://github.com/kuu/realtime-speech-interpreter/issues/9).
-Parts of it are built step by step on the branch that implements the issue; a setting or file named here exists only
-once the matching change has landed. Everything in "Hypotheses" and every number marked *estimate* has to be measured
-before it is relied on. The owner has answered all questions; see [Decisions](#decisions).
+**Status: built, live tests pending.** This page is the design for [issue #9](https://github.com/kuu/realtime-speech-interpreter/issues/9).
+The feature is implemented on the branch for the issue; nothing here has run against live Transcribe, Bedrock or LiveKit yet.
+Everything in "Hypotheses" and every number marked *estimate* has to be measured before it is relied on. The measurement is the
+owner's next step: deploy, run `./e2e/e2e.sh run` on the bilingual sample and on a Japanese monologue (`--japanese-only`), score the
+`scoring-sheet.md`, compare `simple` and `full`, and run one `create-vocabulary` test for the Japanese vocabulary. The owner has answered all questions; see [Decisions](#decisions).
 
 ## Goal
 

@@ -57,6 +57,24 @@ Plain JSON. Comments (`//` and `/* */`) are accepted by the loader, so you can a
 
 Unknown top-level keys are rejected with the list of allowed ones, so a typo cannot be silently ignored.
 
+### Two channels: example
+```json
+{
+  "venueCidr": ["203.0.113.10/32"],
+  "profile": "fast",
+  "channels": [
+    { "source": "en-US", "target": "ja", "pollyVoice": "Kazuha" },
+    { "source": "ja-JP", "target": "en", "pollyVoice": "Joanna",
+      "transcribeVocabulary": "simul-translation-ja", "translateTerminology": "simul-translation-ja-en" }
+  ]
+}
+```
+The first channel is the default one: its listener URL has no parameter and it keeps the names `publisher-app`, `translation-audio` and
+`captions`. The second channel's page is `?ch=en`. Do not combine `channels` with `sourceLanguage`, `targetLanguage` or `pollyVoice`. A channel
+other than English to Japanese defaults its vocabulary and terminology to empty; with the LLM engine every such channel needs a
+`translateTerminology`. `synth` prints a warning when the dictionary folder has `transcribe-vocabulary-ja.txt` and the Japanese channel
+has no vocabulary. A single channel (for example only `ja-JP` to `en`) is allowed and uses the flat variables.
+
 ## Profiles
 
 Profiles live in `cdk/config/profiles/<name>.json` (`description`, `status`, `context`). Every key in `context` must be a `cdk.json` key. Choose one with `"profile"` in `event.json` or `-c latencyPreset=<name>`.

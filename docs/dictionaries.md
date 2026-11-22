@@ -116,6 +116,29 @@ terminology `en` and the Polly term. Only the Polly alias in `reading` changes h
 `suggest --suggest-with-bedrock` keeps this rule in code: a term with a capital letter or a digit gets `ja` equal to
 `en`, whatever the model answers. Tests: `dictionaries/test/generate.test.mjs` and `bedrock.test.mjs`.
 
+## The reverse direction (Japanese speech to English)
+For the two-channel mode ([bilingual-channels.md](bilingual-channels.md)) `terms.csv` takes more optional columns, so one file
+still feeds every generated dictionary:
+
+| Column | Meaning |
+|---|---|
+| `transcribe_ja` | `y`: a row in `transcribe-vocabulary-ja.txt` (Transcribe ja-JP). `Phrase` = `phrase_ja` if set, else `reading`; `DisplayAs` = `en`. |
+| `translate_ja_en` | `y`: rows in `translate-terminology-ja-en.csv` (header `ja,en`): `ja`, `reading` and every `ja_variants` entry map to `en`. |
+| `polly_en` | `y`: a row in `polly-readings-en.csv` (`en,reading_en`) for the English voice. |
+| `reading_en` | The spoken English alias; English letters only, no katakana. Required with `polly_en=y`. |
+| `phrase_ja` | Optional Japanese `Phrase` (hiragana, katakana, kanji, `ー`, hyphen between words). |
+| `ja_variants` | Other Japanese spellings of the same `en`, separated by `\|`. |
+| `transcribe_ja_pos`, `translate_ja_en_pos`, `polly_en_pos` | Position in the generated file, as for the other `*_pos` columns. |
+
+The files are written only when at least one row has the flag; without any flag nothing new appears. Upload names: the vocabulary
+as `<name>-ja` (ja-JP) and the terminology as `<name>-ja-en` (uni-directional), by `cdk/scripts/dictionaries.sh` (override with
+`DICT_NAME_JA`, `DICT_NAME_JA_EN`); put the same names on the `ja-JP` channel in `event.json` (`transcribeVocabulary`,
+`translateTerminology`). Product names keep their English spelling as the target and are never respelled.
+**Caveat for the Japanese vocabulary.** The Transcribe page on character sets lists hiragana, katakana, kanji and full-width capital
+letters as supported for `DisplayAs` in ja-JP. `DisplayAs` = the English name is outside that set, so `validate.mjs` prints a warning
+and the first upload is the test: create the vocabulary once and check that its state is `READY`. If it fails, remove `DisplayAs`
+and let the glossary map the transcript form back to the English name.
+
 ## suggest: candidate terms from your material
 
 ```bash

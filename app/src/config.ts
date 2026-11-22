@@ -1,5 +1,12 @@
 import { fileURLToPath } from "node:url";
-import { LANGID_JA_MEMORY_MS, LANGID_SETTLE_WORDS_AFTER_JA, LANGID_SETTLE_WORDS_DEFAULT } from "./langid-defaults.js";
+import {
+  LANGID_JA_MEMORY_MS,
+  LANGID_SETTLE_ITEMS,
+  LANGID_SETTLE_ITEMS_AFTER_EN,
+  LANGID_SETTLE_ITEMS_DEFAULT,
+  LANGID_SETTLE_WORDS_AFTER_JA,
+  LANGID_SETTLE_WORDS_DEFAULT,
+} from "./langid-defaults.js";
 // Centralized configuration. Every venue/account/language-specific value is
 // externalized via environment variables so the app can be reused without code
 // changes. Secrets (SRT passphrase, LiveKit API secret) come from the environment
@@ -158,6 +165,20 @@ export function langidSettleConfig(env: NodeJS.ProcessEnv): LangidSettleConfig {
   };
 }
 
+export interface LangidSettleItemsConfig {
+  settleItems: number;
+  settleItemsDefault: number;
+  settleItemsAfterEn: number;
+}
+// Settle thresholds of a ja-JP source lane, in stable items (see language-gate.ts). Same rules as langidSettleConfig.
+export function langidSettleItemsConfig(env: NodeJS.ProcessEnv): LangidSettleItemsConfig {
+  return {
+    settleItems: envNum(env, "LANGID_SETTLE_ITEMS", LANGID_SETTLE_ITEMS, 1, 50),
+    settleItemsDefault: envNum(env, "LANGID_SETTLE_ITEMS_DEFAULT", LANGID_SETTLE_ITEMS_DEFAULT, 1, 50),
+    settleItemsAfterEn: envNum(env, "LANGID_SETTLE_ITEMS_AFTER_EN", LANGID_SETTLE_ITEMS_AFTER_EN, 1, 50),
+  };
+}
+
 export interface SpeedupStep {
   backlogMs: number;
   rate: number; // percent, 100-200
@@ -257,6 +278,9 @@ function languageFilter(): {
   settleMode: "fixed" | "dynamic";
   settleWordsDefault: number;
   settleWordsAfterJa: number;
+  settleItems: number;
+  settleItemsDefault: number;
+  settleItemsAfterEn: number;
   jaMemoryMs: number;
   shortWords: number;
   shortMinConf: number;
@@ -290,6 +314,8 @@ function languageFilter(): {
     // LANGID_SETTLE_MODE=fixed: LANGID_SETTLE_WORDS for every result. dynamic: LANGID_SETTLE_WORDS_DEFAULT (3) unless a
     // non-source (ja-JP) result was seen in the last LANGID_JA_MEMORY_MS, then LANGID_SETTLE_WORDS_AFTER_JA (5).
     ...langidSettleConfig(process.env),
+    // Same thresholds for a ja-JP source, in stable items (only read when a lane has a ja-JP source).
+    ...langidSettleItemsConfig(process.env),
     // Drop short low-confidence source-language finals right after a non-source final. 0 disables.
     shortWords: safeNum("LANGID_SHORT_WORDS", 4, 0, 20),
     shortMinConf: safeNum("LANGID_SHORT_MIN_CONF", 0.6, 0, 1),

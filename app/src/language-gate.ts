@@ -35,7 +35,14 @@
 // midpoint is at or before the mark as it was when the result appeared, and a final that is a
 // strict prefix of what was committed is passed on as exactly the committed items ([verify] OK).
 
-import { LANGID_JA_MEMORY_MS, LANGID_SETTLE_WORDS_AFTER_JA, LANGID_SETTLE_WORDS_DEFAULT } from "./langid-defaults.js";
+import {
+  LANGID_JA_MEMORY_MS,
+  LANGID_SETTLE_ITEMS,
+  LANGID_SETTLE_ITEMS_AFTER_EN,
+  LANGID_SETTLE_ITEMS_DEFAULT,
+  LANGID_SETTLE_WORDS_AFTER_JA,
+  LANGID_SETTLE_WORDS_DEFAULT,
+} from "./langid-defaults.js";
 import { log } from "./log.js";
 import { isPunctItem, type Segmenter, type TxItem, type TxResult } from "./segmenter.js";
 
@@ -45,6 +52,10 @@ export interface LanguageGateOptions {
   settleMode?: "fixed" | "dynamic"; // default fixed
   settleWordsDefault?: number; // dynamic: threshold when no non-source result was seen recently (default 3)
   settleWordsAfterJa?: number; // dynamic: threshold within jaMemoryMs after a non-source result (default 5)
+  // Same three thresholds for a ja-JP source, in stable items instead of words (used only when source is ja-*).
+  settleItems?: number; // fixed mode (default 5)
+  settleItemsDefault?: number; // dynamic: no non-source result seen recently (default 3)
+  settleItemsAfterEn?: number; // dynamic: within jaMemoryMs after a non-source result (default 5)
   jaMemoryMs?: number; // dynamic: how long a non-source result keeps the long threshold (default 60000)
   shortWords: number; // short-low-conf rule: max words (0 disables)
   shortMinConf: number; // short-low-conf rule: mean confidence below this is dropped
@@ -139,11 +150,20 @@ export class LanguageGate implements ResultSink {
   }
 
   // Stable words a source-language partial needs before it is forwarded, and whether the long (after-Japanese) value applies.
+  // For a ja-JP source the same table applies in stable items (words = items), with the settleItems* options.
   private settleAt(now: number, st: GateState): { words: number; afterJa: boolean } {
-    if (this.opts.settleMode !== "dynamic") return { words: this.opts.settleWords, afterJa: false };
+    const ja = JA_LANG.test(this.opts.source);
+    if (this.opts.settleMode !== "dynamic") {
+      return { words: ja ? (this.opts.settleItems ?? LANGID_SETTLE_ITEMS) : this.opts.settleWords, afterJa: false };
+    }
     // A result whose partials shrank before it settled is rewriting itself (Japanese speech heard as English):
     // it gets the long threshold even when no Japanese result was seen recently (first Japanese turn after English).
     const afterJa = st.volatile || now - this.lastNonSourceAt <= (this.opts.jaMemoryMs ?? LANGID_JA_MEMORY_MS);
+    if (ja) {
+      return afterJa
+        ? { words: this.opts.settleItemsAfterEn ?? LANGID_SETTLE_ITEMS_AFTER_EN, afterJa }
+        : { words: this.opts.settleItemsDefault ?? LANGID_SETTLE_ITEMS_DEFAULT, afterJa };
+    }
     return afterJa
       ? { words: this.opts.settleWordsAfterJa ?? LANGID_SETTLE_WORDS_AFTER_JA, afterJa }
       : { words: this.opts.settleWordsDefault ?? LANGID_SETTLE_WORDS_DEFAULT, afterJa };

@@ -251,6 +251,15 @@ segmenter through a small interface (`ResultSink` plus `closeResult`) so both fi
 
 ### Cut rules
 
+**Owner decision: start simple.** Japanese delimiters are as simple as English ones: `。` ends a sentence, `、` is a
+comma, `「` `」` are quotes (no cut), and Transcribe already splits the text into tokens. The first build uses only
+rules 1 (sentence end), 2 (every stable `、`, with no minimum length and no dangling test), 6 (maximum wait) and 7
+(final). The fuller rule set below (dangling test D, clause endings, minimum lengths, pause, maximum characters) is an
+**experiment variant**: run both on the same recordings in one e2e comparison and keep the extra rules only if they
+give a clear quality gain without extra latency. The known risk of the simple rule is that a clause before `、` often
+has no verb yet (Japanese is verb-final), so the English translation may have to guess or wait; the comparison measures
+that.
+
 The segmenter keeps a buffer of committed (stable) text, like the English one. It cuts at the first rule below that
 applies, in this order. "Token" means one Transcribe item, punctuation items excluded.
 
@@ -542,7 +551,7 @@ for Translate the `TerminologyNames` parameter). The deployed names are not rena
 | Failure | A lane's connection can drop and reconnect alone. | Same. |
 | Existing ingest room | No clash. | `roomName` must not end in `-ingest`, and the second room's name needs its own rule. |
 
-Recommendation: **one room, one publisher participant per lane**. If measurement shows the extra data packets matter
+**Owner decision: one room** (same source, same token, same page). Recommendation: **one room, one publisher participant per lane**. If measurement shows the extra data packets matter
 at the listener counts in use (cost or CPU on the LiveKit instance), moving to two rooms is a contained change to the
 publisher, the token endpoint and the page.
 
@@ -930,6 +939,25 @@ One channel configured must equal today's behavior exactly. The evidence is test
 | e2e | `report.md` per channel; recorder with two tracks; `--channel`; fault injection on lane 2. |
 | Doctor | Per-channel checks, warning without a Japanese vocabulary. |
 
+## Known gaps (to fix during implementation)
+
+The design review stopped after three rounds with these findings open. The implementation must resolve them first.
+
+1. **Settle threshold for the Japanese lane.** The text above says both lanes start on `fixed` with 3 stable items.
+   That is wrong: the existing `fixed` mode uses `langidSettleWords` (default 5) and the `talk` profile uses `dynamic`
+   mode (3/5); the constant 3 belongs only to the as-said path. Define one table (fixed and dynamic mode, en-US key in
+   words, ja-JP key in stable items, with named keys), and state that both lanes follow the global
+   `LANGID_SETTLE_MODE`.
+2. **Dictionary defaults bind to direction, not position.** Only a lane whose source is `en-US` and target is `ja`
+   defaults to `dictionaries.*`; every other lane defaults to `""`, and an LLM lane with an empty terminology fails
+   validation with a message naming the lane. Tests: `ja-JP` to `en` as the only channel, and `en` listed second.
+3. **Japanese Transcribe vocabulary columns.** Specify the `terms.csv` input for `transcribe_ja` rows (for example
+   `Phrase = reading`, `DisplayAs = en`, an optional `phrase_ja` override; `phrase` and `display_as` stay en-US only;
+   alias rows), the generated names (`<transcribeVocabulary>-ja`, `<translateTerminology>-ja-en`), and a `doctor`/CDK
+   warning when `transcribe_ja` rows exist but lane 2 has no vocabulary set.
+4. Small: channel 2 uses the same caption offset (230 ms) until measured; the "1.2% of partial pairs" flip figure needs
+   a source or is dropped.
+
 ## Open questions
 
 Each has a recommended answer. The design assumes the recommendation until told otherwise.
@@ -979,6 +1007,6 @@ Each has a recommended answer. The design assumes the recommendation until told 
   leaves a hook: a lane's gate can take a speaker-to-language hint later.
 - Changes to the dictionary builder's suggestion heuristics beyond direction support ([#7](https://github.com/kuu/realtime-speech-interpreter/issues/7)).
 - Accessible caption presentation beyond the `lang` and `aria-live` rules above ([#12](https://github.com/kuu/realtime-speech-interpreter/issues/12)).
-- `architecture.drawio.svg`: the diagram is not changed by this design. When the feature is built, the diagram and the
-  step table in [architecture.md](architecture.md) are updated in that pull request.
+- `architecture.drawio.svg`: the diagram stays unchanged, also when the feature is built (owner decision: keep the
+  diagram simple). The step table and text in [architecture.md](architecture.md) describe the second channel instead.
 - Any deploy, `dictionaries.sh` run or other AWS change.

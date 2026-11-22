@@ -9,6 +9,7 @@ The audio is generated with Amazon Polly from the text files in `samples/scripts
 | `talk-single` | One English speaker, 8 paragraphs with technical terms (SRT, HLS, CDN, SDK, Kubernetes, p99 latency) | about 2 min | Try the current single-speaker flow; test your dictionary |
 | `dialogue-two-speakers` | Two English speakers (Joanna and Matthew) alternating, 13 turns | about 1.5 min | Prepare for speaker detection and per-speaker voices |
 | `qa-bilingual` | English answers with 4 Japanese audience questions (Takumi, Kazuha, Tomoko) | about 1.2 min | Test the Japanese-speech filter; prepare for the two-channel mode |
+| `monologue-ja` | One Japanese speaker (Takumi), a fictional product talk, no English | about 3 min | Pure Japanese source: measure channel 2 alone (`e2e.sh run ... --japanese-only`); the recording is made by the owner |
 
 Each sample has `scripts/<name>.txt` (the exact spoken script, which is the ground truth) and `scripts/<name>.notes.md` (what
 a good translation looks like).

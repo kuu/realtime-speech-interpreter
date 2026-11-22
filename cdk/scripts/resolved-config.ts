@@ -30,6 +30,12 @@ try {
     dictionaryDirSource: cfg.dictionaryDirSource,
     inputSource: cfg.inputSource,
     rtmpPort: cfg.rtmpPort,
+    // Lanes for doctor: "source|target|voice|vocabulary|terminology|engine" (names have no spaces).
+    pollyEngine: cfg.pollyEngine,
+    laneCount: cfg.lanes.length,
+    laneLines: cfg.lanes.map((l) =>
+      [l.source, l.target, l.pollyVoice, l.transcribeVocabulary, l.translateTerminology, l.translateEngine ?? cfg.translateEngine].join("|"),
+    ),
   });
 } catch (err) {
   out.ok = false;

@@ -31,6 +31,21 @@ override one app setting, for example `--env TRANSLATE_ENGINE=llm`.
 
 `local` and `run` bill the same AWS services as a live event for the length of the clip.
 
+## Two channels and Japanese-only runs
+- In a two-lane deploy `run` reads the channel list from the listener page's `config.json` and records each channel's track:
+  `translation-ja.wav` and `translation-en.wav` (and `side-by-side-<id>.wav`). With one channel the file is `translation.wav`, as before.
+- `report.md` is built from the first channel, as for one channel, and ends with **Channels (two-lane run)**: one metrics column per
+  channel (counts, `e2eFirstWordMs` and `e2eLastWordMs` percentiles, `commitLagMs`, backlog, COMMIT reasons), the routing counts of
+  the language gate per channel (results, kept, dropped, late flips, `lateSpoken`) and the first chunk after a switch (a gap of 8 s
+  or more in the channel). The one-channel report is unchanged (tested against a golden file).
+- `scoring-sheet.md` is written next to `report.md` when a run has a Japanese-source channel: 30 evenly chosen chunks with source,
+  translation and an empty score column (1 to 5). The quality floor for channel 2 is the median score of channel 1 minus 0.5.
+- **Japanese only** (`./e2e/e2e.sh run <recording> --japanese-only`): for a recording with no English speech, for example the script
+  `samples/scripts/monologue-ja.txt` read aloud or generated with `samples/make-samples.sh monologue-ja`. The report states the mode.
+  The recording is the owner's to make; this repository has no audio.
+- **`simple` versus `full` Japanese segmentation:** run the same recording twice (`-c jaSegmentationMode=simple`, then `full`, one
+  deploy each) and run `./e2e/e2e.sh compare <run A> <run B>`; the report ends with the Japanese cut reasons side by side.
+
 ## Read the report
 
 Each run writes `e2e/runs/<time>_<label>_<clip>/` with these files:

@@ -3,7 +3,7 @@
 # "Include a copy of my diagram"): host becomes app.diagrams.net (also for host="Electron" from draw.io Desktop), and the agent, etag and
 # modified attributes are removed. Files are edited in place. No dependencies except python3.
 #
-#   scripts/scrub-drawio.sh docs/architecture.drawio.svg
+#   scripts/scrub-drawio.sh docs/architecture.drawio.svg docs/overview.drawio.svg
 set -euo pipefail
 if [ "$#" -eq 0 ]; then
   echo "usage: $0 FILE.drawio|FILE.svg [...]" >&2

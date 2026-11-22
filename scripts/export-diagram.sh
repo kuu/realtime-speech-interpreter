@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Re-exports docs/architecture.drawio.svg from itself with the draw.io command line, keeps the embedded
+# Re-exports a draw.io SVG (default docs/architecture.drawio.svg, also docs/overview.drawio.svg) from itself with the draw.io command line, keeps the embedded
 # diagram as plain (uncompressed) XML so git diffs are readable, and scrubs the machine metadata.
 #
 #   scripts/export-diagram.sh [FILE.drawio.svg]     (default: docs/architecture.drawio.svg)

@@ -11,16 +11,22 @@ import { createReadStream } from "node:fs";
 import { createServer } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
-import { initReadings, readingsStartupLine } from "./polly-readings.js";
+import { initReadings, readingsStartupLine, loadReadingsEn, type Readings } from "./polly-readings.js";
 import { log } from "./log.js";
 import { startSrtListener } from "./srt-source.js";
 import { startRtmpListener, assertRtmpConfig } from "./rtmp-source.js";
 import { PcmQueue } from "./pcm-queue.js";
-import { runPipeline } from "./pipeline.js";
+import { runPipeline, type PipelineLane } from "./pipeline.js";
 import { createSink } from "./audio-sink.js";
 import { ChunkPlayer } from "./chunk-player.js";
 import { CaptionPublisher } from "./caption-publisher.js";
 import { createTranslationEngine, TranslateOnlyEngine, type TranslationEngine } from "./translate-engine.js";
+import { parseChannels, type ChannelSpec } from "./channels.js";
+import { laneSettingsFor, type LaneSettings } from "./lane-settings.js";
+import { JaSegmenter, jaSegmenterOptions } from "./segmenter-ja.js";
+import { englishVoiceCheck } from "./polly-voices.js";
+import { healthBody, type LaneHealth } from "./health-body.js";
+import type { CaptionLane } from "./caption-event.js";
 import { pacingDelayMs } from "./input-pacing.js";
 import { selectSource } from "./input-source.js";
 import { BrowserIngest } from "./ingest.js";
@@ -75,13 +81,14 @@ function buildAudioSource(inputFile: string | undefined, ingest?: BrowserIngest,
 
 // Minimal health endpoint for the Fargate/NLB health check. Loopback by default; the Fargate
 // task sets HEALTH_HOST=0.0.0.0 explicitly (the NLB health check needs it).
+let laneHealth: { id: string; status: LaneHealth }[] | null = null;
 function startHealthServer(): void {
   const port = Number(process.env.HEALTH_PORT ?? 8080);
   const host = process.env.HEALTH_HOST ?? "127.0.0.1";
   createServer((req, res) => {
     if (req.url === "/health" || req.url === "/") {
       res.writeHead(200, { "content-type": "text/plain" });
-      res.end("ok");
+      res.end(healthBody(laneHealth));
     } else {
       res.writeHead(404);
       res.end();
@@ -139,38 +146,132 @@ async function main(): Promise<void> {
           `shortWords=${lf.shortWords} shortMinConf=${lf.shortMinConf}`,
   );
   startHealthServer();
-
-  // Connect the output first so listeners can join before audio starts.
-  const sink = await createSink();
-  await sink.connect();
-  // Translation engine (translate | llm). Never throws: any init problem falls back to Translate only.
-  let engine: TranslationEngine;
-  try {
-    engine = await createTranslationEngine();
-  } catch (err) {
-    log.error("LLM ENGINE DISABLED: engine init failed, using Amazon Translate only:", err);
-    engine = new TranslateOnlyEngine();
+  // Lanes of this deploy. One default lane (English to Japanese, flat variables) = today's code path, no lane objects.
+  const specs = parseChannels(process.env);
+  const multi = specs.length > 1;
+  const nonDefault = specs[0].source !== "en-US" || specs[0].target !== "ja";
+  const useLanes = multi || nonDefault;
+  const laneSettings: (LaneSettings | undefined)[] = specs.map((sp, i) => (useLanes ? laneSettingsFor(sp, i) : undefined));
+  if (useLanes) {
+    for (const l of laneSettings as LaneSettings[]) {
+      log.info(
+        `  lane ch=${l.id} source=${l.source} target=${l.target} voice=${l.polly.voiceId} engine=${l.translate.engine} ` +
+          `terminology=${l.translate.terminologyName || "-"} speed=${l.speed.mode} track=${l.livekit.trackName} topic=${l.livekit.captionTopic}`,
+      );
+    }
+    const jaSeg = config.jaSegmentation;
+    if (specs.some((sp) => /^ja(-|$)/i.test(sp.source))) {
+      log.info(
+        `  ja-segmentation mode=${jaSeg.mode} maxWaitMs=${jaSeg.maxWaitMs}` +
+          (jaSeg.mode === "full"
+            ? ` sentenceMinChars=${jaSeg.sentenceMinChars} clauseMinChars=${jaSeg.clauseMinChars} maxChars=${jaSeg.maxChars} pauseMs=${jaSeg.pauseMs}`
+            : ""),
+      );
+    }
   }
-  const llmLine = engine.startupLine();
-  if (llmLine) log.info(llmLine);
-  const captions = new CaptionPublisher(sink, config.captions.enabled, undefined, config.captions.japaneseSpeech);
-  log.info(captions.startupLine());
-  const player = new ChunkPlayer(sink, engine, captions);
+
+  interface RunLane {
+    spec: ChannelSpec;
+    settings: LaneSettings | undefined;
+    sink: Awaited<ReturnType<typeof createSink>>;
+    engine: TranslationEngine;
+    captions: CaptionPublisher;
+    player: ChunkPlayer;
+    id: string;
+  }
+  // Builds one lane: sink (connected first so listeners can join before audio starts), engine, captions, player.
+  async function buildLane(spec: ChannelSpec, settings: LaneSettings | undefined, index: number): Promise<RunLane> {
+    const sink = await createSink(settings);
+    await sink.connect();
+    // Translation engine (translate | llm). Never throws: any init problem falls back to Translate only.
+    let engine: TranslationEngine;
+    try {
+      engine = await createTranslationEngine(settings ? { lane: settings } : {});
+    } catch (err) {
+      log.error("LLM ENGINE DISABLED: engine init failed, using Amazon Translate only:", err);
+      engine = new TranslateOnlyEngine();
+    }
+    const llmLine = engine.startupLine();
+    if (llmLine) log.info(settings && multi ? `${llmLine} ch=${settings.id}` : llmLine);
+    const captionLane: CaptionLane | undefined = settings
+      ? { ch: settings.id, lang: settings.target, sourceLang: settings.translate.sourceLanguageCode, first: index === 0 }
+      : undefined;
+    const captions = settings
+      ? new CaptionPublisher(sink, config.captions.enabled, undefined, config.captions.japaneseSpeech, undefined, undefined, captionLane, settings.livekit.captionTopic)
+      : new CaptionPublisher(sink, config.captions.enabled, undefined, config.captions.japaneseSpeech);
+    log.info(captions.startupLine());
+    let readingsEn: Readings | null = null;
+    if (settings && settings.target !== "ja") {
+      const v = englishVoiceCheck(settings.polly.voiceId, settings.polly.engine);
+      if (!v.known) log.warn(`[polly] ch=${settings.id} ${v.note}`);
+      if (config.polly.readings === "on") readingsEn = loadReadingsEn(config.polly.readingsFileEn);
+    }
+    const player = new ChunkPlayer(sink, engine, captions, undefined, settings, multi, readingsEn);
+    return { spec, settings, sink, engine, captions, player, id: settings?.id ?? "ja" };
+  }
+  const running: RunLane[] = [];
+  // Lane 1 first: its failure is fatal exactly as before. Lane 2 failing to start is logged and doctored, lane 1 serves.
+  running.push(await buildLane(specs[0], laneSettings[0], 0));
+  if (multi) {
+    const health: { id: string; status: LaneHealth }[] = [{ id: running[0].id, status: "up" }];
+    laneHealth = health;
+    // Lane 2 gets a start-up deadline: a LiveKit connect or engine init that hangs must not hold lane 1 back.
+    const LANE_START_TIMEOUT_MS = 20000;
+    try {
+      let timedOut = false;
+      const building = buildLane(specs[1], laneSettings[1], 1);
+      building.then(
+        (l) => {
+          if (timedOut) void l.sink.disconnect().catch(() => {}); // arrived after the deadline: never used
+        },
+        () => {},
+      );
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`start-up took longer than ${LANE_START_TIMEOUT_MS} ms`));
+        }, LANE_START_TIMEOUT_MS);
+      });
+      try {
+        running.push(await Promise.race([building, deadline]));
+      } finally {
+        clearTimeout(timer);
+      }
+      health.push({ id: running[1].id, status: "up" });
+    } catch (err) {
+      const id = (laneSettings[1] as LaneSettings).id;
+      log.error(`lane ${id} disabled: ${String(err)} (lane ${running[0].id} keeps running; run scripts/doctor.sh)`);
+      health.push({ id, status: "disabled" });
+    }
+  }
+  const first = running[0];
   const logSummary = (label: string) => {
-    log.info(player.summary(label));
-    const c = captions.summaryLine(label);
-    if (c) log.info(c);
-    const l = engine.summaryLine(label);
-    if (l) log.info(l);
+    for (const l of running) {
+      log.info(l.player.summary(label));
+      const c = l.captions.summaryLine(label);
+      if (c) log.info(c);
+      const e = l.engine.summaryLine(multi && l.settings ? `${label} ch=${l.settings.id}` : label);
+      if (e) log.info(e);
+    }
     if (ingest) log.info(ingest.session.summaryLine(label));
   };
-
   const inputFile = process.env.INPUT_FILE;
   // Exactly one live input: the browser ingest or the SRT listener (started per session below). Never both.
   const kind = selectSource({ inputFile, source: config.input.source });
   const ingest = kind === "browser" ? new BrowserIngest() : undefined;
   if (kind === "rtmps") assertRtmpConfig(); // refuses to start without a valid stream key (never an open listener)
   if (ingest) await ingest.start();
+  // Pipeline view of the running lanes (a Japanese-source lane gets the Japanese segmenter).
+  const pipelineLanes = (): PipelineLane[] =>
+    running.map((l) => ({
+      id: l.id,
+      source: l.spec.source,
+      player: l.player,
+      captions: l.captions,
+      vocabulary: l.spec.transcribeVocabulary,
+      ...(/^ja(-|$)/i.test(l.spec.source) ? { makeSegmenter: (onChunk, tap) => new JaSegmenter(jaSegmenterOptions(config), onChunk, tap) } : {}),
+    }));
   let shuttingDown = false;
   let currentStop: (() => void) | null = null;
 
@@ -181,14 +282,16 @@ async function main(): Promise<void> {
     currentStop?.();
     await ingest?.close();
     // ECS stopTimeout is 10 s: give queued chunks up to 8 s to finish playing.
-    await Promise.race([player.drain(), sleep(8000)]);
-    captions.close();
+    await Promise.race([Promise.all(running.map((l) => l.player.drain())), sleep(8000)]);
+    for (const l of running) l.captions.close();
     logSummary("exit");
-    engine.dispose();
-    try {
-      await sink.disconnect();
-    } catch (err) {
-      log.warn("sink disconnect error:", err);
+    for (const l of running) l.engine.dispose();
+    for (const l of running) {
+      try {
+        await l.sink.disconnect();
+      } catch (err) {
+        log.warn("sink disconnect error:", err);
+      }
     }
     process.exit(code);
   };
@@ -199,15 +302,15 @@ async function main(): Promise<void> {
     const src = buildAudioSource(inputFile, ingest, kind === "rtmps");
     currentStop = src.stop;
     try {
-      await runPipeline(src.frames, player, session, captions);
+      await runPipeline(src.frames, first.player, session, first.captions, useLanes ? pipelineLanes() : undefined);
     } catch (err) {
       log.error(`[session ${session}] pipeline error:`, err);
     }
     src.stop();
-    log.info(`[session ${session}] ended; ${player.depth()} chunk(s) still queued for playback`);
+    log.info(`[session ${session}] ended; ${running.map((l) => (multi ? `${l.id}=` : "") + l.player.depth()).join(" ")} chunk(s) still queued for playback`);
     logSummary(`session=${session}`);
     if (inputFile) {
-      await player.drain();
+      await Promise.all(running.map((l) => l.player.drain()));
       await shutdown("input file ended");
       return;
     }

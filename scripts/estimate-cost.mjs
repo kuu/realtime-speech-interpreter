@@ -3,6 +3,7 @@
 //
 //   node scripts/estimate-cost.mjs [--hours 4] [--listeners 100] [--engine translate|llm]
 //                                  [--chunks-per-hour 1130] [--idle-days 0] [--markdown] [--json]
+//                                  [--channels 1|2] [--ja-share 0.25] [--en-chars-per-chunk N]
 //
 // Sizing comes from cdk/cdk.json (taskCpu, taskMemoryMiB, livekitInstanceType, logRetentionDays,
 // translateEngine) and, when present, the selected profile and cdk/config/event.json.
@@ -39,6 +40,13 @@ const ASSUMED = {
   nlbLcuPerHour: 1, // upper bound: one SRT flow is far below one LCU
   ebsGb: 20,
   ecrImageGb: 1,
+};
+// Channel 2 (Japanese to English, docs/bilingual-channels.md). Not measured in this repository: an input to replace
+// with the figures of the bilingual e2e run.
+const CHANNEL2 = {
+  jaShare: 0.25, // share of the hour spoken in Japanese (a Q&A with Japanese questions: 0.1 to 0.3)
+  enCharsPerChunk: 55, // English characters spoken per Japanese chunk (assumed: about 22 Japanese characters per chunk, English text about 2.5 times longer)
+  keepWarmMs: 240000, // llmKeepWarmMs of the second glossary cache
 };
 const LISTENER_TIERS = [
   { upTo: 300, type: "c6i.large" },
@@ -78,6 +86,9 @@ const HELP = `Usage: node scripts/estimate-cost.mjs [options]
   --listeners N          concurrent listeners (default expectedListeners from event.json, else 100)
   --engine translate|llm translation engine (default from event.json / profile / cdk.json)
   --chunks-per-hour N    synthesized chunks per hour of speech (default ${MEASURED.chunksPerHour}, measured, fast profile)
+  --channels 1|2         1 (default) = today; 2 adds the Japanese to English channel (Translate or LLM, Polly English, second glossary cache)
+  --ja-share F           channel 2: share of the hour spoken in Japanese, 0-1 (default ${CHANNEL2.jaShare}, assumed)
+  --en-chars-per-chunk N channel 2: English characters spoken per Japanese chunk (default ${CHANNEL2.enCharsPerChunk}, assumed; replace it with the measured value)
   --idle-days N          also print the cost of leaving the stack deployed for N days
   --polly-chars-per-hour N, --translate-chars-per-hour N   override the volumes derived from chunks
   --llm-in N --llm-cache-read N --llm-out N                 tokens per model call
@@ -193,6 +204,29 @@ export function estimate(opts = {}, sizing = loadSizing(), prices = readJsonLoos
   perHour["CloudFront + S3 + Lambda (listener page and token, once per listener)"] = joinCost / hours;
   perHour["Secrets Manager API calls (per session)"] = (ASSUMED.secretsApiCallsPerSession * P.secretsApiPer10k.usd) / 1e4 / hours;
 
+  // Channel 2: billed per translated speech, not per hour. Transcribe, Fargate, EC2 and listener transfer do not grow
+  // (listeners subscribe to one track). The bound for planning is the Japanese share of channel 1's speech services.
+  const channels = Math.round(num(opts, "channels", 1));
+  if (channels !== 1 && channels !== 2) fail("--channels must be 1 or 2");
+  const jaShare = num(opts, "ja-share", CHANNEL2.jaShare);
+  if (jaShare > 1) fail("--ja-share must be between 0 and 1");
+  const enChars = num(opts, "en-chars-per-chunk", CHANNEL2.enCharsPerChunk);
+  if (channels === 2) {
+    const chunks2 = chunks * jaShare;
+    const llmCalls2 = engine === "llm" ? chunks2 * llmShare : 0;
+    const translateChars2 = engine === "llm" ? chunks2 * MEASURED.translateCharsPerChunk * (1 - llmShare) : chunks2 * MEASURED.translateCharsPerChunk;
+    perHour["Channel 2 Translate (Japanese to English)"] = translateChars2 * P.translateChar.usd;
+    perHour["Channel 2 Polly neural, English voice"] = chunks2 * enChars * P.pollyNeuralChar.usd;
+    perHour["Channel 2 Bedrock Haiku 4.5 (input + cache read + output)"] =
+      (llmCalls2 * (llmIn * bedrockKey("InputMTok") + llmCr * bedrockKey("CacheReadMTok") + llmOut * bedrockKey("OutputMTok"))) / 1e6;
+    if (engine === "llm") {
+      // The second glossary has its own cache: one write per start, and one keep-warm call (a cache read) every llmKeepWarmMs.
+      const warmCalls = 3_600_000 / CHANNEL2.keepWarmMs;
+      perHour["Channel 2 second-glossary cache write (once per start, spread over the session)"] =
+        (sessionCacheWrite * P.bedrockHaikuRegionalCacheWriteMTok.usd) / 1e6 / hours;
+      perHour["Channel 2 second-glossary keep-warm calls"] = (warmCalls * llmCr * bedrockKey("CacheReadMTok")) / 1e6;
+    }
+  }
   const sessionHour = Object.values(perHour).reduce((a, b) => a + b, 0);
   const idleFargateOn = fargate + ipNlb + ipLk + ipTask + nlb + ec2 + ebs + secrets + idleOther;
   // nlb counted at the LCU upper bound; idle traffic is near zero, so drop the LCU part
@@ -209,6 +243,7 @@ export function estimate(opts = {}, sizing = loadSizing(), prices = readJsonLoos
       instanceType, taskCpu, taskMemoryMiB: taskMem, pollyCharsPerHour: pollyChars, translateCharsPerHour: translateChars,
       llmCallsPerHour: llmCalls, llmTokensPerCall: { in: llmIn, cacheRead: llmCr, out: llmOut }, bedrockPrice,
       opusKbps, rtpOverheadKbps: ASSUMED.rtpOverheadKbps, transferGbPerHour, usedEventJson: sizing.usedEvent,
+      channels, jaShare: channels === 2 ? jaShare : null, enCharsPerChunk: channels === 2 ? enChars : null,
     },
     perHour,
     sessionHour,
@@ -262,6 +297,10 @@ function render(res, o) {
   const h = (t) => out.push(md ? `#### ${t}` : `== ${t} ==`, "");
   out.push(`Prices as of ${m.pricesAsOf}, region ${m.region}, USD, list price, tax excluded, free tiers and discounts not applied.`, "");
   out.push(`Session: ${m.hours} h, ${m.listeners} listeners, engine ${m.engine}, ${m.chunksPerHour} chunks/h, LiveKit ${m.instanceType}, Fargate ${m.taskCpu / 1024} vCPU / ${m.taskMemoryMiB / 1024} GB.`, "");
+  if (m.channels === 2) {
+    out.push(`Channel 2 (Japanese to English) included: Japanese share of the hour ${m.jaShare} (assumed), ${m.enCharsPerChunk} English characters per Japanese chunk (assumed). ` +
+      "Transcribe, Fargate, LiveKit and listener transfer do not grow. Replace the assumptions with the figures of the bilingual e2e run.", "");
+  }
   h("Billed resources");
   table(["Service", "Resource", "Pricing dimension", "Price", "Billed"], res.resources.map((r) => [r.service, r.resource, r.dimension, r.price, r.when || "-"]));
   h(`Cost per hour of a running session (${m.hours} h, ${m.listeners} listeners, ${m.engine})`);

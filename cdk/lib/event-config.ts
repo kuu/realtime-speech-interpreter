@@ -27,6 +27,7 @@ export const EVENT_KEYS = [
   "sourceLanguage",
   "targetLanguage",
   "pollyVoice",
+  "channels",
   "pollyReadings",
   "translateEngine",
   "llmModelId",
@@ -145,6 +146,14 @@ export function eventToContext(ev: unknown, path: string): Layer {
   }
   if (e.targetLanguage !== undefined) out.translateTarget = str("targetLanguage");
   if (e.pollyVoice !== undefined) out.pollyVoice = str("pollyVoice");
+  if (e.channels !== undefined) {
+    // One or two lanes; validated by lib/channels.ts. It replaces the flat language and voice keys, so both are rejected.
+    if (!Array.isArray(e.channels)) fail(path, '"channels" must be a list of one or two lanes');
+    for (const flat of ["sourceLanguage", "targetLanguage", "pollyVoice"]) {
+      if (e[flat] !== undefined) fail(path, `"channels" cannot be combined with "${flat}": put the language and voice in each channel instead`);
+    }
+    out.channels = e.channels;
+  }
   if (e.pollyReadings !== undefined) {
     if (typeof e.pollyReadings !== "boolean") fail(path, '"pollyReadings" must be true or false');
     out.pollyReadings = e.pollyReadings ? "on" : "off";

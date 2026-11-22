@@ -1,9 +1,12 @@
 # Realtime Speech Interpreter
 
+<p align="center"><img src="docs/overview.drawio.svg" width="760" alt="Overview: live speech from one venue audio feed goes to an AI interpreter running in your own AWS account. Channel 1 turns English into Japanese, channel 2 turns Japanese into English. Japanese and English listeners hear the voice and read live captions on their own phones in a browser, with no app to install. A few seconds of delay, one CDK deploy, custom dictionaries for sector-specific terminology."></p>
+
 Real-time speech-to-speech interpretation on AWS, English to Japanese first. A speaker talks English at an event.
 Attendees open a web page on their phones and hear Japanese about 6 seconds later. The audio goes from OBS over SRT
 to an app on AWS Fargate. The app uses Amazon Transcribe to get text, Amazon Translate or an Amazon Bedrock model
 to translate it, and Amazon Polly to speak it. A self-hosted LiveKit server delivers the audio to the browsers.
+
 
 This is a personal, unofficial open-source project. It is not an AWS product, it is not affiliated with, endorsed or
 supported by Amazon Web Services, and AWS Support will not help with it. AWS, Amazon Transcribe, Amazon Translate,
@@ -11,7 +14,7 @@ Amazon Polly, Amazon Bedrock and AWS Fargate are trademarks of Amazon.com, Inc. 
 
 ![Architecture: venue, SRT, Fargate app, Transcribe, Translate or Bedrock, Polly, LiveKit, listener browsers](docs/architecture.drawio.svg)
 
-Details of the diagram: [docs/architecture.md](docs/architecture.md).
+Details of the diagram: [docs/architecture.md](docs/architecture.md). The diagram above shows one channel; with two channels the translation path runs once per direction ([docs/bilingual-channels.md](docs/bilingual-channels.md)).
 
 ## What works today
 
@@ -21,13 +24,19 @@ Details of the diagram: [docs/architecture.md](docs/architecture.md).
 | Japanese speech in the room is ignored | **Supported** | A language filter drops it, so a moderator or a question is not translated. |
 | Custom dictionaries and pronunciations | **Supported** | Edit files, run a script. See [docs/dictionaries.md](docs/dictionaries.md). |
 | Round table or fireside chat, several speakers | **Planned** | Needs speaker detection and a different voice per speaker. |
-| Q&A in two directions with two channels | **Planned** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. |
+| Q&A in two directions with two channels | **Built, live tests pending** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. Set `channels` in `event.json` (see below and [docs/bilingual-channels.md](docs/bilingual-channels.md)); with no `channels` nothing changes. |
 | Captions on the listener page | **Supported** | After **Listen** is pressed, Japanese captions appear below the button in time with the voice, and the English source as it is recognised; Japanese speech is shown as said with a `―` marker. See below. |
 | Browser microphone as input (`getUserMedia`) | **Optional** (`-c inputSource=browser`), live tests pending | For venues with no audio line out, or no PC to run OBS. See [security.md](docs/security.md#browser-microphone-input). |
 | RTMPS as input (OBS over TCP 443) | **Optional** (`-c inputSource=rtmps`), live tests pending | For venues whose network blocks outbound UDP. See [alternative-inputs.md](docs/alternative-inputs.md). |
 | Dictionary builder (easier than editing files) | **Idea** | A tool that suggests terms from slides or a transcript. |
 | Voice that follows the speaker | **Idea** | Depends on speaker detection. |
 
+## Two channels (English to Japanese and Japanese to English)
+With `channels` in `cdk/config/event.json` the same venue feed is interpreted in both directions: Japanese listeners open the page
+as before, English listeners open the same page with `?ch=en` (the stack prints it as `ListenerUrlEn`). One Transcribe stream
+feeds two lanes, each with its own translation and voice, and both audio tracks are published in one LiveKit room. Channel 1
+(English to Japanese) behaves as without the setting. The input stays SRT. The channel 2 settings, dictionaries and measurement
+steps are in [docs/bilingual-channels.md](docs/bilingual-channels.md); the first listener URL is unchanged.
 ## Input options
 
 SRT is the default, but not the only way to get the speaker's audio in. Pick one per deploy with `-c inputSource=...`;
@@ -238,6 +247,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, latency budget, design choices |
 | [docs/alternative-inputs.md](docs/alternative-inputs.md) | Browser microphone and RTMPS inputs: when to use them, how they work |
+| [docs/bilingual-channels.md](docs/bilingual-channels.md) | Two channels, English to Japanese and Japanese to English: design, settings and measurement steps (built, live tests pending) |
 | [docs/configuration.md](docs/configuration.md) | All settings |
 | [docs/dictionaries.md](docs/dictionaries.md) | Vocabulary, terminology, readings, corrections |
 | [docs/operations.md](docs/operations.md) | Event-day runbook, monitoring, tear down |

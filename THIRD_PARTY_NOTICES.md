@@ -54,7 +54,7 @@ node -e 'const p=require("./package-lock.json").packages;const c={};for(const[k,
 
 ## Artwork
 
-The venue microphone in `docs/architecture.drawio.svg` is the "microphone-2" icon from
+The venue microphone in `docs/architecture.drawio.svg` and `docs/overview.drawio.svg` is the "microphone-2" icon from
 [Tabler Icons](https://github.com/tabler/tabler-icons), redrawn as a draw.io stencil.
 
 ```

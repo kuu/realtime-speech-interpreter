@@ -1,0 +1,427 @@
+{
+ "_comment": "Shared by app/test/channels.test.ts and (later) cdk/test/channels.test.ts. Synthetic data only.",
+ "cases": [
+  {
+   "name": "default pair, Japanese first",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    },
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "ok": true
+  },
+  {
+   "name": "English listed first",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    },
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    }
+   ],
+   "ok": true
+  },
+  {
+   "name": "one default lane",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    }
+   ],
+   "ok": true
+  },
+  {
+   "name": "one lane ja-JP to en",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "ok": true
+  },
+  {
+   "name": "not a list",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": {
+    "source": "en-US"
+   },
+   "error": "must be a JSON list"
+  },
+  {
+   "name": "empty list",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [],
+   "error": "needs 1 to 2 lanes"
+  },
+  {
+   "name": "three lanes",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP",
+     "ko-KR"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    },
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    },
+    {
+     "source": "ko-KR",
+     "target": "ko",
+     "pollyVoice": "Seoyeon"
+    }
+   ],
+   "error": "needs 1 to 2 lanes"
+  },
+  {
+   "name": "duplicate sources",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    },
+    {
+     "source": "en-US",
+     "target": "fr",
+     "pollyVoice": "Lea"
+    }
+   ],
+   "error": "sources must be distinct"
+  },
+  {
+   "name": "duplicate targets",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP",
+     "ko-KR"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    },
+    {
+     "source": "ko-KR",
+     "target": "ja",
+     "pollyVoice": "Mizuki"
+    }
+   ],
+   "error": "targets must be distinct"
+  },
+  {
+   "name": "same language lane",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "error": "into the same language"
+  },
+  {
+   "name": "source not in languageOptions",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ko-KR"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    },
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "error": "not in languageOptions"
+  },
+  {
+   "name": "target id shape",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "JA",
+     "pollyVoice": "Kazuha"
+    }
+   ],
+   "error": "must match ^[a-z]{2,3}$"
+  },
+  {
+   "name": "missing pollyVoice",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja"
+    }
+   ],
+   "error": "needs \"pollyVoice\""
+  },
+  {
+   "name": "unknown key",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha",
+     "speedMode": "off"
+    }
+   ],
+   "error": "unknown key \"speedMode\""
+  },
+  {
+   "name": "two lanes need langid",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "off",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha"
+    },
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "error": "two lanes need languageFilter=langid"
+  },
+  {
+   "name": "one lane accepts languageFilter off",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "off",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "ok": true
+  },
+  {
+   "name": "llm lane without terminology (global engine)",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "llm"
+   },
+   "channels": [
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna"
+    }
+   ],
+   "error": "lane 1 (ja-JP to en) uses the llm engine and needs translateTerminology"
+  },
+  {
+   "name": "llm lane en listed second without terminology",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha",
+     "translateEngine": "llm",
+     "translateTerminology": "t"
+    },
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna",
+     "translateEngine": "llm"
+    }
+   ],
+   "error": "lane 2 (ja-JP to en) uses the llm engine"
+  },
+  {
+   "name": "llm lane with terminology",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "llm"
+   },
+   "channels": [
+    {
+     "source": "ja-JP",
+     "target": "en",
+     "pollyVoice": "Joanna",
+     "translateTerminology": "x-lane2"
+    }
+   ],
+   "ok": true
+  },
+  {
+   "name": "bad translateEngine",
+   "context": {
+    "languageOptions": [
+     "en-US",
+     "ja-JP"
+    ],
+    "languageFilter": "langid",
+    "translateEngine": "translate"
+   },
+   "channels": [
+    {
+     "source": "en-US",
+     "target": "ja",
+     "pollyVoice": "Kazuha",
+     "translateEngine": "gpt"
+    }
+   ],
+   "error": "translateEngine must be"
+  }
+ ]
+}

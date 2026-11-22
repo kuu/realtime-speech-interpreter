@@ -17,25 +17,34 @@ import type { AudioSink } from "./audio-sink.js";
 import { config } from "./config.js";
 import { log } from "./log.js";
 
+// Names of one lane's participant and track. Absent = lane 1 of today (publisher-app / translation-audio, global room).
+export interface LiveKitLaneNames {
+  roomName: string;
+  identity: string;
+  trackName: string;
+}
 export class LiveKitAudioSink implements AudioSink {
   private room = new Room();
   private source: AudioSource;
   private readonly sampleRate: number;
   private readonly channels = 1;
 
-  constructor(sampleRate: number) {
+  constructor(
+    sampleRate: number,
+    private readonly names: LiveKitLaneNames = { roomName: config.livekit.roomName, identity: "publisher-app", trackName: "translation-audio" },
+  ) {
     this.sampleRate = sampleRate;
     this.source = new AudioSource(sampleRate, this.channels);
   }
 
   async connect(): Promise<void> {
     const at = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
-      identity: "publisher-app",
+      identity: this.names.identity,
       ttl: config.livekit.tokenTtl,
     });
     at.addGrant({
       roomJoin: true,
-      room: config.livekit.roomName,
+      room: this.names.roomName,
       canPublish: true,
       canSubscribe: false,
     });
@@ -46,7 +55,7 @@ export class LiveKitAudioSink implements AudioSink {
       dynacast: false,
     });
 
-    const track = LocalAudioTrack.createAudioTrack("translation-audio", this.source);
+    const track = LocalAudioTrack.createAudioTrack(this.names.trackName, this.source);
     const options = new TrackPublishOptions();
     options.source = TrackSource.SOURCE_MICROPHONE;
     await this.room.localParticipant!.publishTrack(track, options);

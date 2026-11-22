@@ -4,22 +4,24 @@
 // The only error that escapes translate() is a Translate failure (same as the old code path).
 import { config, type LlmConfig, type TranslateEngineName } from "./config.js";
 import { log as realLog } from "./log.js";
-import { loadDeployedGlossary, glossaryLines, type FetchFn, type GlossaryEntry } from "./glossary.js";
+import { loadDeployedGlossary, glossaryLines, type FetchFn, type GlossaryDirection, type GlossaryEntry } from "./glossary.js";
 import { buildSystemText, buildConverseRequest, chunkEndsSentence, type PreviousItem } from "./llm-prompt.js";
-import { validateLlmOutput } from "./llm-validate.js";
+import { buildSystemTextJaEn, buildConverseRequestJaEn, chunkEndsSentenceJa } from "./llm-prompt-ja-en.js";
+import { validateLlmOutput, validateLlmOutputEn, missingNames } from "./llm-validate.js";
 import { CircuitBreaker, classifyError, LlmTimeoutError, type BreakerState } from "./llm-breaker.js";
 import { LlmStats, type LlmUsage } from "./llm-stats.js";
 import type { LlmClient } from "./bedrock-llm.js";
-import { translateText, translateClient } from "./translate-call.js";
+import { translateText, translateTextFor, translateClient } from "./translate-call.js";
+import type { LaneSettings } from "./lane-settings.js";
 
 export interface EngineRequest {
-  text: string; // English, after the English filler filter and corrections
+  text: string; // the chunk's source text (English; Japanese for a ja-en lane), after filler filter and corrections
   previous: readonly PreviousItem[];
   forceTranslate?: boolean; // skip-backlog: use Translate for this chunk
 }
 
 export interface EngineResult {
-  text: string; // Japanese, trimmed (may be empty only on the Translate path, as before)
+  text: string; // the translation (Japanese; English for a ja-en lane), trimmed (may be empty only on the Translate path, as before)
   engine: "translate" | "llm" | "fallback";
   fallbackReason?: string;
   llmMs?: number; // duration of the LLM call (also for failed/timed-out calls); absent if none was made
@@ -71,6 +73,8 @@ export interface LlmEngineDeps {
   translate: TranslateFn;
   // null = glossary could not be loaded: every chunk uses Translate (glossary-unavailable).
   glossary: readonly GlossaryEntry[] | null;
+  // en-ja (default) = today's English-to-Japanese lane; ja-en = Japanese to English (own prompt, validator, name check).
+  direction?: GlossaryDirection;
   now?: () => number;
   log?: Logger;
   warmTimeoutMs?: number;
@@ -78,6 +82,7 @@ export interface LlmEngineDeps {
 
 const OK_STOP_REASONS = new Set(["end_turn", "stop_sequence"]);
 const WARM_CHUNK = "Hello everyone.";
+const WARM_CHUNK_JA = "皆さん、こんにちは。";
 
 function q(s: string): string {
   return /[\s"]/.test(s) ? `"${s.replace(/"/g, "'")}"` : s;
@@ -96,6 +101,7 @@ export class LlmEngine implements TranslationEngine {
   private readonly log: Logger;
   private readonly systemText: string;
   private readonly glossary: readonly GlossaryEntry[];
+  private readonly dir: GlossaryDirection;
   private readonly cache: boolean;
   private lastCallAt: number;
   private inFlight = 0;
@@ -105,8 +111,10 @@ export class LlmEngine implements TranslationEngine {
     this.now = d.now ?? Date.now;
     this.log = d.log ?? realLog;
     this.glossary = d.glossary ?? [];
+    this.dir = d.direction ?? "en-ja";
     this.cache = d.cfg.glossary === "full"; // Haiku 4.5 needs >= 4096 prefix tokens, only the full glossary reaches that
-    this.systemText = buildSystemText(d.cfg.glossary === "full" ? glossaryLines(this.glossary) : "", d.cfg.promptVersion);
+    const lines = d.cfg.glossary === "full" ? glossaryLines(this.glossary) : "";
+    this.systemText = this.dir === "ja-en" ? buildSystemTextJaEn(lines) : buildSystemText(lines, d.cfg.promptVersion);
     this.stats = new LlmStats(this.cache);
     this.lastCallAt = this.now();
     this.breaker = new CircuitBreaker({
@@ -169,15 +177,26 @@ export class LlmEngine implements TranslationEngine {
       parallel.catch(() => {}); // a discarded/failed parallel result must never be an unhandled rejection
     }
 
-    const request = buildConverseRequest({
-      modelId: this.d.cfg.modelId,
-      system: this.systemText,
-      previous: req.previous,
-      chunk: req.text,
-      maxTokens: this.d.cfg.maxTokens,
-      cache: this.cache,
-      endsSentence: this.d.cfg.promptVersion === 2 ? chunkEndsSentence(req.text) : undefined,
-    });
+    const request =
+      this.dir === "ja-en"
+        ? buildConverseRequestJaEn({
+            modelId: this.d.cfg.modelId,
+            system: this.systemText,
+            previous: req.previous,
+            chunk: req.text,
+            maxTokens: this.d.cfg.maxTokens,
+            cache: this.cache,
+            endsSentence: chunkEndsSentenceJa(req.text),
+          })
+        : buildConverseRequest({
+            modelId: this.d.cfg.modelId,
+            system: this.systemText,
+            previous: req.previous,
+            chunk: req.text,
+            maxTokens: this.d.cfg.maxTokens,
+            cache: this.cache,
+            endsSentence: this.d.cfg.promptVersion === 2 ? chunkEndsSentence(req.text) : undefined,
+          });
     const t0 = this.now();
     let res;
     try {
@@ -208,7 +227,10 @@ export class LlmEngine implements TranslationEngine {
       rule = "stop-reason";
       detail = `stopReason=${res.stopReason || "none"}`;
     } else {
-      const v = validateLlmOutput(res.text, { source: req.text, glossary: this.glossary, maxCharsPerWord: this.d.cfg.maxCharsPerWord });
+      const v =
+        this.dir === "ja-en"
+          ? validateLlmOutputEn(res.text, { source: req.text, glossary: this.glossary, maxWordsPerChar: 1.2 })
+          : validateLlmOutput(res.text, { source: req.text, glossary: this.glossary, maxCharsPerWord: this.d.cfg.maxCharsPerWord });
       if (v.ok) validated = v.text;
       else {
         rule = v.rule;
@@ -225,6 +247,17 @@ export class LlmEngine implements TranslationEngine {
         parallel,
         rejected: { rule, ja: res.text.replace(/\s+/g, " ").slice(0, 120) },
       });
+    }
+    // ja-en name check: a glossary name present in the source must appear in the output, else Translate does this chunk.
+    if (this.dir === "ja-en") {
+      const miss = missingNames(req.text, validated, this.glossary);
+      if (miss.length > 0) {
+        this.breaker.onSuccess(); // the model answered; only the names are wrong, so the breaker is not tripped
+        const r = await this.fallback(req, "name-miss", { llmMs, usage: res.usage, detail: `missing=${miss.join("|")}`, parallel });
+        const still = missingNames(req.text, r.text, this.glossary);
+        if (still.length > 0) this.log.warn(`[llm] name-miss after fallback missing=${q(still.join("|"))} (output used as is)`);
+        return r;
+      }
     }
     this.breaker.onSuccess();
     this.stats.recordUsed();
@@ -279,15 +312,18 @@ export class LlmEngine implements TranslationEngine {
   async warmUp(kind: "warm-up" | "keep-warm" = "warm-up"): Promise<void> {
     if (this.d.glossary === null) return;
     const timeoutMs = this.d.warmTimeoutMs ?? 8000;
-    const request = buildConverseRequest({
-      modelId: this.d.cfg.modelId,
-      system: this.systemText,
-      previous: [],
-      chunk: WARM_CHUNK,
-      maxTokens: 48,
-      cache: this.cache,
-      endsSentence: this.d.cfg.promptVersion === 2 ? true : undefined,
-    });
+    const request =
+      this.dir === "ja-en"
+        ? buildConverseRequestJaEn({ modelId: this.d.cfg.modelId, system: this.systemText, previous: [], chunk: WARM_CHUNK_JA, maxTokens: 48, cache: this.cache, endsSentence: true })
+        : buildConverseRequest({
+            modelId: this.d.cfg.modelId,
+            system: this.systemText,
+            previous: [],
+            chunk: WARM_CHUNK,
+            maxTokens: 48,
+            cache: this.cache,
+            endsSentence: this.d.cfg.promptVersion === 2 ? true : undefined,
+          });
     const t0 = this.now();
     try {
       const res = await this.callWithTimeout(request, timeoutMs);
@@ -324,6 +360,10 @@ export class LlmEngine implements TranslationEngine {
 }
 
 export interface FactoryDeps {
+  // A lane (two-lane deploy or a non-default single lane): its engine, terminology, languages and direction. Absent =
+  // lane 1 of today: the global config.
+  lane?: LaneSettings;
+  direction?: GlossaryDirection;
   engine: TranslateEngineName;
   cfg: LlmConfig;
   translate: TranslateFn;
@@ -333,7 +373,24 @@ export interface FactoryDeps {
   log?: Logger;
 }
 
-function defaultFactoryDeps(): FactoryDeps {
+export function directionOf(lane: Pick<LaneSettings, "source" | "target">): GlossaryDirection {
+  return /^ja(-|$)/i.test(lane.source) && lane.target === "en" ? "ja-en" : "en-ja";
+}
+
+function defaultFactoryDeps(lane?: LaneSettings): FactoryDeps {
+  if (lane) {
+    const direction = directionOf(lane);
+    return {
+      lane,
+      direction,
+      engine: lane.translate.engine,
+      cfg: config.llm,
+      translate: translateTextFor(lane.translate),
+      makeLlm: async () => (await import("./bedrock-llm.js")).createBedrockLlm(config.region),
+      loadGlossary: () =>
+        loadDeployedGlossary(translateClient, lane.translate.terminologyName, fetch as unknown as FetchFn, 10000, direction),
+    };
+  }
   return {
     engine: config.translate.engine,
     cfg: config.llm,
@@ -348,7 +405,7 @@ function defaultFactoryDeps(): FactoryDeps {
 // Never throws. Any init problem yields the Translate-only engine (or an llm engine that sends every
 // chunk to Translate with glossary-unavailable) plus a loud ERROR line.
 export async function createTranslationEngine(over: Partial<FactoryDeps> = {}): Promise<TranslationEngine> {
-  const d = { ...defaultFactoryDeps(), ...over };
+  const d = { ...defaultFactoryDeps(over.lane), ...over };
   const log = d.log ?? realLog;
   if (d.engine !== "llm") return new TranslateOnlyEngine(d.translate);
   try {
@@ -365,7 +422,7 @@ export async function createTranslationEngine(over: Partial<FactoryDeps> = {}): 
       }
     }
     const llm = glossary === null ? ({ converse: async () => Promise.reject(new Error("llm disabled")) } as LlmClient) : await d.makeLlm();
-    const engine = new LlmEngine({ cfg: d.cfg, llm, translate: d.translate, glossary, now: d.now, log: d.log });
+    const engine = new LlmEngine({ cfg: d.cfg, llm, translate: d.translate, glossary, direction: d.direction, now: d.now, log: d.log });
     if (glossary !== null) {
       await engine.warmUp();
       engine.startKeepWarm();

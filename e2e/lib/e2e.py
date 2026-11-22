@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bilingual  # noqa: E402
 import report as rpt  # noqa: E402
 
 LIB = Path(__file__).resolve().parent
@@ -219,6 +220,15 @@ def http_get(url: str, timeout: float = 10) -> tuple[int | None, str]:
         return None, f"{type(e).__name__}: {e}"
 
 
+def fetch_json(url: str, timeout: float = 10) -> dict | None:
+    """GET a small JSON file (the listener page's config.json). None on any problem: the caller then records one track."""
+    req = urllib.request.Request(url, headers={"User-Agent": "simul-e2e-check"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
+            v = json.loads(r.read().decode("utf-8"))
+            return v if isinstance(v, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
 def public_ip() -> str:
     with urllib.request.urlopen("https://checkip.amazonaws.com", timeout=10) as r:
         ip = r.read().decode().strip()
@@ -856,6 +866,9 @@ def write_report(run_dir: Path, ffmpeg: str | None = None) -> dict:
     text, data = rpt.build_report(run_dir, meta, lines, startup, audio, RUNS)
     (run_dir / "report.md").write_text(redact(text), encoding="utf-8")
     (run_dir / "metrics.json").write_text(json.dumps(data["metrics"], ensure_ascii=False, indent=2), encoding="utf-8")
+    # A run with a Japanese-source channel also gets the scoring sheet (30 chunks to score by hand).
+    if bilingual.has_channels(lines) or bilingual.has_ja_source(lines):
+        (run_dir / "scoring-sheet.md").write_text(redact(bilingual.scoring_sheet(lines)), encoding="utf-8")
     return data
 
 
@@ -1071,9 +1084,15 @@ def _progress(line: str, t_start: float) -> None:
 def _print_done(run_dir: Path) -> None:
     say("")
     say(f"Done: {run_dir}")
-    for n in ("translation.wav", "side-by-side.wav", "source-clip.wav", "app.log", "report.md"):
+    two = sorted(run_dir.glob("side-by-side-*.wav"))
+    names = ([p.name.replace("side-by-side", "translation") for p in two] + [p.name for p in two] + ["scoring-sheet.md"]
+             if two else ["translation.wav", "side-by-side.wav"])
+    for n in (*names, "source-clip.wav", "app.log", "report.md"):
         say(f"   {run_dir / n}")
-    say(f"Listen:  open '{run_dir / 'side-by-side.wav'}'   (left = English source, right = Japanese)")
+    if two:
+        say("Listen:  " + "; ".join(f"open '{p}'" for p in two) + "   (left = source, right = translation)")
+    else:
+        say(f"Listen:  open '{run_dir / 'side-by-side.wav'}'   (left = English source, right = Japanese)")
     say(f"Judge:   fill in the HUMAN JUDGEMENT section of '{run_dir / 'report.md'}'")
 
 
@@ -1127,14 +1146,22 @@ def cmd_run(args) -> int:
     rec_wav = run_dir / ".recorder.wav"
     rec_log = open(run_dir / "recorder.log", "w", encoding="utf-8")
     max_sec = int(dur + args.drain_timeout + args.countdown + 120)
+    # A two-lane deploy lists its channels in config.json: record each channel's track into its own file.
+    site = fetch_json(st.out("ListenerUrl").rstrip("/") + "/config.json")
+    chans = bilingual.listener_channels(site)
+    rec_paths = {c["id"]: run_dir / f".recorder-{c['id']}.wav" for c in chans}
+    rec_extra = [bilingual.tracks_json(chans, {k: str(v) for k, v in rec_paths.items()})] if chans else []
+    if chans:
+        say(f"   two channels: recording {', '.join(c['id'] for c in chans)} to {', '.join(bilingual.wav_name(c['id']) for c in chans)}")
     rec = subprocess.Popen([node_bin(), str(LIB / "recorder.cjs"), "record", str(APP), st.out("LiveKitUrl"),
-                            "translation", str(rec_wav), str(max_sec)],
+                            "translation", str(rec_wav), str(max_sec), *rec_extra],
                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                            bufsize=1, start_new_session=True)
     ff = None
     meta = dict(mode="cloud", input=inp, label=args.label, file=str(f), fileStem=f.stem, clipStartSec=start, clipDurationSec=dur,
                 startedAt=iso_now(), taskDefRevision=chk.ctx.get("taskDefRevision"), taskId=chk.ctx.get("taskId"),
-                logStream=stream, command=sys.argv[1:],
+                logStream=stream, command=sys.argv[1:], japaneseOnly=bool(getattr(args, "japanese_only", False)),
+                channels=[c["id"] for c in chans],
                 configSource=f"deployed task definition revision {chk.ctx.get('taskDefRevision')}")
     try:
         assert rec.stdin is not None and rec.stdout is not None
@@ -1239,7 +1266,7 @@ def cmd_run(args) -> int:
         session = session or _find_session(group, stream, stream_start, wait=20)
         meta["session"] = session
         if session:
-            _drain(group, stream, stream_start, session, args.drain_timeout)
+            _drain(group, stream, stream_start, session, args.drain_timeout, [c["id"] for c in chans] or None)
         else:
             say("   the app never reported a session for this stream; no translation to collect")
         time.sleep(3)  # last chunk's audio is still in LiveKit's ~1 s playout queue
@@ -1262,8 +1289,28 @@ def cmd_run(args) -> int:
     (run_dir / "app.log").write_text(redact("\n".join(m for _, m in ev) + "\n"), encoding="utf-8")
     say(f"   collected {len(ev)} log lines from {group} {stream}")
 
+    # Two channels: translation-<id>.wav per channel, each re-based like translation.wav below.
+    if chans and "streamStartEpochMs" in meta:
+        checks = {}
+        for c in chans:
+            rp = rec_paths[c["id"]]
+            if not rp.exists():
+                checks[f"recorder {c['id']}"] = "no recording (the channel's track was not subscribed)"
+                continue
+            sr, _, rec_dur = wav_info(rp)
+            with wave.open(str(rp), "rb") as w:
+                pcm = w.readframes(w.getnframes())
+            offset_ms = meta["recStartEpochMs"] - meta["streamStartEpochMs"]
+            shift = int(abs(offset_ms) * sr / 1000) * 2
+            pcm = (bytes(shift) + pcm) if offset_ms >= 0 else pcm[shift:]
+            out_wav = run_dir / bilingual.wav_name(c["id"])
+            write_wav(out_wav, pcm, sr)
+            rp.unlink()
+            checks[f"recorder {c['id']}"] = f"{rec_dur:.1f} s recorded"
+            side_by_side(ffmpeg, clip, out_wav, run_dir / f"side-by-side-{c['id']}.wav", max(dur, wav_info(out_wav)[2]))
+        meta["audioChecks"] = checks
     # translation.wav: recorder output re-based so sample 0 = stream start (wall clock).
-    if rec_wav.exists() and "streamStartEpochMs" in meta:
+    elif rec_wav.exists() and "streamStartEpochMs" in meta:
         sr, _, rec_dur = wav_info(rec_wav)
         with wave.open(str(rec_wav), "rb") as w:
             pcm = w.readframes(w.getnframes())
@@ -1332,7 +1379,7 @@ def _find_session(group: str, stream: str, start_ms: int, wait: int = 0) -> int 
         time.sleep(5)
 
 
-def _drain(group: str, stream: str, start_ms: int, session: int, timeout: int) -> None:
+def _drain(group: str, stream: str, start_ms: int, session: int, timeout: int, lanes: list[str] | None = None) -> None:
     """Wait until the session summary is logged and every committed chunk reached a final state."""
     say(f"   waiting for the backlog to drain (session {session}; timeout {timeout} s) ...")
     deadline = time.time() + timeout
@@ -1343,12 +1390,15 @@ def _drain(group: str, stream: str, start_ms: int, session: int, timeout: int) -
             time.sleep(5)
             continue
         lines = [m for _, m in ev]
-        summary = any(f"[summary] session={session} " in m for m in lines)
-        parsed = rpt.parse_log(lines)
-        open_chunks = [c["n"] for c in parsed["chunks"].values() if c["status"] in ("queued", "synth")]
-        last_played = max((c.get("playedTs", 0) for c in parsed["chunks"].values()), default=0)
+        summary, open_chunks = bilingual.drain_state(lines, session, lanes)
+        n_chunks = 0
+        last_played = 0
+        for ls in (bilingual.split_channel_lines(lines, lanes).values() if bilingual.has_channels(lines) else [lines]):
+            parsed = rpt.parse_log(ls)
+            n_chunks += len(parsed["chunks"])
+            last_played = max([last_played] + [c.get("playedTs", 0) for c in parsed["chunks"].values()])
         if summary and not open_chunks and now_ms() - last_played > 3000:
-            say(f"   drained: summary logged, {len(parsed['chunks'])} chunks finished")
+            say(f"   drained: summary logged, {n_chunks} chunks finished")
             return
         say(f"   ... summary={'yes' if summary else 'no'} unfinished chunks={len(open_chunks)}")
         time.sleep(5)
@@ -1367,6 +1417,9 @@ def cmd_compare(args) -> int:
     a, b = (Path(x).expanduser().resolve() for x in (args.run_a, args.run_b))
     ma, mb = (write_report(d)["metrics"] for d in (a, b))
     text = rpt.compare(a, b, ma, mb)
+    # Japanese segmentation reasons side by side (empty unless a run has a Japanese-source channel).
+    read = lambda d: (d / "app.log").read_text(encoding="utf-8").splitlines() if (d / "app.log").exists() else []  # noqa: E731
+    text += bilingual.compare_section(read(a), read(b))
     out = Path(args.out).expanduser() if args.out else RUNS / f"compare_{a.name}__vs__{b.name}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
@@ -1475,6 +1528,9 @@ def main() -> int:
     r.add_argument("--ingest", type=int, choices=(1, 2), default=1, help="which SRT ingest IP (default 1)")
     r.add_argument("--bitrate", default="128k", help="Opus (srt) or AAC (rtmps) bitrate (default 128k)")
     r.add_argument("--drain-timeout", type=int, default=180, help="max seconds to wait for the backlog (default 180)")
+    r.add_argument("--japanese-only", action="store_true",
+                   help="the recording is Japanese speech only (samples/scripts/monologue-ja.txt): the report is about the "
+                        "Japanese-source channel and a scoring sheet is written (the run streams what you pass; nothing else)")
 
     lo = sub.add_parser("local", help="offline E2E: run the app locally on the same clip (no deployed stack)")
     clip_opts(lo)

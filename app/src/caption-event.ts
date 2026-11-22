@@ -94,7 +94,20 @@ export interface SpeechRetractEventV1 {
 }
 export type SpeechEventV1 = SpeechAppendEventV1 | SpeechRetractEventV1;
 export type CaptionEvent = CaptionEventV1 | SourceEventV1 | SpeechEventV1;
-
+// A lane other than the first (two-channel deploy). Absent = the first lane: events are built exactly as before, with no
+// new field. For a lane, `ch` (additive field) names the channel, ids get the prefix "<ch>:", and the languages follow
+// the lane (text is in `lang`; the source text is in `sourceLang`).
+export interface CaptionLane {
+  ch: string; // channel id, e.g. "en"
+  lang: string; // language of the lane's own text (the translation), e.g. "en"
+  sourceLang: string; // language of the lane's source speech, e.g. "ja"
+  // The first lane of a deploy keeps the legacy shape (no ch field, no id prefix) even when its languages are swapped.
+  first?: boolean;
+}
+const idPrefix = (lane?: CaptionLane): string => (lane && !lane.first ? `${lane.ch}:` : "");
+function withCh<T extends object>(ev: T, lane?: CaptionLane): T {
+  return lane && !lane.first ? { ...ev, ch: lane.ch } : ev;
+}
 export function truncateText(s: string, max = MAX_CAPTION_TEXT): string {
   const cps = Array.from(s);
   return cps.length <= max ? s : cps.slice(0, max).join("");
@@ -112,25 +125,28 @@ export function buildCaptionEvent(a: {
   lang?: string;
   channel?: string;
   speaker?: string | null;
+  lane?: CaptionLane;
 }): CaptionEventV1 {
-  return {
-    v: CAPTION_SCHEMA_VERSION,
-    type: "caption",
-    id: `${a.session}-${a.chunkSeq}`,
-    seq: a.seq,
-    session: a.session,
-    channel: a.channel ?? "ja",
-    lang: a.lang ?? "ja",
-    text: truncateText(a.text),
-    sourceLang: a.sourceLang ?? "en",
-    sourceText: truncateText(a.sourceText),
-    speaker: a.speaker ?? null,
-    final: true,
-    startAt: a.startAt,
-    durationMs: a.durationMs,
-  };
+  return withCh<CaptionEventV1>(
+    {
+      v: CAPTION_SCHEMA_VERSION,
+      type: "caption",
+      id: `${idPrefix(a.lane)}${a.session}-${a.chunkSeq}`,
+      seq: a.seq,
+      session: a.session,
+      channel: a.channel ?? a.lane?.lang ?? "ja",
+      lang: a.lang ?? a.lane?.lang ?? "ja",
+      text: truncateText(a.text),
+      sourceLang: a.sourceLang ?? a.lane?.sourceLang ?? "en",
+      sourceText: truncateText(a.sourceText),
+      speaker: a.speaker ?? null,
+      final: true,
+      startAt: a.startAt,
+      durationMs: a.durationMs,
+    },
+    a.lane,
+  );
 }
-
 export function buildSourceAppend(a: {
   session: number;
   n: number;
@@ -142,38 +158,44 @@ export function buildSourceAppend(a: {
   lang?: string;
   channel?: string;
   speaker?: string | null;
+  lane?: CaptionLane;
 }): SourceAppendEventV1 {
-  return {
-    v: CAPTION_SCHEMA_VERSION,
-    type: "source",
-    op: "append",
-    id: `${a.session}-${a.n}`,
-    seq: a.seq,
-    session: a.session,
-    resultId: a.resultId,
-    channel: a.channel ?? "en",
-    lang: a.lang ?? "en",
-    text: truncateText(a.text),
-    stable: true,
-    boundary: a.boundary,
-    speaker: a.speaker ?? null,
-    audioEnd: a.audioEnd,
-  };
+  return withCh<SourceAppendEventV1>(
+    {
+      v: CAPTION_SCHEMA_VERSION,
+      type: "source",
+      op: "append",
+      id: `${idPrefix(a.lane)}${a.session}-${a.n}`,
+      seq: a.seq,
+      session: a.session,
+      resultId: a.resultId,
+      channel: a.channel ?? a.lane?.sourceLang ?? "en",
+      lang: a.lang ?? a.lane?.sourceLang ?? "en",
+      text: truncateText(a.text),
+      stable: true,
+      boundary: a.boundary,
+      speaker: a.speaker ?? null,
+      audioEnd: a.audioEnd,
+    },
+    a.lane,
+  );
 }
-
-export function buildSourceRetract(a: { session: number; seq: number; resultId: string }): SourceRetractEventV1 {
-  return {
-    v: CAPTION_SCHEMA_VERSION,
-    type: "source",
-    op: "retract",
-    seq: a.seq,
-    session: a.session,
-    resultId: a.resultId,
-    channel: "en",
-    lang: "en",
-  };
+export function buildSourceRetract(a: { session: number; seq: number; resultId: string; lane?: CaptionLane }): SourceRetractEventV1 {
+  return withCh<SourceRetractEventV1>(
+    {
+      v: CAPTION_SCHEMA_VERSION,
+      type: "source",
+      op: "retract",
+      seq: a.seq,
+      session: a.session,
+      resultId: a.resultId,
+      channel: a.lane?.sourceLang ?? "en",
+      lang: a.lane?.sourceLang ?? "en",
+    },
+    a.lane,
+  );
 }
-
+// As said = the language of the lane's own text: a lane with an English target shows English speech as said.
 export function buildSpeechAppend(a: {
   session: number;
   n: number;
@@ -184,38 +206,45 @@ export function buildSpeechAppend(a: {
   final: boolean;
   audioEnd: number;
   speaker?: string | null;
+  lane?: CaptionLane;
 }): SpeechAppendEventV1 {
-  return {
-    v: CAPTION_SCHEMA_VERSION,
-    type: "speech",
-    op: "append",
-    id: `${a.session}-s${a.n}`,
-    seq: a.seq,
-    session: a.session,
-    resultId: a.resultId,
-    channel: "ja",
-    lang: "ja",
-    asSaid: true,
-    text: truncateText(a.text),
-    stable: true,
-    final: a.final,
-    boundary: a.boundary,
-    speaker: a.speaker ?? null,
-    audioEnd: a.audioEnd,
-  };
+  return withCh<SpeechAppendEventV1>(
+    {
+      v: CAPTION_SCHEMA_VERSION,
+      type: "speech",
+      op: "append",
+      id: `${idPrefix(a.lane)}${a.session}-s${a.n}`,
+      seq: a.seq,
+      session: a.session,
+      resultId: a.resultId,
+      channel: a.lane?.lang ?? "ja",
+      lang: a.lane?.lang ?? "ja",
+      asSaid: true,
+      text: truncateText(a.text),
+      stable: true,
+      final: a.final,
+      boundary: a.boundary,
+      speaker: a.speaker ?? null,
+      audioEnd: a.audioEnd,
+    },
+    a.lane,
+  );
 }
-export function buildSpeechRetract(a: { session: number; seq: number; resultId: string }): SpeechRetractEventV1 {
-  return {
-    v: CAPTION_SCHEMA_VERSION,
-    type: "speech",
-    op: "retract",
-    seq: a.seq,
-    session: a.session,
-    resultId: a.resultId,
-    channel: "ja",
-    lang: "ja",
-    asSaid: true,
-  };
+export function buildSpeechRetract(a: { session: number; seq: number; resultId: string; lane?: CaptionLane }): SpeechRetractEventV1 {
+  return withCh<SpeechRetractEventV1>(
+    {
+      v: CAPTION_SCHEMA_VERSION,
+      type: "speech",
+      op: "retract",
+      seq: a.seq,
+      session: a.session,
+      resultId: a.resultId,
+      channel: a.lane?.lang ?? "ja",
+      lang: a.lane?.lang ?? "ja",
+      asSaid: true,
+    },
+    a.lane,
+  );
 }
 // JSON.stringify escapes only JSON syntax: no HTML escaping, no entity conversion. The page renders
 // the text with textContent, so '<script>' stays plain characters.

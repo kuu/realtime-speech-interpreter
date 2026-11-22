@@ -1,0 +1,74 @@
+Phrase	SoundsLike	IPA	DisplayAs
+メディアライブ			MediaLive
+メディアコネクト			MediaConnect
+メディアコンバート			MediaConvert
+メディアパッケージ			MediaPackage
+メディアテイラー			MediaTailor
+メディアストア			MediaStore
+メディアライブ-エニウェア			MediaLive Anywhere
+メディアパッケージ-ブイツー			MediaPackage v2
+メディアパッケージ-ブイワン			MediaPackage v1
+エレメンタル-ライブ			Elemental Live
+エレメンタル-リンク			Elemental Link
+リンク-エイチディー			Link HD
+エレメンタル-インファレンス			Elemental Inference
+クラウドフロント			CloudFront
+クラウドウォッチ			CloudWatch
+イベントブリッジ			EventBridge
+ベッドロック			Bedrock
+ジクシー			Zixi
+ドルビー-ビジョン			Dolby Vision
+フェアプレイ			FairPlay
+ワイドバイン			Widevine
+プレイレディ			PlayReady
+エイチエルエス			HLS
+エルエル-エイチエルエス			LL-HLS
+ダッシュ			DASH
+エムペグ-ダッシュ			MPEG-DASH
+シーマフ			CMAF
+エムスリーユーエイト			M3U8
+エスアールティー			SRT
+アールティーエムピー			RTMP
+アールティーピー			RTP
+リスト			RIST
+ユーディーピー			UDP
+エヌディーアイ			NDI
+エスディーアイ			SDI
+エムペグ-ティーエス			MPEG-TS
+シンプティ			SMPTE
+エスティーニィイチイチゼロ			ST 2110
+エスティーニィゼロニィニィダッシュセブン			ST 2022-7
+ブイピーシー			VPC
+オーティーティー			OTT
+シーディーエヌ			CDN
+ブイオーディー			VOD
+エイチ-にーろくよん			H.264
+エイチ-にーろくご			H.265
+エーブイシー			AVC
+エイチイーブイシー			HEVC
+エーブイワン			AV1
+エーエーシー			AAC
+アイディー-スリー			ID3
+エイチディーアール			HDR
+エスディーアール			SDR
+ユーエイチディー			UHD
+エービーアール			ABR
+スカティ			SCTE
+スカティ-さんじゅうご			SCTE-35
+スカティ-ひゃくよん			SCTE 104
+エスエスエーアイ			SSAI
+エスジーエーアイ			SGAI
+ディーアールエム			DRM
+スピーク			SPEKE
+シグ-ブイフォー			SigV4
+エレメンタル			Elemental
+クラウドフォーメーション			CloudFormation
+エムペグ			MPEG
+アライブ			ARIB
+フォーケー			4K
+マルチビュー			Multiview
+イービーユー			EBU
+イーシーツー			EC2
+エスディーケー			SDK
+エーピーアイ			API
+サム			SAM

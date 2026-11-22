@@ -2,6 +2,8 @@
 
 ![Architecture diagram: venue, SRT, Fargate app, AI services, LiveKit, listener browsers](architecture.drawio.svg)
 
+The diagram shows one channel; with two channels the translation path runs once per direction ([bilingual-channels.md](bilingual-channels.md)).
+
 The diagram is one editable file, [`architecture.drawio.svg`](architecture.drawio.svg). It is a normal SVG with the
 draw.io diagram embedded, so GitHub shows it as an image and draw.io opens it for editing. It uses draw.io's AWS
 2021+ shapes (`mxgraph.aws4`), which follow the AWS Architecture Icons. See "Edit the diagram" at the end of this page.
@@ -103,6 +105,8 @@ words and translated into nonsense. Transcribe identifies the language of every 
 are not the source language. Short low-confidence English fragments inside Japanese speech are dropped too.
 `LANGUAGE_FILTER=off` restores the old behavior.
 
+**Two channels (built, live tests pending).** With `channels` set, the Japanese speech feeds a second, Japanese-to-English channel with its own segmenter, translation, English voice and LiveKit track, from the same single Transcribe stream: [bilingual-channels.md](bilingual-channels.md) (issue #9).
+
 **Chunking with merge and dangling rules.** The segmenter cuts at sentence ends, at clauses once a chunk has
 enough words, and on pauses. Two rules keep chunks translatable:
 
@@ -162,7 +166,7 @@ One versioned contract with three event types. The builders are in `app/src/capt
 | `type` | `caption` (Japanese chunk), `source` (English words) or `speech` (Japanese speech as said). Unknown types are ignored. |
 | `seq` | Increases across both types within one app run. |
 | `id`, `session` | `caption`: `<session>-<chunk number>` (as `[chunk N]` in the logs). `source`: `<session>-<batch number>`. |
-| `channel`, `lang` | `ja` / `en` today. Reserved for the two-channel bilingual mode (more `channel` values). |
+| `channel`, `lang` | `ja` / `en` today. Used by the two-channel bilingual mode (a `ch` field and a topic per channel, channel 1 unchanged), see [bilingual-channels.md](bilingual-channels.md#captions-per-channel). |
 | `speaker` | `null` today. Reserved for speaker detection. |
 | `text` | `caption`: the Japanese exactly as sent to Polly, before the SSML `<sub>` readings are applied, so product names are never replaced by readings. `source`: the words of this batch, fillers removed. At most 600 characters. |
 | `sourceText`, `sourceLang` | `caption` only: the English that was translated (fillers removed, corrections applied). The page does not show it (the English line comes from `source` events). |
@@ -289,7 +293,7 @@ The fade is turned off for `prefers-reduced-motion`. The Japanese area is `aria-
 English area is not announced, as it changes several times a second.
 
 ## Edit the diagram
-`docs/architecture.drawio.svg` is the only source of the diagram. There is no generator. When a change touches the
+`docs/architecture.drawio.svg` and `docs/overview.drawio.svg` (the landing diagram in the README) are the only sources of their diagrams. Export either with `scripts/export-diagram.sh FILE`. There is no generator. When a change touches the
 architecture (a new service, a new data path), update the diagram and the step table above in the same pull request.
 
 **By hand.** Open the file in draw.io Desktop (`brew install --cask drawio`) or at https://app.diagrams.net

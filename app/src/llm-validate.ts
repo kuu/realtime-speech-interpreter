@@ -164,3 +164,59 @@ export function validateLlmOutput(raw: string, o: ValidateOptions): ValidationRe
   if (n > maxChars) return fail("too-long", `${n} chars > ${maxChars} for ${words} words`);
   return { ok: true, text };
 }
+
+// ---- Japanese to English lane ----------------------------------------------------------------------------------
+export type ValidationRuleEn = Exclude<ValidationRule, "not-japanese" | "english-run"> | "japanese-leak" | "not-english";
+export type ValidationResultEn = { ok: true; text: string } | { ok: false; rule: ValidationRuleEn; detail: string };
+export interface ValidateOptionsEn {
+  source: string; // the Japanese text actually sent
+  glossary: readonly GlossaryEntry[]; // [ja, en]
+  maxWordsPerChar: number; // upper bound of English words per source character
+}
+const JA_ANY_RE = /[\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uFF66-\uFF9F\u3005\u30FC]/;
+const sourceChars = (s: string): number => [...s.replace(/[\s\u3000、。，．,.！？!?「」]/g, "")].length;
+
+// Output check before Polly for the English lane: English only, one line, no labels, plausible length.
+export function validateLlmOutputEn(raw: string, o: ValidateOptionsEn): ValidationResultEn {
+  const chars = sourceChars(o.source);
+  let text = raw.trim();
+  const fail = (rule: ValidationRuleEn, detail: string): ValidationResultEn => ({ ok: false, rule, detail });
+  if (text === "") return chars > 0 ? fail("empty", "no output for a chunk with text") : { ok: true, text };
+  if (/[\n\r]/.test(text)) return fail("multiline", clip(text.replace(/\s+/g, " ")));
+  const tag = TAG_RE.exec(text);
+  if (tag) return fail("tag", tag[0]);
+  if (/chunk_ends_sentence/i.test(text)) return fail("tag", "chunk_ends_sentence");
+  if (LABEL_PREFIX_RE.test(text) || META_PREFIX_RE.test(text)) return fail("prefix", clip(text, 40));
+  if (MARKDOWN_RE.test(text)) return fail("markdown", clip(text, 40));
+  text = stripWrappingQuotes(text);
+  if (text === "") return chars > 0 ? fail("empty", "only quotes") : { ok: true, text };
+  // A Japanese character is allowed only when a glossary target (English side) itself contains it.
+  if (JA_ANY_RE.test(text)) {
+    const allowed = o.glossary.map(([, en]) => en).join("");
+    const stray = [...text].filter((c) => JA_ANY_RE.test(c) && !allowed.includes(c));
+    if (stray.length > 0) return fail("japanese-leak", `${stray.length} Japanese character(s): ${clip(text, 40)}`);
+  }
+  if (!/[A-Za-z0-9]/.test(text)) return fail("not-english", `no Latin letters or digits: ${clip(text, 40)}`);
+  const words = countWords(text);
+  const minWords = Math.floor(chars / 14);
+  const maxWords = Math.ceil(o.maxWordsPerChar * chars) + 6;
+  if (words < minWords) return fail("too-short", `${words} words < ${minWords} for ${chars} characters`);
+  if (words > maxWords) return fail("too-long", `${words} words > ${maxWords} for ${chars} characters`);
+  return { ok: true, text };
+}
+
+// Glossary rows ([ja, en]) whose Japanese side occurs in the source chunk (exact substring after NFKC; keys of one or
+// two characters are skipped, they match inside too many words) and whose English side is missing from the output
+// (case-insensitive). Empty list = every name present.
+export function missingNames(source: string, output: string, glossary: readonly GlossaryEntry[]): string[] {
+  const src = source.normalize("NFKC");
+  const out = output.normalize("NFKC").toLowerCase();
+  const missing: string[] = [];
+  for (const [ja, en] of glossary) {
+    const key = ja.normalize("NFKC");
+    if ([...key].length < 3) continue;
+    if (!src.includes(key)) continue;
+    if (!out.includes(en.normalize("NFKC").toLowerCase())) missing.push(en);
+  }
+  return missing;
+}

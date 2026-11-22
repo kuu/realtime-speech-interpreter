@@ -15,19 +15,33 @@ export async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): P
   }
 }
 
-export async function translateText(text: string): Promise<string> {
+// Settings of one translation lane (see lane-settings.ts). Lane 1 passes the values of the global config.
+export interface LaneTranslateSettings {
+  sourceLanguageCode: string;
+  targetLanguageCode: string;
+  terminologyName: string;
+  formality: "FORMAL" | "INFORMAL" | "off"; // "off" sends no Settings (an English target has no formality)
+}
+async function callTranslate(text: string, t: LaneTranslateSettings): Promise<string> {
   const res = await withTimeout((abortSignal) =>
     translateClient.send(
       new TranslateTextCommand(
         translateParams(text, {
-          source: config.translate.sourceLanguageCode,
-          target: config.translate.targetLanguageCode,
-          terminologyName: config.translate.terminologyName,
-          formality: config.translate.formality,
+          source: t.sourceLanguageCode,
+          target: t.targetLanguageCode,
+          terminologyName: t.terminologyName,
+          formality: t.formality,
         }),
       ),
       { abortSignal },
     ),
   );
   return res.TranslatedText ?? "";
+}
+export async function translateText(text: string): Promise<string> {
+  return callTranslate(text, config.translate);
+}
+// Translate function of one lane.
+export function translateTextFor(t: LaneTranslateSettings): (text: string) => Promise<string> {
+  return (text) => callTranslate(text, t);
 }

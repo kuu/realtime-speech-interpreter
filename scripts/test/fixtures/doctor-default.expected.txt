@@ -1,0 +1,15 @@
+== Resolved configuration
+PASS  configuration is valid (profile default, region ap-northeast-1, engine translate, event file: none)
+WARN  venueCidr 203.0.113.10/32 is a documentation address (the example file value); OBS from the venue will be refused
+      fix: put the venue's real public IP in cdk/config/event.json (curl https://checkip.amazonaws.com from the venue network)
+== Dictionary
+PASS  dictionary dir: <root>/dictionaries/example (setting)
+PASS  generated dictionary files match terms.csv
+== AWS
+PASS  AWS CLI aws-cli/2.17.0
+PASS  AWS identity: account 123456789012, assumed-role/Test/test, region ap-northeast-1
+PASS  CDK is bootstrapped in ap-northeast-1 (UPDATE_COMPLETE)
+PASS  Transcribe vocabulary 'simul-translation' is READY
+PASS  Translate terminology 'simul-translation' exists
+
+Summary: 12 pass, 2 warn, 0 fail

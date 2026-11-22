@@ -1,5 +1,13 @@
 import { fileURLToPath } from "node:url";
-import { LANGID_JA_MEMORY_MS, LANGID_SETTLE_WORDS_AFTER_JA, LANGID_SETTLE_WORDS_DEFAULT } from "./langid-defaults.js";
+import {
+  LANGID_JA_MEMORY_MS,
+  LANGID_SETTLE_ITEMS,
+  LANGID_SETTLE_ITEMS_AFTER_EN,
+  LANGID_SETTLE_ITEMS_DEFAULT,
+  LANGID_SETTLE_WORDS_AFTER_JA,
+  LANGID_SETTLE_WORDS_DEFAULT,
+} from "./langid-defaults.js";
+import { JA_DEFAULT_CLAUSE_ENDINGS, JA_DEFAULT_DANGLING_TOKENS, jaListOverlap } from "./ja-defaults.js";
 // Centralized configuration. Every venue/account/language-specific value is
 // externalized via environment variables so the app can be reused without code
 // changes. Secrets (SRT passphrase, LiveKit API secret) come from the environment
@@ -158,6 +166,60 @@ export function langidSettleConfig(env: NodeJS.ProcessEnv): LangidSettleConfig {
   };
 }
 
+export interface JaSegmentationConfig {
+  mode: "simple" | "full";
+  maxWaitMs: number;
+  sentenceMinChars: number;
+  clauseMinChars: number;
+  maxChars: number;
+  pauseMs: number;
+  clauseEndings: string[];
+  danglingTokens: string[];
+  danglingMaxChars: number;
+}
+function envList(env: NodeJS.ProcessEnv, name: string, def: readonly string[]): string[] {
+  const v = env[name];
+  if (v === undefined || v.trim() === "") return [...def];
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+// Japanese segmentation of a ja-JP source lane (see segmenter-ja.ts). JA_SEGMENTATION_MODE=simple (default) uses only
+// JA_MAX_WAIT_MS (and JA_SENTENCE_MIN_CHARS when MERGE_SHORT is on); full is the opt-in experiment. Invalid values fall
+// back to the default with a WARN; two lists that share an entry both fall back to their defaults.
+export function jaSegmentationConfig(env: NodeJS.ProcessEnv): JaSegmentationConfig {
+  let clauseEndings = envList(env, "JA_CLAUSE_ENDINGS", JA_DEFAULT_CLAUSE_ENDINGS);
+  let danglingTokens = envList(env, "JA_DANGLING_TOKENS", JA_DEFAULT_DANGLING_TOKENS);
+  const overlap = jaListOverlap(clauseEndings, danglingTokens);
+  if (overlap.length > 0) {
+    envWarn("JA_CLAUSE_ENDINGS/JA_DANGLING_TOKENS", overlap.join(","), "lists with no shared entry", "the built-in lists");
+    clauseEndings = [...JA_DEFAULT_CLAUSE_ENDINGS];
+    danglingTokens = [...JA_DEFAULT_DANGLING_TOKENS];
+  }
+  return {
+    mode: envOneOf(env, "JA_SEGMENTATION_MODE", "simple", ["simple", "full"] as const),
+    maxWaitMs: envNum(env, "JA_MAX_WAIT_MS", 4000, 0, 60000),
+    sentenceMinChars: envNum(env, "JA_SENTENCE_MIN_CHARS", 6, 1, 200),
+    clauseMinChars: envNum(env, "JA_CLAUSE_MIN_CHARS", 12, 1, 200),
+    maxChars: envNum(env, "JA_MAX_CHARS", 40, 4, 400),
+    pauseMs: envNum(env, "JA_PAUSE_MS", 900, 0, 60000),
+    clauseEndings,
+    danglingTokens,
+    danglingMaxChars: envNum(env, "JA_DANGLING_MAX_CHARS", 10, 0, 100),
+  };
+}
+export interface LangidSettleItemsConfig {
+  settleItems: number;
+  settleItemsDefault: number;
+  settleItemsAfterEn: number;
+}
+// Settle thresholds of a ja-JP source lane, in stable items (see language-gate.ts). Same rules as langidSettleConfig.
+export function langidSettleItemsConfig(env: NodeJS.ProcessEnv): LangidSettleItemsConfig {
+  return {
+    settleItems: envNum(env, "LANGID_SETTLE_ITEMS", LANGID_SETTLE_ITEMS, 1, 50),
+    settleItemsDefault: envNum(env, "LANGID_SETTLE_ITEMS_DEFAULT", LANGID_SETTLE_ITEMS_DEFAULT, 1, 50),
+    settleItemsAfterEn: envNum(env, "LANGID_SETTLE_ITEMS_AFTER_EN", LANGID_SETTLE_ITEMS_AFTER_EN, 1, 50),
+  };
+}
+
 export interface SpeedupStep {
   backlogMs: number;
   rate: number; // percent, 100-200
@@ -257,9 +319,14 @@ function languageFilter(): {
   settleMode: "fixed" | "dynamic";
   settleWordsDefault: number;
   settleWordsAfterJa: number;
+  settleItems: number;
+  settleItemsDefault: number;
+  settleItemsAfterEn: number;
   jaMemoryMs: number;
   shortWords: number;
   shortMinConf: number;
+  jaShortChars: number;
+  jaShortMinConf: number;
 } {
   let mode = oneOf("LANGUAGE_FILTER", "langid", ["off", "langid"] as const);
   const raw = str("LANGUAGE_OPTIONS", DEFAULT_LANGUAGE_OPTIONS);
@@ -290,9 +357,14 @@ function languageFilter(): {
     // LANGID_SETTLE_MODE=fixed: LANGID_SETTLE_WORDS for every result. dynamic: LANGID_SETTLE_WORDS_DEFAULT (3) unless a
     // non-source (ja-JP) result was seen in the last LANGID_JA_MEMORY_MS, then LANGID_SETTLE_WORDS_AFTER_JA (5).
     ...langidSettleConfig(process.env),
+    // Same thresholds for a ja-JP source, in stable items (only read when a lane has a ja-JP source).
+    ...langidSettleItemsConfig(process.env),
     // Drop short low-confidence source-language finals right after a non-source final. 0 disables.
     shortWords: safeNum("LANGID_SHORT_WORDS", 4, 0, 20),
     shortMinConf: safeNum("LANGID_SHORT_MIN_CONF", 0.6, 0, 1),
+    // The same rule for a ja-JP source lane, in characters (only read by such a lane).
+    jaShortChars: safeNum("JA_SHORT_CHARS", 4, 0, 50),
+    jaShortMinConf: safeNum("JA_SHORT_MIN_CONF", 0.6, 0, 1),
   };
 }
 
@@ -366,6 +438,8 @@ export const config = {
   //            identified as SOURCE_LANGUAGE reach the segmenter
   //   off    = revert switch: single-language en-US stream, everything is translated (old behavior)
   languageFilter: languageFilter(),
+  // Japanese segmentation (read only by a ja-JP source lane).
+  jaSegmentation: jaSegmentationConfig(process.env),
 
   // Segmentation of the English transcript into translation chunks (see segmenter.ts).
   //   clause   = mid-sentence chunks (commas, conjunctions, max words/time, pause)
@@ -517,6 +591,9 @@ export const config = {
     // dictionary folder). Local runs set POLLY_READINGS_FILE.
     readingsFile:
       str("POLLY_READINGS_FILE", "").trim() || fileURLToPath(new URL("../assets/polly-readings.csv", import.meta.url)),
+    // Readings of a lane with an English target (same format; aliases without Japanese characters). A missing file = none.
+    readingsFileEn:
+      str("POLLY_READINGS_EN_FILE", "").trim() || fileURLToPath(new URL("../assets/polly-readings-en.csv", import.meta.url)),
   },
 
   // Live captions on the LiveKit data channel (caption-event.ts). off = no data packets at all.

@@ -35,19 +35,40 @@
 // midpoint is at or before the mark as it was when the result appeared, and a final that is a
 // strict prefix of what was committed is passed on as exactly the committed items ([verify] OK).
 
-import { LANGID_JA_MEMORY_MS, LANGID_SETTLE_WORDS_AFTER_JA, LANGID_SETTLE_WORDS_DEFAULT } from "./langid-defaults.js";
+import {
+  LANGID_JA_MEMORY_MS,
+  LANGID_SETTLE_ITEMS,
+  LANGID_SETTLE_ITEMS_AFTER_EN,
+  LANGID_SETTLE_ITEMS_DEFAULT,
+  LANGID_SETTLE_WORDS_AFTER_JA,
+  LANGID_SETTLE_WORDS_DEFAULT,
+} from "./langid-defaults.js";
 import { log } from "./log.js";
 import { isPunctItem, type Segmenter, type TxItem, type TxResult } from "./segmenter.js";
 
+// What the gate needs from a segmenter (the English Segmenter or the Japanese one).
+export type GateSegmenter = Pick<Segmenter, "onResult" | "noteActivity" | "endOfStream"> & {
+  closeResult(id: string, lang: string, now: number): { emitted: number; removed: number } | void;
+};
+
 export interface LanguageGateOptions {
+  laneId?: string; // set in a two-lane deploy: log lines carry ch=<id>
   source: string; // e.g. en-US
   settleWords: number; // stable words before a source-language partial is forwarded (fixed mode)
   settleMode?: "fixed" | "dynamic"; // default fixed
   settleWordsDefault?: number; // dynamic: threshold when no non-source result was seen recently (default 3)
   settleWordsAfterJa?: number; // dynamic: threshold within jaMemoryMs after a non-source result (default 5)
+  // Same three thresholds for a ja-JP source, in stable items instead of words (used only when source is ja-*).
+  settleItems?: number; // fixed mode (default 5)
+  settleItemsDefault?: number; // dynamic: no non-source result seen recently (default 3)
+  settleItemsAfterEn?: number; // dynamic: within jaMemoryMs after a non-source result (default 5)
   jaMemoryMs?: number; // dynamic: how long a non-source result keeps the long threshold (default 60000)
   shortWords: number; // short-low-conf rule: max words (0 disables)
   shortMinConf: number; // short-low-conf rule: mean confidence below this is dropped
+  // Short rule for a ja-JP source lane: max characters (default 4; 0 disables) and mean confidence below which a
+  // result is dropped. Used only when source is ja-*.
+  jaShortChars?: number;
+  jaShortMinConf?: number;
   jaFillers?: readonly string[]; // Japanese filler patterns hidden from the as-said caption (config fillers.jaPatterns)
 }
 
@@ -67,6 +88,9 @@ export interface JapaneseSpeechTap {
 // tokens; language flips happen at the start of a result, as for English).
 export const JA_SETTLE_ITEMS = 3;
 const JA_LANG = /^ja(-|$)/i;
+const EN_LANG = /^en(-|$)/i;
+// Letters of the as-said language of the opposite lane: an English result tagged for a ja-JP lane must contain a Latin letter.
+const LATIN_CHAR = /[A-Za-z]/;
 // A result tagged Japanese whose words contain no Japanese character (hiragana, katakana, kanji) is English
 // speech mis-tagged for a moment ("weseabugpvenand"); it is not shown until a Japanese character appears.
 const JA_CHAR = /[\u3040-\u30ff\u3400-\u9fff]/u;
@@ -106,6 +130,11 @@ function isRepeat(it: TxItem, hw: number): boolean {
 function wordCount(its: readonly TxItem[]): number {
   return its.filter((it) => !isPunctItem(it)).length;
 }
+function charCount(its: readonly TxItem[]): number {
+  let n = 0;
+  for (const it of its) if (!isPunctItem(it)) n += [...(it.Content ?? "")].length;
+  return n;
+}
 function stableWords(its: readonly TxItem[]): number {
   let n = 0;
   for (const it of its) {
@@ -125,25 +154,45 @@ export class LanguageGate implements ResultSink {
   private hw = -Infinity; // max EndTime of items committed to the segmenter (this stream)
   private jaHw = -Infinity; // max EndTime of Japanese items published (this stream)
   private lastNonSourceAt = -Infinity; // wall time (ms) of the latest non-source result seen
-  readonly stats = { results: 0, kept: 0, dropped: 0, droppedWords: 0, late: 0, carried: 0, repeats: 0, settledAfterJa: 0 };
+  readonly stats = { results: 0, kept: 0, dropped: 0, droppedWords: 0, late: 0, lateSpoken: 0, carried: 0, repeats: 0, settledAfterJa: 0 };
+  readonly dropsByReason: Record<DropReason, number> = { "non-english": 0, "short-low-conf": 0, "non-english-late": 0, "non-english-eof": 0 };
+  // The language the opposite lane speaks, shown as said on this lane's captions (Japanese for an English source,
+  // English for a ja-JP source).
+  private readonly asSaidLang: RegExp;
+  private readonly asSaidChar: RegExp;
+  private readonly prefix: string;
 
   constructor(
     private readonly opts: LanguageGateOptions,
-    private readonly segmenter: Segmenter,
+    private readonly segmenter: GateSegmenter,
     private readonly t0: () => number,
     private readonly jaTap?: JapaneseSpeechTap,
-  ) {}
+  ) {
+    const jaSource = JA_LANG.test(opts.source);
+    this.asSaidLang = jaSource ? EN_LANG : JA_LANG;
+    this.asSaidChar = jaSource ? LATIN_CHAR : JA_CHAR;
+    this.prefix = opts.laneId ? ` ch=${opts.laneId}` : "";
+  }
 
   private langOf(r: TxResult): string {
     return r.LanguageCode || this.opts.source;
   }
 
   // Stable words a source-language partial needs before it is forwarded, and whether the long (after-Japanese) value applies.
+  // For a ja-JP source the same table applies in stable items (words = items), with the settleItems* options.
   private settleAt(now: number, st: GateState): { words: number; afterJa: boolean } {
-    if (this.opts.settleMode !== "dynamic") return { words: this.opts.settleWords, afterJa: false };
+    const ja = JA_LANG.test(this.opts.source);
+    if (this.opts.settleMode !== "dynamic") {
+      return { words: ja ? (this.opts.settleItems ?? LANGID_SETTLE_ITEMS) : this.opts.settleWords, afterJa: false };
+    }
     // A result whose partials shrank before it settled is rewriting itself (Japanese speech heard as English):
     // it gets the long threshold even when no Japanese result was seen recently (first Japanese turn after English).
     const afterJa = st.volatile || now - this.lastNonSourceAt <= (this.opts.jaMemoryMs ?? LANGID_JA_MEMORY_MS);
+    if (ja) {
+      return afterJa
+        ? { words: this.opts.settleItemsAfterEn ?? LANGID_SETTLE_ITEMS_AFTER_EN, afterJa }
+        : { words: this.opts.settleItemsDefault ?? LANGID_SETTLE_ITEMS_DEFAULT, afterJa };
+    }
     return afterJa
       ? { words: this.opts.settleWordsAfterJa ?? LANGID_SETTLE_WORDS_AFTER_JA, afterJa }
       : { words: this.opts.settleWordsDefault ?? LANGID_SETTLE_WORDS_DEFAULT, afterJa };
@@ -180,7 +229,7 @@ export class LanguageGate implements ResultSink {
     if (r.IsPartial) {
       st.last = r;
       if (!isSource) {
-        if (JA_LANG.test(lang)) this.showJapanese(id, st, raw, false);
+        if (this.asSaidLang.test(lang)) this.showJapanese(id, st, raw, false);
         else this.retractJapanese(id, st);
         return;
       }
@@ -227,7 +276,7 @@ export class LanguageGate implements ResultSink {
         const overflow = c.slice(fin.length);
         this.stats.carried++;
         log.info(
-          `[langfilter] carry result=${id.slice(0, 8)} items=${overflow.length} ` +
+          `[langfilter]${this.prefix} carry result=${id.slice(0, 8)} items=${overflow.length} ` +
             `text="${overflow.map((it) => it.Content).join(" ")}" (final shorter than committed; next result repeats it)`,
         );
         segItems = c; // exactly what the segmenter committed → [verify] OK, nothing re-emitted
@@ -241,14 +290,18 @@ export class LanguageGate implements ResultSink {
         else this.segmenter.noteActivity(now);
         return;
       }
-      const words = wordCount(raw);
+      const jaSource = JA_LANG.test(this.opts.source);
+      // ja-JP source: the size of a result is its characters (no spaces), with its own limits.
+      const words = jaSource ? charCount(raw) : wordCount(raw);
       const conf = meanConf(raw);
+      const shortMax = jaSource ? (this.opts.jaShortChars ?? 4) : this.opts.shortWords;
+      const shortConf = jaSource ? (this.opts.jaShortMinConf ?? 0.6) : this.opts.shortMinConf;
       if (
-        this.opts.shortWords > 0 &&
+        shortMax > 0 &&
         words > 0 &&
-        words <= this.opts.shortWords &&
+        words <= shortMax &&
         conf !== null &&
-        conf < this.opts.shortMinConf &&
+        conf < shortConf &&
         this.prevFinalLang !== null &&
         this.prevFinalLang !== this.opts.source
       ) {
@@ -261,11 +314,12 @@ export class LanguageGate implements ResultSink {
       return;
     }
     this.prevFinalLang = lang;
-    if (JA_LANG.test(lang)) this.showJapanese(id, st, raw, true);
+    if (this.asSaidLang.test(lang)) this.showJapanese(id, st, raw, true);
     else this.retractJapanese(id, st);
     if (st.passed) {
-      this.segmenter.closeResult(id, lang, now);
+      const closed = this.segmenter.closeResult(id, lang, now);
       this.stats.late++;
+      if (closed && closed.emitted > 0) this.stats.lateSpoken++;
       this.drop(r, "non-english-late", lang, now);
     } else {
       this.drop(r, "non-english", lang, now);
@@ -285,7 +339,7 @@ export class LanguageGate implements ResultSink {
     while (n < its.length && (final || its[n].Stable === true)) n++;
     if (!st.jaOn) {
       if (!final && wordCount(its.slice(0, n)) < JA_SETTLE_ITEMS) return;
-      if (!its.slice(0, n).some((it) => JA_CHAR.test(it.Content ?? ""))) return;
+      if (!its.slice(0, n).some((it) => this.asSaidChar.test(it.Content ?? ""))) return;
       st.jaOn = true;
     }
     const fillers = (this.opts.jaFillers ?? []).map((p) => p.trim()).filter(Boolean);
@@ -370,7 +424,7 @@ export class LanguageGate implements ResultSink {
       if (!st.last) continue;
       this.stats.results++;
       const lang = this.langOf(st.last);
-      if (JA_LANG.test(lang)) this.showJapanese(id, st, items(st.last), true);
+      if (this.asSaidLang.test(lang)) this.showJapanese(id, st, items(st.last), true);
       else if (lang !== this.opts.source) this.retractJapanese(id, st);
       if (lang === this.opts.source) {
         this.retractJapanese(id, st);
@@ -379,8 +433,9 @@ export class LanguageGate implements ResultSink {
         if (!st.passed) this.segmenter.onResult(st.last, now);
       } else {
         if (st.passed) {
-          this.segmenter.closeResult(id, lang, now);
+          const closed = this.segmenter.closeResult(id, lang, now);
           this.stats.late++;
+          if (closed && closed.emitted > 0) this.stats.lateSpoken++;
         }
         this.drop(st.last, "non-english-eof", lang, now);
       }
@@ -397,8 +452,9 @@ export class LanguageGate implements ResultSink {
   summary(attempt: number): string {
     const s = this.stats;
     return (
-      `[langfilter] stream=${attempt} results=${s.results} kept=${s.kept} dropped=${s.dropped} ` +
+      `[langfilter]${this.prefix} stream=${attempt} results=${s.results} kept=${s.kept} dropped=${s.dropped} ` +
       `droppedWords=${s.droppedWords} late=${s.late} carried=${s.carried} repeats=${s.repeats}` +
+      (this.opts.laneId ? ` lateSpoken=${s.lateSpoken}` : "") +
       (this.opts.settleMode === "dynamic" ? ` settledAfterJa=${s.settledAfterJa}` : "")
     );
   }
@@ -409,13 +465,14 @@ export class LanguageGate implements ResultSink {
     if (words === 0) return; // nothing would have been spoken
     this.stats.dropped++;
     this.stats.droppedWords += words;
+    this.dropsByReason[reason]++;
     const conf = meanConf(its);
     const start = r.StartTime ?? its[0]?.StartTime ?? 0;
     const end = r.EndTime ?? its[its.length - 1]?.EndTime ?? start;
     const lagMs = Math.round(now - (this.t0() + end * 1000));
     const text = (r.Alternatives?.[0]?.Transcript ?? its.map((it) => it.Content).join(" ")).replace(/\s+/g, " ").trim();
     log.info(
-      `[langfilter] dropped result=${(r.ResultId ?? "default").slice(0, 8)} reason=${reason} lang=${lang} ` +
+      `[langfilter]${this.prefix} dropped result=${(r.ResultId ?? "default").slice(0, 8)} reason=${reason} lang=${lang} ` +
         `words=${words} conf=${conf === null ? "-" : conf.toFixed(2)} audio=${start.toFixed(2)}-${end.toFixed(2)}s ` +
         `lagMs=${lagMs} text="${text}"`,
     );
@@ -425,7 +482,7 @@ export class LanguageGate implements ResultSink {
 // "off" returns the segmenter itself: results go straight to it, exactly as before.
 export function createResultSink(
   mode: "off" | "langid",
-  segmenter: Segmenter,
+  segmenter: GateSegmenter & ResultSink,
   opts: LanguageGateOptions,
   t0: () => number,
   jaTap?: JapaneseSpeechTap,

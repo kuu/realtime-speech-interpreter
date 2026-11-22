@@ -13,7 +13,8 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
-import { loadConfig } from "./config";
+import { loadConfig, laneUsesLlm } from "./config";
+import { channelsEnv, listenerConfigFields } from "./channels";
 import { readingsHash } from "./dictionary-dir";
 import { buildLiveKitUserData } from "./livekit-user-data";
 
@@ -27,6 +28,7 @@ export class SimulTranslationStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
     const cfg = loadConfig(this);
+    for (const w of cfg.warnings) cdk.Annotations.of(this).addWarning(w);
     const region = cdk.Stack.of(this).region;
     // Browser microphone input is off by default. Every browser-related resource below sits behind this flag, so
     // with inputSource=srt the template is the same as without the feature (cdk/scripts/synth-parity.sh).
@@ -215,7 +217,8 @@ export class SimulTranslationStack extends cdk.Stack {
     // Japan inference profile and its two destination foundation models only, plus read access to the
     // Translate terminology the glossary is loaded from. Nothing is added for the default engine.
     // No wildcard resources; InvokeModelWithResponseStream is not granted (ConverseStream is not used).
-    if (cfg.translateEngine === "llm") {
+    const llmLanes = cfg.lanes.filter((l) => laneUsesLlm(cfg, l));
+    if (llmLanes.length > 0) {
       const foundationModelId = cfg.llmModelId.replace(/^jp\./, "");
       taskDef.taskRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
@@ -230,10 +233,11 @@ export class SimulTranslationStack extends cdk.Stack {
       taskDef.taskRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
           actions: ["translate:GetTerminology"],
-          resources: [
-            `arn:aws:translate:${this.region}:${this.account}:terminology/${cfg.translateTerminologyName}`,
-            `arn:aws:translate:${this.region}:${this.account}:terminology/${cfg.translateTerminologyName}/*`,
-          ],
+          // One entry pair per LLM lane's terminology (one lane: exactly as before).
+          resources: [...new Set(llmLanes.map((l) => l.translateTerminology))].flatMap((name) => [
+            `arn:aws:translate:${this.region}:${this.account}:terminology/${name}`,
+            `arn:aws:translate:${this.region}:${this.account}:terminology/${name}/*`,
+          ]),
         }),
       );
     }
@@ -338,6 +342,27 @@ export class SimulTranslationStack extends cdk.Stack {
         LIVEKIT_TOKEN_TTL: cfg.publisherTokenTtl,
         HEALTH_PORT: String(cfg.healthPort),
         HEALTH_HOST: "0.0.0.0", // NLB health check (awsvpc; SGs restrict who can reach it); app default is loopback
+        // Two lanes: both as JSON (the app validates it again). Japanese segmenter and ja-JP settle keys only when a lane
+        // has a Japanese source, so the default deploy's environment is unchanged.
+        ...(cfg.twoLanes ? { CHANNELS: channelsEnv(cfg.lanes) } : {}),
+        ...(cfg.lanes.some((l) => /^ja-/.test(l.source))
+          ? {
+              LANGID_SETTLE_ITEMS: String(cfg.langidSettleItems),
+              LANGID_SETTLE_ITEMS_DEFAULT: String(cfg.langidSettleItemsDefault),
+              LANGID_SETTLE_ITEMS_AFTER_EN: String(cfg.langidSettleItemsAfterEn),
+              JA_SEGMENTATION_MODE: cfg.jaSegmentationMode,
+              JA_SENTENCE_MIN_CHARS: String(cfg.jaSentenceMinChars),
+              JA_CLAUSE_MIN_CHARS: String(cfg.jaClauseMinChars),
+              JA_MAX_CHARS: String(cfg.jaMaxChars),
+              JA_PAUSE_MS: String(cfg.jaPauseMs),
+              JA_MAX_WAIT_MS: String(cfg.jaMaxWaitMs),
+              ...(cfg.jaClauseEndings ? { JA_CLAUSE_ENDINGS: cfg.jaClauseEndings } : {}),
+              ...(cfg.jaDanglingTokens ? { JA_DANGLING_TOKENS: cfg.jaDanglingTokens } : {}),
+              JA_DANGLING_MAX_CHARS: String(cfg.jaDanglingMaxChars),
+              JA_SHORT_CHARS: String(cfg.jaShortChars),
+              JA_SHORT_MIN_CONF: String(cfg.jaShortMinConf),
+            }
+          : {}),
         ...(browser
           ? {
               INPUT_SOURCE: "browser",
@@ -668,6 +693,9 @@ export class SimulTranslationStack extends cdk.Stack {
           livekitUrl,
           tokenEndpoint: "/token",
           captions: cfg.captions === "on",
+          // The channel list, only when the `channels` setting is used for two lanes or one non-default lane. Without it
+          // the page assumes the default (Japanese) channel, as today.
+          ...listenerConfigFields(cfg),
           ...(browser ? { publisherTokenEndpoint: "/publisher-token", audioProcessing: cfg.browserAudioProcessing } : {}),
         }),
       ],
@@ -704,6 +732,15 @@ export class SimulTranslationStack extends cdk.Stack {
     out("LiveKitInstanceId", livekitInstance.instanceId);
     out("LiveKitApiSecretArn", livekitSecret.secretArn);
     out("ListenerUrl", cdk.Fn.join("", ["https://", distribution.distributionDomainName, "/"]));
+    // One more URL per additional channel (channel id as the suffix: ListenerUrlEn).
+    if (cfg.twoLanes) {
+      const id = cfg.lanes[1].target;
+      out(
+        `ListenerUrl${id.charAt(0).toUpperCase()}${id.slice(1)}`,
+        cdk.Fn.join("", ["https://", distribution.distributionDomainName, `/?ch=${id}`]),
+        `Listener page of channel ${id}`,
+      );
+    }
     if (browser && publisherCodeSecret) {
       out("PublisherUrl", cdk.Fn.join("", ["https://", distribution.distributionDomainName, "/publish"]), "Page for speakers; the code is not part of the URL");
       out("PublisherCodeSecretArn", publisherCodeSecret.secretArn);

@@ -16,14 +16,16 @@ import {
   RoomEvent,
 } from "https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs";
 import { parseEvent, parseSourceOption, createAssembler, createSourceAssembler, computeLayout } from "./captions.js";
+import { LEGACY_CHANNEL, resolveChannel, pageText, createChannelSubscription, STATUS } from "./channel.js";
 
 // Client-side delay (ms) applied to Japanese captions. The caption packet leaves the app when the chunk's
 // first sample leaves the app's audio queue; the audio still passes the browser's jitter buffer and decoder.
 // Measured on a local LiveKit server: captions shown on receipt led the audio by 165-271 ms (median 227),
 // so they are held back by the rounded median (docs/architecture.md, "Caption timing").
 const CAPTION_OFFSET_MS = 230;
-const CAPTION_SENDER = "publisher-app";
-const CAPTION_TOPIC = "captions";
+// Sender and topic of the channel being played. Without a channel list in config.json this is today's single channel.
+let channel = LEGACY_CHANNEL;
+let listed = false; // config.json lists channels: the page subscribes to the chosen channel's track only
 
 const listenBtn = document.getElementById("listen");
 const statusEl = document.getElementById("status");
@@ -35,12 +37,51 @@ function setStatus(msg) {
   statusEl.textContent = msg;
 }
 
+// Applies the chosen channel to the page: text that names the language, role styling and aria-live on the English
+// channel. Nothing changes for the Japanese channel, so a one-channel page is today's page.
+function applyChannelToPage(entry) {
+  if (entry.targetLang !== "en") return; // only the English channel has its own roles and text
+  const t = pageText(entry.targetLang);
+  document.title = t.title;
+  document.querySelector("h1").textContent = t.h1;
+  document.querySelector("p").textContent = t.intro;
+  listenBtn.textContent = t.button;
+  document.documentElement.classList.add(`ch-${entry.targetLang}`);
+  document.getElementById("captions-en").setAttribute("aria-live", "polite");
+  document.getElementById("captions-ja").setAttribute("aria-live", "off");
+}
+// Picks the channel from config.json and ?ch=. false = the channel is not available (Listen stays disabled).
+function chooseChannel(cfg) {
+  const r = resolveChannel(cfg, window.location.search);
+  if (!r.ok) {
+    setStatus(STATUS.unavailable);
+    listenBtn.disabled = true;
+    return false;
+  }
+  channel = r.entry;
+  listed = r.listed;
+  applyChannelToPage(channel);
+  return true;
+}
+// At load: one GET of config.json (the file Listen reads anyway) so an unknown ?ch= is reported before any click and a
+// non-default single channel shows its own language. Any failure leaves the page as it is (the click path handles it).
+let channelReady = true;
+(async () => {
+  try {
+    const res = await fetch("./config.json", { cache: "no-store" });
+    if (res.ok) channelReady = chooseChannel(await res.json());
+  } catch {
+    /* local test page or offline: the click path reports the problem */
+  }
+})();
 async function getConnectionInfo() {
   // Prefer runtime config served alongside the page.
   try {
     const res = await fetch("./config.json", { cache: "no-store" });
     if (res.ok) {
       const cfg = await res.json();
+      channelReady = chooseChannel(cfg);
+      if (!channelReady) throw new Error(STATUS.unavailable);
       const tokenRes = await fetch(cfg.tokenEndpoint, { cache: "no-store" });
       const { token } = await tokenRes.json();
       captionsOn = cfg.captions === true;
@@ -109,12 +150,18 @@ function enterLiveLayout() {
 function initCaptions() {
   enterLiveLayout();
   const showSource = parseSourceOption(window.location.search);
-  const ja = createAssembler();
-  const en = createSourceAssembler();
+  // Positions are fixed by language (#captions-ja above, #captions-en below); the channel decides which one is the
+  // translation (with as-said text) and which is the source.
+  const transLang = channel.targetLang === "en" ? "en" : "ja";
+  const sourceLang = transLang === "en" ? "ja" : "en";
+  const trans = createAssembler({}, true, transLang);
+  const srcAsm = createSourceAssembler({}, sourceLang);
+  const sender = channel.publisher;
+  const topicName = channel.topic;
   const blocks = [
-    { el: document.getElementById("captions-ja"), asm: ja, nodes: new Map(), key: "" },
-    ...(showSource ? [{ el: document.getElementById("captions-en"), asm: en, nodes: new Map(), key: "" }] : []),
-  ];
+    { el: document.getElementById("captions-ja"), asm: transLang === "ja" ? trans : srcAsm, role: transLang === "ja" ? "translation" : "source", nodes: new Map(), key: "" },
+    { el: document.getElementById("captions-en"), asm: transLang === "en" ? trans : srcAsm, role: transLang === "en" ? "translation" : "source", nodes: new Map(), key: "" },
+  ].filter((b) => showSource || b.role === "translation");
   function render() {
     const now = Date.now();
     for (const b of blocks) {
@@ -154,22 +201,22 @@ function initCaptions() {
   }
   setInterval(render, 250);
   return (payload, participant, _kind, topic) => {
-    if (topic !== CAPTION_TOPIC || !participant || participant.identity !== CAPTION_SENDER) return;
+    if (topic !== topicName || !participant || participant.identity !== sender) return;
     const ev = parseEvent(payload);
     if (!ev) return;
     if (ev.kind === "speech") {
       // Japanese speech as said: no audio to wait for, shown on receipt.
-      ja.push(ev, Date.now());
+      trans.push(ev, Date.now());
       render();
     } else if (ev.kind === "caption") {
       const accept = () => {
-        ja.push(ev, Date.now());
+        trans.push(ev, Date.now());
         render();
       };
       if (CAPTION_OFFSET_MS > 0) setTimeout(accept, CAPTION_OFFSET_MS);
       else accept();
     } else if (showSource) {
-      en.push(ev, Date.now());
+      srcAsm.push(ev, Date.now());
       render();
     }
   };
@@ -182,13 +229,20 @@ function startCaptions(r) {
 }
 
 listenBtn.addEventListener("click", async () => {
-  if (room) return;
+  if (room || !channelReady) return;
   setStatus("Connecting…");
   try {
     const { url, token } = await getConnectionInfo();
     room = new Room();
     if (captionsOn) startCaptions(room);
-    room.on(RoomEvent.Connected, () => setStatus("Connected — waiting for audio…"));
+    // With a channel list the page subscribes to the chosen channel's track only (not automatically): after Connected,
+    // when the track is published later, and after a reconnect.
+    const sub = listed ? createChannelSubscription(room, channel, (st) => setStatus(STATUS[st])) : null;
+    room.on(RoomEvent.Connected, () => (sub ? sub.scan() : setStatus("Connected — waiting for audio…")));
+    if (sub) {
+      room.on(RoomEvent.TrackPublished, (pub, participant) => sub.onTrackPublished(pub, participant));
+      room.on(RoomEvent.Reconnected, () => sub.scan());
+    }
     room.on(RoomEvent.Disconnected, () => setStatus("Disconnected"));
     room.on(RoomEvent.TrackSubscribed, (track) => {
       if (track.kind === "audio") {
@@ -199,7 +253,8 @@ listenBtn.addEventListener("click", async () => {
         setStatus("Listening 🎧");
       }
     });
-    await room.connect(url, token);
+    await (listed ? room.connect(url, token, { autoSubscribe: false }) : room.connect(url, token));
+    if (sub) sub.scan();
     listenBtn.textContent = "Listening…";
     listenBtn.disabled = true;
   } catch (e) {

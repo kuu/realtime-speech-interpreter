@@ -15,8 +15,9 @@ import { filterEnglish, filterJapanese, hasWords } from "./fillers.js";
 import { log } from "./log.js";
 import type { Chunk } from "./segmenter.js";
 import { SpeedController, spokenChars, synthesizeWithFallback } from "./speed-control.js";
-import { activeReadings } from "./polly-readings.js";
+import { activeReadings, type Readings } from "./polly-readings.js";
 import type { CaptionPublisher } from "./caption-publisher.js";
+import type { LaneSettings } from "./lane-settings.js";
 
 export interface QueuedChunk extends Chunk {
   t0: number; // wall ms corresponding to Transcribe stream time 0
@@ -29,16 +30,21 @@ interface Item extends QueuedChunk {
 
 const pollyClient = new PollyClient({ region: config.region, maxAttempts: 3 });
 
-async function synthesizeOnce(text: string, ssml: boolean): Promise<Buffer> {
+interface PollySettings {
+  voiceId: string;
+  engine: string;
+  sampleRateHertz: number;
+}
+async function synthesizeOnceWith(polly: PollySettings, text: string, ssml: boolean): Promise<Buffer> {
   return withTimeout(async (abortSignal) => {
     const res = await pollyClient.send(
       new SynthesizeSpeechCommand({
         Text: text,
         TextType: ssml ? "ssml" : "text",
-        VoiceId: config.polly.voiceId as any,
-        Engine: config.polly.engine as any,
+        VoiceId: polly.voiceId as any,
+        Engine: polly.engine as any,
         OutputFormat: "pcm",
-        SampleRate: String(config.polly.sampleRateHertz),
+        SampleRate: String(polly.sampleRateHertz),
       }),
       { abortSignal },
     );
@@ -52,6 +58,14 @@ async function synthesizeOnce(text: string, ssml: boolean): Promise<Buffer> {
   });
 }
 
+const synthesizeOnce = (text: string, ssml: boolean): Promise<Buffer> => synthesizeOnceWith(config.polly, text, ssml);
+// Synthesizer of one lane: its voice and engine, its readings (null = none).
+export function makeSynthesizer(polly: PollySettings, readings: () => Readings | null): Synthesizer {
+  return (text, rate, tag) =>
+    synthesizeWithFallback(text, rate, readings(), (payload, ssml) => synthesizeOnceWith(polly, payload, ssml), (err) =>
+      log.warn(`${tag} SSML synth failed, retrying as plain text: ${String(err)}`),
+    );
+}
 // rate 100 and no readings hit = plain text. Otherwise SSML (readings and/or prosody); falls back
 // to plain text if Polly rejects the SSML.
 export type Synthesizer = (text: string, rate: number, tag: string) => Promise<{ pcm: Buffer; rate: number; hits: number }>;
@@ -83,7 +97,13 @@ export class ChunkPlayer {
   // Running estimates of Translate / Polly time, used to project a chunk's start time.
   private estTranslateMs = 150;
   private estSynthMs = 400;
-  private readonly speed = new SpeedController(config.playback.speed);
+  private readonly speed: SpeedController;
+  private readonly speedCfg: typeof config.playback.speed;
+  private readonly sampleRateHertz: number;
+  private readonly jaSource: boolean; // the chunks are Japanese (a ja-JP source lane): no English fillers or corrections
+  private readonly jaTarget: boolean;
+  private readonly k: { src: string; out: string }; // log field names: en/ja on the English-to-Japanese lane, src/out otherwise
+  private readonly synth: Synthesizer;
   // Wall time when the last pushed audio finishes playing (for the speed reset after silence).
   private lastAudioEndWall = Number.NEGATIVE_INFINITY;
 
@@ -95,12 +115,32 @@ export class ChunkPlayer {
     private readonly engine: TranslationEngine = new TranslateOnlyEngine(),
     // Live captions: undefined (or not enabled) = no timers, no events, no behaviour change.
     private readonly captions?: CaptionPublisher,
-    private readonly synth: Synthesizer = synthesize,
+    synth?: Synthesizer,
+    // Lane settings (two-lane deploy or a non-default single lane). Absent = today's behaviour on the global config.
+    private readonly lane?: LaneSettings,
+    // Two-lane deploy: log lines carry ch=<id>.
+    private readonly labelChannel = false,
+    // Readings of a lane with an English target (polly-readings-en.csv); ignored for a Japanese target.
+    readingsEn: Readings | null = null,
   ) {
+    this.speedCfg = lane?.speed ?? config.playback.speed;
+    this.speed = new SpeedController(this.speedCfg);
+    this.sampleRateHertz = lane?.polly.sampleRateHertz ?? config.polly.sampleRateHertz;
+    this.jaSource = lane ? /^ja(-|$)/i.test(lane.source) : false;
+    this.jaTarget = lane ? lane.target === "ja" : true;
+    this.k = this.jaSource ? { src: "src", out: "out" } : { src: "en", out: "ja" };
+    this.synth =
+      synth ??
+      (lane
+        ? makeSynthesizer(lane.polly, this.jaTarget ? activeReadings : () => readingsEn)
+        : synthesize);
     this.ctx = new ContextBuffer(engine.contextChunks, engine.contextResetMs);
     void this.worker();
   }
 
+  private tagOf(seq: number): string {
+    return this.labelChannel && this.lane ? `[chunk ${seq} ch=${this.lane.id}]` : `[chunk ${seq}]`;
+  }
   // Synchronous: never blocks the transcript loop.
   enqueue(chunk: QueuedChunk): void {
     const item: Item = { ...chunk, seq: ++this.seq };
@@ -111,10 +151,10 @@ export class ChunkPlayer {
       .map(([id, n]) => (Object.keys(chunk.resultCounts).length > 1 ? `${id.slice(0, 8)}:${n}` : id.slice(0, 8)))
       .join(",");
     log.info(
-      `[chunk ${item.seq}] COMMIT reason=${chunk.reason} mode=${config.segmentation.mode} words=${chunk.words} ` +
+      `${this.tagOf(item.seq)} COMMIT reason=${chunk.reason} mode=${this.jaSource ? config.jaSegmentation.mode : config.segmentation.mode} words=${chunk.words} ` +
         (chunk.merged ? `merged=${chunk.merged} ` : "") +
         `result=${results} audio=${chunk.audioStart.toFixed(2)}-${chunk.audioEnd.toFixed(2)}s ` +
-        `commitLagMs=${Math.round(chunk.committedAt - lastWordWall)} queueDepth=${this.depth()} en="${chunk.english}"`,
+        `commitLagMs=${Math.round(chunk.committedAt - lastWordWall)} queueDepth=${this.depth()} ${this.k.src}="${chunk.english}"`,
     );
     this.signal();
   }
@@ -136,7 +176,7 @@ export class ChunkPlayer {
     const s = this.stats;
     const avg = (v: number) => (s.played ? Math.round(v / s.played) : 0);
     return (
-      `[summary] ${label} committed=${s.committed} played=${s.played} dropped=${s.dropped} skipped=${s.skipped} failed=${s.failed} ` +
+      `[summary]${this.labelChannel && this.lane ? ` ch=${this.lane.id}` : ""} ${label} committed=${s.committed} played=${s.played} dropped=${s.dropped} skipped=${s.skipped} failed=${s.failed} ` +
       `synthBytes=${s.synthBytes} writtenBytes=${s.writtenBytes} sped=${s.sped} ` +
       `avgE2eFirstWordMs=${avg(s.sumE2eFirst)} avgE2eLastWordMs=${avg(s.sumE2eLast)} ` +
       `maxBacklogMs=${Math.round(s.maxBacklogMs)} maxPlayedBacklogMs=${Math.round(s.maxE2eLast)} queueDepth=${this.depth()}`
@@ -164,7 +204,7 @@ export class ChunkPlayer {
       } catch (err) {
         // process() handles its own errors; this is a last-resort guard.
         this.stats.failed++;
-        log.error(`[chunk ${item.seq}] FAILED stage=internal err=${String(err)}`);
+        log.error(`${this.tagOf(item.seq)} FAILED stage=internal err=${String(err)}`);
       } finally {
         this.busy = false;
       }
@@ -172,9 +212,10 @@ export class ChunkPlayer {
   }
 
   private async process(c: Item): Promise<void> {
-    const tag = `[chunk ${c.seq}]`;
+    const tag = this.tagOf(c.seq);
     const f = config.fillers;
-    const enFiltered = f.enabled
+    // A Japanese source lane: fillers were removed by the Japanese segmenter, and the English corrections do not apply.
+    const enFiltered = f.enabled && !this.jaSource
       ? filterEnglish(c.english, f.words, f.phrases)
       : { text: c.english, removed: [] as string[] };
     const fillers = [...enFiltered.removed];
@@ -182,10 +223,10 @@ export class ChunkPlayer {
       // Filler-only chunk: nothing to translate. Its words were committed (offset advanced)
       // by the segmenter, so nothing is lost or re-emitted.
       this.stats.skipped++;
-      log.info(`${tag} SKIPPED reason=filler-only fillers="${fillers.join(",")}" en="${c.english}"`);
+      log.info(`${tag} SKIPPED reason=filler-only fillers="${fillers.join(",")}" ${this.k.src}="${c.english}"`);
       return;
     }
-    const { text: english, applied } = config.correction.enabled
+    const { text: english, applied } = config.correction.enabled && !this.jaSource
       ? applyCorrections(enFiltered.text)
       : { text: enFiltered.text, applied: [] as string[] };
 
@@ -207,18 +248,18 @@ export class ChunkPlayer {
       japanese = result.text;
     } catch (err) {
       this.stats.failed++;
-      log.error(`${tag} FAILED stage=translate err=${String(err)} en="${english}"`);
+      log.error(`${tag} FAILED stage=translate err=${String(err)} ${this.k.src}="${english}"`);
       return;
     }
     const tTranslated = Date.now();
     this.logEngineFallback(tag, result, english);
-    if (f.enabled && japanese) {
+    if (f.enabled && japanese && this.jaTarget) {
       const jaFiltered = filterJapanese(japanese, f.jaPatterns);
       if (jaFiltered.removed.length > 0) {
         fillers.push(...jaFiltered.removed);
         if (!hasWords(jaFiltered.text)) {
           this.stats.skipped++;
-          log.info(`${tag} SKIPPED reason=ja-filler-only fillers="${fillers.join(",")}" ja="${japanese}" en="${english}"`);
+          log.info(`${tag} SKIPPED reason=ja-filler-only fillers="${fillers.join(",")}" ${this.k.out}="${japanese}" ${this.k.src}="${english}"`);
           return;
         }
         japanese = jaFiltered.text;
@@ -226,7 +267,7 @@ export class ChunkPlayer {
     }
     if (!japanese) {
       this.stats.failed++;
-      log.warn(`${tag} FAILED stage=translate err=empty-translation en="${english}"`);
+      log.warn(`${tag} FAILED stage=translate err=empty-translation ${this.k.src}="${english}"`);
       return;
     }
 
@@ -238,7 +279,7 @@ export class ChunkPlayer {
     const backlogMs = this.projectedBacklogMs(c, this.estSynthMs);
     if (this.dropForBacklog(c, backlogMs)) return;
     this.stats.maxBacklogMs = Math.max(this.stats.maxBacklogMs, backlogMs);
-    const sp = config.playback.speed;
+    const sp = this.speedCfg;
     const estJaMs = sp.msPerChar * spokenChars(japanese);
     const d = this.speed.decide({
       backlogMs,
@@ -255,24 +296,30 @@ export class ChunkPlayer {
       ({ pcm, rate, hits: readingsHits } = await this.synth(japanese, wantRate, tag));
     } catch (err) {
       this.stats.failed++;
-      log.error(`${tag} FAILED stage=synth err=${String(err)} ja="${japanese}"`);
+      log.error(`${tag} FAILED stage=synth err=${String(err)} ${this.k.out}="${japanese}"`);
       return;
     }
     const tSynth = Date.now();
     this.estSynthMs = ema(this.estSynthMs, tSynth - tTranslated);
     if (rate !== 100) this.stats.sped++;
     this.stats.synthBytes += pcm.length;
-    const audioMs = Math.round(pcm.length / ((config.polly.sampleRateHertz * 2) / 1000));
+    const audioMs = Math.round(pcm.length / ((this.sampleRateHertz * 2) / 1000));
     this.speed.recordAudio(audioMs);
     // The chunk is committed to playback: later LLM requests see what the listener actually heard.
-    this.ctx.push({ en: english, ja: japanese, session: c.session, srcEndWall: c.t0 + c.audioEnd * 1000 });
+    // PreviousItem keeps en = the English text and ja = the Japanese text, whichever side is the source.
+    this.ctx.push({
+      en: this.jaSource ? japanese : english,
+      ja: this.jaSource ? english : japanese,
+      session: c.session,
+      srcEndWall: c.t0 + c.audioEnd * 1000,
+    });
     const corr = applied.length ? ` [corrected: ${applied.join(", ")}]` : "";
     const fill = fillers.length ? ` fillers="${fillers.join(",")}" enTranslated="${english}"` : "";
     log.info(
       `${tag} SYNTH translateMs=${tTranslated - tStart} synthMs=${tSynth - tTranslated} level=${d.level} rate=${rate} ` +
         `backlogMs=${Math.round(backlogMs)} signalMs=${Math.round(d.signalMs)} estMs=${Math.round(estJaMs)} ` +
         `speedWhy=${d.why} sinkQueuedMs=${Math.round(sinkQueuedMs)} queueDepth=${this.depth()}${engineFields(result)} readings=${readingsHits} ` +
-        `pcmBytes=${pcm.length} audioMs=${audioMs} ja="${japanese}"${fill}${corr}`,
+        `pcmBytes=${pcm.length} audioMs=${audioMs} ${this.k.out}="${japanese}"${fill}${corr}`,
     );
 
     const playStart = Date.now();
@@ -331,11 +378,11 @@ export class ChunkPlayer {
     if (r.rejected) {
       log.warn(
         `${tag} LLM_REJECT rule=${r.rejected.rule} detail="${oneLine(r.detail ?? "")}" ` +
-          `ja="${oneLine(r.rejected.ja)}" en="${english}"`,
+          `${this.k.out}="${oneLine(r.rejected.ja)}" ${this.k.src}="${english}"`,
       );
     } else if (!QUIET_REASONS.has(r.fallbackReason ?? "")) {
       log.warn(
-        `${tag} LLM_FALLBACK reason=${r.fallbackReason} llmMs=${r.llmMs ?? 0} detail="${oneLine(r.detail ?? "")}" en="${english}"`,
+        `${tag} LLM_FALLBACK reason=${r.fallbackReason} llmMs=${r.llmMs ?? 0} detail="${oneLine(r.detail ?? "")}" ${this.k.src}="${english}"`,
       );
     }
   }
@@ -355,8 +402,8 @@ export class ChunkPlayer {
     this.stats.dropped++;
     this.stats.maxBacklogMs = Math.max(this.stats.maxBacklogMs, backlogMs);
     log.warn(
-      `[chunk ${c.seq}] DROPPED reason=backlog backlogMs=${Math.round(backlogMs)} capMs=${cap} ` +
-        `newerQueued=${this.queue.length} en="${c.english}"`,
+      `${this.tagOf(c.seq)} DROPPED reason=backlog backlogMs=${Math.round(backlogMs)} capMs=${cap} ` +
+        `newerQueued=${this.queue.length} ${this.k.src}="${c.english}"`,
     );
     return true;
   }

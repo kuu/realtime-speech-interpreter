@@ -9,7 +9,7 @@
 // Exits 1 and prints every problem found if a file breaks the rules.
 // Rules: summarised from the Transcribe custom-vocabulary table docs and the
 // Translate custom-terminology docs.
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveDictionaryDir, settingFromEnv } from "./lib/dir.mjs";
@@ -274,6 +274,118 @@ function validateReadings() {
   }
   return { entries: terms.size };
 }
+// ---------- Reverse direction (Japanese speech to English); each file is validated only when it exists ----------
+// Transcribe ja-JP custom vocabulary, table format. Documented rules (Transcribe developer guide, "Creating a custom
+// vocabulary using a table" and "Character sets for custom vocabularies", read 2026-11-22): columns Phrase, SoundsLike,
+// IPA, DisplayAs, TAB separated; Phrase present on every row, from the language's character set, no spaces (words joined
+// by a hyphen), no digits, no leading, trailing or repeated hyphen; SoundsLike and IPA stay empty; for ja-JP the DisplayAs
+// field supports hiragana, katakana, kanji and full-width capital letters. The ja-JP Phrase character set is a zip file
+// that is not read here, so the check uses a conservative subset: hiragana, katakana, kanji, 々, the long-vowel mark and
+// the hyphen. A Phrase outside it is an error; a DisplayAs outside the documented set is a WARNING, because the
+// builder's default (DisplayAs = the English name) is outside it and is verified only by one create-vocabulary test.
+const JA_PHRASE_WORD = /^[\u3041-\u3096\u30a1-\u30fa\u30fc\u3005\u3400-\u4dbf\u4e00-\u9fff]+$/u;
+const JA_DISPLAY_OK = /^[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u3005\uff21-\uff3a]+$/u;
+function validateVocabularyJa(file) {
+  const name = "transcribe-vocabulary-ja.txt";
+  const buf = readFileSync(file);
+  const size = statSync(file).size;
+  if (size >= VOCAB_MAX_BYTES) err(name, 0, `file is ${size} bytes; must be < ${VOCAB_MAX_BYTES}`);
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) err(name, 1, "file starts with a UTF-8 BOM");
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  if (text.includes("\uFFFD")) err(name, 0, "file is not valid UTF-8");
+  if (!text.endsWith("\n")) err(name, 0, "file must end with a newline");
+  const lines = text.replace(/\r?\n$/, "").split(/\r?\n/);
+  if (lines[0] !== VOCAB_HEADER.join("\t")) err(name, 1, `header must be "${VOCAB_HEADER.join("<TAB>")}", got "${lines[0].replace(/\t/g, "<TAB>")}"`);
+  const seen = new Map();
+  let entries = 0;
+  let latinDisplay = 0;
+  let firstLatin = 0;
+  for (let n = 1; n < lines.length; n++) {
+    const ln = n + 1;
+    const line = lines[n];
+    if (line === "") {
+      err(name, ln, "blank line");
+      continue;
+    }
+    if ([...line].length > VOCAB_MAX_LINE) err(name, ln, `line longer than ${VOCAB_MAX_LINE} chars`);
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(line)) err(name, ln, "control character");
+    const cols = line.split("\t");
+    if (cols.length !== VOCAB_HEADER.length) {
+      err(name, ln, `expected ${VOCAB_HEADER.length} TAB-separated columns, got ${cols.length}`);
+      continue;
+    }
+    entries++;
+    const [phrase, sounds, ipa, display] = cols;
+    if (phrase === "") err(name, ln, "Phrase is empty");
+    else {
+      if (/ |\u3000/.test(phrase)) err(name, ln, `Phrase "${phrase}" contains a space (join words with a hyphen)`);
+      else if (/^-|-$|--/.test(phrase)) err(name, ln, `Phrase "${phrase}" has a leading, trailing or repeated hyphen`);
+      else if (!phrase.split("-").every((w) => JA_PHRASE_WORD.test(w))) {
+        err(name, ln, `Phrase "${phrase}" has characters outside hiragana, katakana, kanji, 々, ー and hyphen (digits and Latin letters are not allowed in a ja-JP Phrase)`);
+      }
+      if (seen.has(phrase)) err(name, ln, `duplicate Phrase "${phrase}" (first on line ${seen.get(phrase)})`);
+      else seen.set(phrase, ln);
+    }
+    if (sounds !== "" || ipa !== "") err(name, ln, "SoundsLike and IPA must be empty (the builder does not use them)");
+    if (display !== display.trim()) err(name, ln, `DisplayAs "${display}" has leading/trailing whitespace`);
+    if (display !== "" && !JA_DISPLAY_OK.test(display)) {
+      latinDisplay++;
+      if (!firstLatin) firstLatin = ln;
+    }
+  }
+  if (latinDisplay > 0) {
+    warnings.push(
+      `${name}:${firstLatin}: ${latinDisplay} row(s) have a DisplayAs outside hiragana, katakana, kanji and full-width capital letters (for example the English product name). ` +
+        "The Transcribe page lists only those characters as supported for ja-JP DisplayAs. Run one create-vocabulary test (state READY) before relying on it; if it fails, " +
+        "drop DisplayAs and let the glossary map the transcript form back to the English name.",
+    );
+  }
+  return { entries, size };
+}
+function validateReadingsEn(file) {
+  const name = "polly-readings-en.csv";
+  const buf = readFileSync(file);
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) err(name, 1, "file starts with a UTF-8 BOM");
+  const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  if (text.includes("\uFFFD")) err(name, 0, "file is not valid UTF-8");
+  if (!text.endsWith("\n")) err(name, 0, "file must end with a newline");
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  let header = false;
+  const terms = new Map();
+  for (let i = 0; i < lines.length; i++) {
+    const ln = i + 1;
+    const line = lines[i];
+    if (line.trim() === "" || line.startsWith("#")) {
+      if (line.trim() === "" && i < lines.length - 1) err(name, ln, "blank line (use # comments)");
+      continue;
+    }
+    const cols = line.split(",");
+    if (!header) {
+      header = true;
+      if (cols.join(",") !== "term,reading") err(name, ln, `header must be exactly "term,reading", got "${line}"`);
+      continue;
+    }
+    if (cols.length !== 2) {
+      err(name, ln, `expected 2 columns (term,reading; no commas or quotes), got ${cols.length}`);
+      continue;
+    }
+    const [term, reading] = cols;
+    if (term.trim() === "") err(name, ln, "term is empty");
+    if (reading.trim() === "") err(name, ln, `reading for "${term}" is empty`);
+    if (term !== term.trim() || reading !== reading.trim()) err(name, ln, `"${term}": leading/trailing whitespace`);
+    if (/[\t"<>&]/.test(term)) err(name, ln, `term "${term}" contains TAB, ", <, > or &`);
+    if (/  /.test(term) || /  /.test(reading)) err(name, ln, `"${term}": double space`);
+    if (/[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/u.test(reading)) {
+      err(name, ln, `reading "${reading}" for "${term}" contains Japanese characters (katakana belongs to the Japanese voice only)`);
+    } else if (!/^[A-Za-z0-9 '.\-]+$/.test(reading)) {
+      err(name, ln, `reading "${reading}" for "${term}" has characters outside English letters, digits, space, apostrophe, period and hyphen`);
+    }
+    if (terms.has(term)) err(name, ln, `duplicate term "${term}" (first on line ${terms.get(term)})`);
+    else terms.set(term, ln);
+  }
+  if (!header) err(name, 1, "file has no header");
+  return { entries: terms.size };
+}
 /** Validate the three generated files in `dir`. Returns { errors, warnings, counts }. */
 export function validateDictionaryDir(dir, readingsFile) {
   VOCAB = join(dir, "transcribe-vocabulary.txt");
@@ -290,6 +402,19 @@ export function validateDictionaryDir(dir, readingsFile) {
       counts[key] = { entries: 0, size: 0 };
     }
   }
+  // The reverse-direction files exist only when terms.csv has rows for them.
+  for (const [key, file, fn] of [
+    ["vocabularyJa", "transcribe-vocabulary-ja.txt", validateVocabularyJa],
+    ["readingsEn", "polly-readings-en.csv", validateReadingsEn],
+  ]) {
+    const f = join(dir, file);
+    if (!existsSync(f)) continue;
+    try {
+      counts[key] = fn(f);
+    } catch (e) {
+      err(file, 0, `cannot read file: ${e.message}`);
+    }
+  }
   return { errors: [...errors], warnings: [...warnings], counts };
 }
 function main() {
@@ -303,6 +428,8 @@ function main() {
   console.log(`transcribe-vocabulary.txt: ${counts.vocabulary.entries} entries, ${counts.vocabulary.size} bytes`);
   console.log(`translate-terminology.csv: ${counts.terminology.entries} entries, ${counts.terminology.size} bytes`);
   console.log(`polly-readings.csv: ${counts.readings.entries} entries`);
+  if (counts.vocabularyJa) console.log(`transcribe-vocabulary-ja.txt: ${counts.vocabularyJa.entries} entries, ${counts.vocabularyJa.size} bytes`);
+  if (counts.readingsEn) console.log(`polly-readings-en.csv: ${counts.readingsEn.entries} entries`);
   for (const w of warns) console.warn(`WARN ${w}`);
   if (errs.length) {
     console.error(`\nFAILED: ${errs.length} problem(s)`);

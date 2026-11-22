@@ -17,7 +17,7 @@ import { askBedrock, buildRequest, costUsd, defaultModelId, defaultRegion, estim
 import { parseCsv, serializeCsv } from "./lib/csv.mjs";
 import { REPO_ROOT, resolveDictionaryDir, settingFromEnv } from "./lib/dir.mjs";
 import { extractCandidates, loadStoplist, logItems, textItems } from "./lib/extract.mjs";
-import { COLUMNS, OUTPUT_FILES, TERMS_HEADER, TermsError, derivePhrase, parseTerms } from "./lib/terms.mjs";
+import { COLUMNS, OPTIONAL_OUTPUT_FILES, OUTPUT_FILES, TERMS_HEADER, TermsError, derivePhrase, parseTerms } from "./lib/terms.mjs";
 import { validateDictionaryDir } from "./validate.mjs";
 
 const out = (s) => process.stdout.write(s + "\n");
@@ -62,8 +62,14 @@ export function readTerms(dir) {
   return parseTerms(readFileSync(f, "utf8"));
 }
 
+// The three files of today, always; the reverse-direction files only when at least one row has their flag.
 export function renderAll(rows) {
-  return Object.fromEntries(Object.entries(OUTPUT_FILES).map(([name, fn]) => [name, fn(rows)]));
+  const files = Object.fromEntries(Object.entries(OUTPUT_FILES).map(([name, fn]) => [name, fn(rows)]));
+  for (const [name, fn] of Object.entries(OPTIONAL_OUTPUT_FILES)) {
+    const text = fn(rows);
+    if (text !== null) files[name] = text;
+  }
+  return files;
 }
 
 function firstDiff(want, have) {
@@ -79,7 +85,11 @@ function firstDiff(want, have) {
 export function checkDir(dir) {
   const { rows } = readTerms(dir);
   const problems = [];
-  for (const [name, text] of Object.entries(renderAll(rows))) {
+  const rendered = renderAll(rows);
+  for (const name of Object.keys(OPTIONAL_OUTPUT_FILES)) {
+    if (!(name in rendered) && existsSync(join(dir, name))) problems.push(`${name}: exists but terms.csv has no rows for it (run generate to remove it)`);
+  }
+  for (const [name, text] of Object.entries(rendered)) {
     const f = join(dir, name);
     if (!existsSync(f)) problems.push(`${name}: missing (run generate)`);
     else {
@@ -104,6 +114,8 @@ export function generate(dir) {
       writeFileSync(stage, text);
       renameSync(stage, join(dir, name));
     }
+    // A generated optional file whose rows are gone is removed, so a stale vocabulary or terminology is never uploaded.
+    for (const name of Object.keys(OPTIONAL_OUTPUT_FILES)) if (!(name in files)) rmSync(join(dir, name), { force: true });
     return { counts: v.counts, warnings: v.warnings, notices };
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -130,6 +142,9 @@ function cmdGenerate(argv) {
   out(`  transcribe-vocabulary.txt: ${r.counts.vocabulary.entries} entries`);
   out(`  translate-terminology.csv: ${r.counts.terminology.entries} entries`);
   out(`  polly-readings.csv: ${r.counts.readings.entries} entries`);
+  if (r.counts.vocabularyJa) out(`  transcribe-vocabulary-ja.txt: ${r.counts.vocabularyJa.entries} entries`);
+  if (r.counts.terminologyJaEn) out(`  translate-terminology-ja-en.csv: ${r.counts.terminologyJaEn.entries} entries`);
+  if (r.counts.readingsEn) out(`  polly-readings-en.csv: ${r.counts.readingsEn.entries} entries`);
   for (const w of r.warnings) out(`WARN ${w}`);
   return 0;
 }

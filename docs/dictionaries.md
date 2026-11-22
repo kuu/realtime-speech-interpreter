@@ -79,11 +79,14 @@ and `suggest` appends rows without touching the rest of the file. Nothing here n
 `SoundsLike` and `IPA` do not appear: Transcribe no longer uses them and the validator requires them to be empty.
 
 **Both directions.** The flag names say their direction (`translate_en_ja`) and the text columns are neutral (`en`,
-`ja`). The Japanese to English direction ([#9](https://github.com/kuu/realtime-speech-interpreter/issues/9)) adds the
-flags `transcribe_ja`, `translate_ja_en` and `polly_en` to this same file. The builder already accepts those three
-column names, ignores them and prints a note, so a file written for the future still loads. Any other unknown column
-is an error, so a typo does not go unnoticed.
-
+`ja`). The Japanese to English direction ([#9](https://github.com/kuu/realtime-speech-interpreter/issues/9)) uses the
+flags `transcribe_ja`, `translate_ja_en` and `polly_en` in this same file, with the optional columns `reading_en`,
+`phrase_ja`, `ja_variants` and the `*_pos` columns `transcribe_ja_pos`, `translate_ja_en_pos`, `polly_en_pos`. All of
+them are optional: a `terms.csv` without them is valid and generates exactly today's three files. The builder writes
+`transcribe-vocabulary-ja.txt`, `translate-terminology-ja-en.csv` and `polly-readings-en.csv` only when at least one row
+has the matching flag (design: [bilingual-channels.md](bilingual-channels.md#dictionaries-per-direction)); the full guide
+for the new columns lands with the two-channel documentation. Any other unknown column is an error, so a typo does not
+go unnoticed.
 **Rules.**
 
 - A flag set without its required field is an error that names the line. A row is never skipped silently.

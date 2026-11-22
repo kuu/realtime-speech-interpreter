@@ -547,8 +547,13 @@ the table has the four columns `Phrase`, `SoundsLike`, `IPA` and `DisplayAs`, TA
 text with LF or CRLF; `SoundsLike` and `IPA` are ignored and stay empty; `Phrase` must be present on every row, takes only
 characters from the language's character set page, no spaces (words joined by a hyphen), no digits, and none of the
 leading, trailing or repeated hyphen, period and apostrophe patterns; `DisplayAs` is optional, may hold spaces, digits
-and symbols, and replaces the phrase in the output. The page does not list per-language exceptions for `DisplayAs`, so
-a Latin `DisplayAs` for a Japanese `Phrase` is expected to work but is **unverified**.
+and symbols, and replaces the phrase in the output. For Japanese the page
+[Character sets for custom vocabularies](https://docs.aws.amazon.com/transcribe/latest/dg/charsets.html) (read 2026-11-22)
+says that `DisplayAs` supports hiragana, katakana, kanji and full-width capital letters, and that the `Phrase` characters are
+listed in a zip file that is not read here (the validator checks a conservative subset: hiragana, katakana, kanji, `々`, `ー`
+and the hyphen). **Half-width Latin letters are not in the documented `DisplayAs` set**, so the builder's default
+(`DisplayAs` = the English name) is **unverified and possibly rejected**; the validator prints a warning for it, not an error,
+and the owner's `create-vocabulary` test decides. The fallback below applies if it is rejected.
 
 **The acceptance test is deferred.** Creating a test vocabulary in `ja-JP` is an AWS write (`create-vocabulary`), which
 this work does not run. The build relies on the documented rules above, and the owner runs one `create-vocabulary`
@@ -572,9 +577,9 @@ valid unchanged.
 #### Generated names and warnings
 
 The generated resource names are `<transcribeVocabulary>-ja` and `<translateTerminology>-ja-en`, where the part in
-angle brackets is the lane 1 value (`dictionaries.*` name). Two optional keys override them:
-`dictionaries.transcribeVocabularyJa` and `dictionaries.translateTerminologyJaEn` set the lane keys
-`transcribeVocabulary` and `translateTerminology` of the `ja-JP` lane. When the generated file
+angle brackets is the lane 1 value (`dictionaries.*` name). The upload script reads two optional environment variables to
+override them (`DICT_NAME_JA`, `DICT_NAME_JA_EN`), and the lane keys `transcribeVocabulary` and `translateTerminology` of the
+`ja-JP` channel carry the name the app uses (there is no separate `dictionaries.*` key for them). When the generated file
 `transcribe-vocabulary-ja.txt` exists (so `transcribe_ja` rows exist) but the `ja-JP` lane has no vocabulary set, CDK
 synth prints a warning (not an error) and `doctor` warns.
 

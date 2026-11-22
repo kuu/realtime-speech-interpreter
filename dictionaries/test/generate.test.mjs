@@ -79,11 +79,12 @@ test("a bad flag value, unknown column, comma in a field, and a digit phrase are
   assert.throws(() => parseTerms(HEADER + '"A, B",,,y,,,,,,,,,\n'), /contains a comma/);
   assert.throws(() => parseTerms(HEADER + "SigV4,,,y,,,,,,,,,\n"), /phrase required/);
 });
-test("reserved reverse-direction columns are ignored with a notice", () => {
-  const { rows, notices } = parseTerms("en,transcribe_en,transcribe_ja,polly_en\nHLS,y,y,y\n");
+test("the former reserved reverse-direction columns are real flags now: no notice, and a flag needs its fields", () => {
+  const { rows, notices } = parseTerms("en,transcribe_en,polly_en,reading_en\nHLS,y,y,aitch ell ess\n");
   assert.equal(rows.length, 1);
-  assert.equal(notices.length, 2);
-  assert.equal(renderReadings(rows).split("\n").pop(), "");
+  assert.deepEqual(notices, []);
+  assert.equal(renderReadings(rows).split("\n").pop(), "", "the Japanese readings file is untouched by polly_en");
+  assert.throws(() => parseTerms("en,transcribe_en,transcribe_ja,polly_en\nHLS,y,y,y\n"), /transcribe_ja=y needs phrase_ja or reading/);
 });
 test("duplicates: terminology is case-insensitive, Polly is exact, alias rows may repeat an en", () => {
   assert.throws(() => parseTerms(HEADER + "Foo,F,,,y,,,,,,,,\nfoo,F,,,y,,,,,,,,\n"), /duplicate terminology en/);

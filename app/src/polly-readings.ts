@@ -133,3 +133,33 @@ export function readingsStartupLine(s: ReadingsState = active): string {
   const status = s.mode === "off" ? "off" : s.loaded ? "on" : "on (LOAD FAILED, running without readings)";
   return `  pollyReadings=${status} file=${s.file} entries=${s.entries}`;
 }
+
+// ---- English readings (lane with an English target) ---------------------------------------------------------------
+// polly-readings-en.csv has the same format. The alias is the spoken form in English letters: an alias with katakana
+// (or any Japanese character) is rejected at load, because katakana belongs only to the Japanese voice.
+const JAPANESE_CHAR = /[\u3040-\u30ff\u3400-\u9fff]/u;
+export function parseReadingsEn(text: string): ParsedReadings {
+  const parsed = parseReadings(text);
+  const entries: ReadingEntry[] = [];
+  const problems = [...parsed.problems];
+  for (const e of parsed.entries) {
+    if (JAPANESE_CHAR.test(e.reading)) problems.push(`term "${e.term}": the alias contains Japanese characters (rejected)`);
+    else entries.push(e);
+  }
+  return { entries, problems };
+}
+// Loads the English readings of a lane. A missing file is normal (no readings); a read or parse problem is a WARN.
+// Never throws, never touches the Japanese readings state.
+export function loadReadingsEn(file: string): Readings | null {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") log.warn(`[readings] cannot read ${file}: ${String(err)}; English voice runs without readings`);
+    return null;
+  }
+  const parsed = parseReadingsEn(text);
+  for (const p of parsed.problems) log.warn(`[readings] ${file}: ${p}`);
+  const r = createReadings(parsed.entries);
+  return r.size > 0 ? r : null;
+}

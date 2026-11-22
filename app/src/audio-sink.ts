@@ -5,6 +5,7 @@ import { closeSync, openSync, writeSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
 import { log } from "./log.js";
+import type { LaneSettings } from "./lane-settings.js";
 
 export interface AudioSink {
   connect(): Promise<void>;
@@ -71,11 +72,15 @@ export class FileAudioSink implements AudioSink {
   }
 }
 
-export async function createSink(): Promise<AudioSink> {
+// One sink per lane. No lane = lane 1 of today. A lane other than the first writes its own file (OUTPUT_FILE.<id>) and
+// uses its own LiveKit identity and track in the same room.
+export async function createSink(lane?: LaneSettings): Promise<AudioSink> {
+  const sampleRate = lane?.polly.sampleRateHertz ?? config.polly.sampleRateHertz;
   if (config.sink.kind === "file") {
-    return new FileAudioSink(config.sink.outputFile, config.polly.sampleRateHertz);
+    const path = lane && lane.index > 0 ? `${config.sink.outputFile}.${lane.id}` : config.sink.outputFile;
+    return new FileAudioSink(path, sampleRate);
   }
   // Imported lazily so file-sink runs never load the LiveKit native module.
   const { LiveKitAudioSink } = await import("./livekit-sink.js");
-  return new LiveKitAudioSink(config.polly.sampleRateHertz);
+  return new LiveKitAudioSink(sampleRate, lane ? { roomName: lane.livekit.roomName, identity: lane.livekit.identity, trackName: lane.livekit.trackName } : undefined);
 }

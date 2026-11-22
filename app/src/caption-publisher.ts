@@ -15,6 +15,7 @@ import {
   buildSpeechRetract,
   encodeCaptionEvent,
   type CaptionEvent,
+  type CaptionLane,
 } from "./caption-event.js";
 import { log } from "./log.js";
 import type { SegmenterTap } from "./segmenter.js";
@@ -25,6 +26,7 @@ export interface CaptionTransport {
 }
 
 const SENTENCE_END = new Set([".", "?", "!"]);
+const SENTENCE_END_JA = new Set(["。", "？", "！", "?", "!"]);
 export const SOURCE_FLUSH_MS = 250;
 export const JA_HOLD_MAX_MS = 5000;
 export const JA_CARRY_MS = 1000;
@@ -62,7 +64,15 @@ export class CaptionPublisher {
     private readonly jaHoldMs = JA_HOLD_MAX_MS,
     // How long the unfinished rest of a sentence waits after its result ended, for the next result to continue it.
     private readonly jaCarryMs = JA_CARRY_MS,
-  ) {}
+    // A lane other than the first (two-channel deploy): its topic, ch field, id prefix and languages. Absent = lane 1
+    // of today (topic "captions", events byte for byte as before).
+    private readonly lane?: CaptionLane,
+    readonly topic: string = CAPTION_TOPIC,
+  ) {
+    this.jaSource = lane?.sourceLang === "ja";
+  }
+  // The source speech is Japanese (no spaces between words) and the as-said speech is English.
+  private readonly jaSource: boolean;
 
   // True when events will actually be published (enabled and the sink has a data channel).
   get active(): boolean {
@@ -79,7 +89,7 @@ export class CaptionPublisher {
     durationMs: number;
   }): void {
     if (!this.active) return;
-    this.send(buildCaptionEvent({ ...a, seq: ++this.seq }), "caption");
+    this.send(buildCaptionEvent({ ...a, seq: ++this.seq, lane: this.lane }), "caption");
   }
 
   // Tap for one Segmenter. `t0()` = wall ms of Transcribe stream time 0 (for the lag figure only).
@@ -96,12 +106,14 @@ export class CaptionPublisher {
             if (skipComma && t.content === ",") continue;
             skipComma = false;
             text += t.content;
-            if (SENTENCE_END.has(t.content)) boundary = true;
+            if ((this.jaSource ? SENTENCE_END_JA : SENTENCE_END).has(t.content)) boundary = true;
           } else if (t.filler || isFiller(t.content)) {
             skipComma = true;
           } else {
             skipComma = false;
-            text += (text && !/^[.,?!;:]/.test(t.content) ? " " : "") + t.content;
+            // Japanese is joined as written (no spaces); two Latin words keep one.
+            const sep = this.jaSource ? (/[A-Za-z0-9]$/.test(text) && /^[A-Za-z0-9]/.test(t.content) ? " " : "") : text && !/^[.,?!;:]/.test(t.content) ? " " : "";
+            text += sep + t.content;
           }
         }
         if (text === "") return;
@@ -119,6 +131,7 @@ export class CaptionPublisher {
     if (!this.active || !this.japaneseSpeech) return undefined;
     interface Held { resultId: string; text: string; firstBase: number; lastEnd: number; timer: NodeJS.Timeout; ended: boolean; grace: NodeJS.Timeout | null }
     let held: Held | null = null;
+    const enSpeech = this.jaSource; // a lane with a Japanese source shows English speech as said
     const published = new Set<string>(); // results with words on the wire (a retract is owed if they flip)
     const emit = (resultId: string, text: string, boundary: boolean, final: boolean, firstBase: number, lastEnd: number): void => {
       if (text === "") return;
@@ -133,7 +146,7 @@ export class CaptionPublisher {
       held = null;
       clearTimeout(h.timer);
       if (h.grace) clearTimeout(h.grace);
-      emit(h.resultId, h.text, /[。？！?!]["')」』”]*$/.test(h.text), final, h.firstBase, h.lastEnd);
+      emit(h.resultId, h.text, (enSpeech ? /[.?!]["')\]”]*$/ : /[。？！?!]["')」』”]*$/).test(h.text), final, h.firstBase, h.lastEnd);
     };
     // The result ended without a sentence end: Transcribe often finalises a result in the middle of a sentence and the
     // next result continues it, so the rest is kept for jaCarryMs before it is published as it is.
@@ -167,9 +180,9 @@ export class CaptionPublisher {
             timer.unref?.();
             held = { resultId: id, text: "", firstBase: start, lastEnd: b.audioEnd, timer, ended: false, grace: null };
           }
-          held.text += t.content;
+          held.text += enSpeech && !t.punct && held.text !== "" ? ` ${t.content}` : t.content;
           if (typeof t.end === "number") held.lastEnd = t.end;
-          if (t.punct && /[。？！?!]/.test(t.content)) {
+          if (t.punct && (enSpeech ? /[.?!]/ : /[。？！?!]/).test(t.content)) {
             // the sentence is complete: publish it whole
             release(n === b.tokens.length && b.final);
           }
@@ -194,7 +207,7 @@ export class CaptionPublisher {
         if (!published.delete(id)) return;
         this.flush();
         this.stats.speechRetracted++;
-        this.send(buildSpeechRetract({ session, seq: ++this.seq, resultId: id }), "speech");
+        this.send(buildSpeechRetract({ session, seq: ++this.seq, resultId: id, lane: this.lane }), "speech");
       },
     };
   }
@@ -204,7 +217,7 @@ export class CaptionPublisher {
     this.stats.speechLagN++;
     this.stats.speechLagMax = Math.max(this.stats.speechLagMax, lagLast);
     log.debug(`[speech] seq=${seq} resultId=${resultId} audioEnd=${audioEnd.toFixed(2)} lagLastMs=${Math.round(lagLast)} lagFirstMs=${Math.round(lagFirst)} final=${final} text="${text}"`);
-    this.send(buildSpeechAppend({ session, n: ++this.speechN, seq, resultId, text, boundary, final, audioEnd }), "speech");
+    this.send(buildSpeechAppend({ session, n: ++this.speechN, seq, resultId, text, boundary, final, audioEnd, lane: this.lane }), "speech");
   }
   private appendSource(session: number, resultId: string, text: string, boundary: boolean, audioEnd: number, lagBase: number): void {
     this.appendBuffered("source", session, resultId, text, boundary, audioEnd, lagBase);
@@ -222,7 +235,7 @@ export class CaptionPublisher {
     if (cur && (cur.kind !== kind || cur.session !== session || cur.resultId !== resultId)) this.flush();
     if (this.buf) {
       const b = this.buf;
-      b.text += (/^[.,?!;:]/.test(text) ? "" : " ") + text;
+      b.text += (this.jaSource ? (/[A-Za-z0-9]$/.test(b.text) && /^[A-Za-z0-9]/.test(text) ? " " : "") : /^[.,?!;:]/.test(text) ? "" : " ") + text;
       b.boundary = b.boundary || boundary; // any sentence end in the batch
       b.audioEnd = audioEnd;
       b.lagBase = lagBase;
@@ -241,7 +254,7 @@ export class CaptionPublisher {
     // Words of that result still buffered would be sent just before the retract; flush keeps order.
     this.flush();
     this.stats.retracted++;
-    this.send(buildSourceRetract({ session, seq: ++this.seq, resultId }), "source");
+    this.send(buildSourceRetract({ session, seq: ++this.seq, resultId, lane: this.lane }), "source");
   }
 
   flush(): void {
@@ -267,6 +280,7 @@ export class CaptionPublisher {
         text: b.text,
         boundary: b.boundary,
         audioEnd: b.audioEnd,
+        lane: this.lane,
       }),
       "source",
     );
@@ -280,7 +294,7 @@ export class CaptionPublisher {
   private send(ev: CaptionEvent, kind: "caption" | "source" | "speech"): void {
     let p: Promise<void>;
     try {
-      p = Promise.resolve(this.transport.publishData!(encodeCaptionEvent(ev), CAPTION_TOPIC));
+      p = Promise.resolve(this.transport.publishData!(encodeCaptionEvent(ev), this.topic));
     } catch (err) {
       this.fail(err);
       return;
@@ -303,7 +317,7 @@ export class CaptionPublisher {
   }
 
   startupLine(): string {
-    return `  captions=${this.enabled ? "on" : "off"} topic=${CAPTION_TOPIC} schema=1 sourceLine=default-on` +
+    return `  captions=${this.enabled ? "on" : "off"} topic=${this.topic}${this.lane ? ` ch=${this.lane.ch}` : ""} schema=1 sourceLine=default-on` +
       (this.enabled ? ` jaSpeech=${this.japaneseSpeech ? "on" : "off"}` : "") +
       (this.enabled && !this.active ? " (sink has no data channel: nothing is sent)" : "");
   }
@@ -313,7 +327,7 @@ export class CaptionPublisher {
     const s = this.stats;
     const avg = s.lagN ? Math.round(s.lagSum / s.lagN) : 0;
     return (
-      `[captions] ${label} caption=${s.caption} source=${s.source} retracted=${s.retracted} failed=${s.failed} ` +
+      `[captions]${this.lane ? ` ch=${this.lane.ch}` : ""} ${label} caption=${s.caption} source=${s.source} retracted=${s.retracted} failed=${s.failed} ` +
       `sourceLagMs(avg/max)=${avg}/${Math.round(s.lagMax)}` +
       (this.japaneseSpeech
         ? ` speech=${s.speech} speechRetracted=${s.speechRetracted} speechLagMs(avg/max)=${s.speechLagN ? Math.round(s.speechLagSum / s.speechLagN) : 0}/${Math.round(s.speechLagMax)}`

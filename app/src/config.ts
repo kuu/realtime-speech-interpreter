@@ -586,6 +586,9 @@ export const config = {
     // dictionary folder). Local runs set POLLY_READINGS_FILE.
     readingsFile:
       str("POLLY_READINGS_FILE", "").trim() || fileURLToPath(new URL("../assets/polly-readings.csv", import.meta.url)),
+    // Readings of a lane with an English target (same format; aliases without Japanese characters). A missing file = none.
+    readingsFileEn:
+      str("POLLY_READINGS_EN_FILE", "").trim() || fileURLToPath(new URL("../assets/polly-readings-en.csv", import.meta.url)),
   },
 
   // Live captions on the LiveKit data channel (caption-event.ts). off = no data packets at all.

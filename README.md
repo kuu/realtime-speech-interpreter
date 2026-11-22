@@ -4,8 +4,8 @@
 
 Real-time speech-to-speech interpretation on AWS, English to Japanese first. A speaker talks English at an event.
 Attendees open a web page on their phones and hear Japanese about 6 seconds later. The audio goes from OBS over SRT
-to an app on AWS Fargate. The app uses Amazon Transcribe to get text, Amazon Translate or an Amazon Bedrock model
-to translate it, and Amazon Polly to speak it. A self-hosted LiveKit server delivers the audio to the browsers.
+to an app on AWS Fargate. The app uses Amazon Transcribe to get text, an Amazon Bedrock model
+(Claude Haiku 4.5) to translate it, with Amazon Translate as the backup translator, and Amazon Polly to speak it. A self-hosted LiveKit server delivers the audio to the browsers.
 
 
 This is a personal, unofficial open-source project. It is not an AWS product, it is not affiliated with, endorsed or
@@ -22,6 +22,7 @@ Details of the diagram: [docs/architecture.md](docs/architecture.md). The diagra
 |---|---|---|
 | One speaker, English to Japanese (talk, keynote) | **Supported** | The case this project was built and tested for. |
 | Japanese speech in the room is ignored | **Supported** | A language filter drops it, so a moderator or a question is not translated. |
+| Translation by an LLM, with Amazon Translate as the backup | **Supported** (default) | Claude Haiku 4.5 on Amazon Bedrock translates each chunk with context. Amazon Translate is the fallback and, with `-c translateEngine=translate`, a low-cost mode without Bedrock. |
 | Custom dictionaries and pronunciations | **Supported** | Edit files, run a script. See [docs/dictionaries.md](docs/dictionaries.md). |
 | Round table or fireside chat, several speakers | **Planned** | Needs speaker detection and a different voice per speaker. |
 | Q&A in two directions with two channels | **Built, live tests pending** | Channel 1: English to Japanese. Channel 2: Japanese to English, from the same audio. Set `channels` in `event.json` (see below and [docs/bilingual-channels.md](docs/bilingual-channels.md)); with no `channels` nothing changes. |
@@ -68,6 +69,8 @@ stack costs money, see [Costs](#costs).
 
 On macOS, `brew install ffmpeg-full` includes SRT. The plain `ffmpeg` formula does not.
 Use AWS credentials for the target account (`aws sts get-caller-identity` must work).
+Needs Amazon Bedrock access to Claude Haiku 4.5 in your Region (request access in the Bedrock console the first time).
+No Bedrock? Add `-c translateEngine=translate` to `cdk deploy` (Amazon Translate only, lower cost).
 
 **1. Clone and install**
 
@@ -119,7 +122,7 @@ cd cdk && npx cdk deploy && cd ..
 ```
 
 It builds the app image and takes several minutes. The outputs include `ListenerUrl` and the SRT address.
-Without Bedrock access, set `"translateEngine": "translate"` in `event.json` first.
+Add `-c translateEngine=translate` to the command (or `"translateEngine": "translate"` in `event.json`) for the low-cost mode without Bedrock.
 
 **7. Test with a sample, without OBS**
 
@@ -174,8 +177,8 @@ Prices as of 2026-11-15, region ap-northeast-1, USD, list price, tax excluded.
 
 | Case | Cost |
 |---|---|
-| Running session, 100 listeners, LLM engine (default `talk` profile) | about **$2.4 per hour** |
-| Same with the Amazon Translate engine | about $2.0 per hour |
+| Running session, 100 listeners, default (LLM engine, `talk` profile) | about **$2.4 per hour** |
+| Same in low-cost mode (`-c translateEngine=translate`, Amazon Translate only) | about $2.0 per hour |
 | Stack left deployed with nobody speaking | about **$4.9 per day** (about $0.20 per hour) |
 | ECS desired count 0 / also LiveKit instance stopped | about $3.6 / $1.0 per day |
 | After `cdk destroy` | about $0.003 per day |
@@ -195,8 +198,8 @@ assumed, the listener-count sensitivity and the calculator (`node scripts/estima
 | Polly pronunciation of a name | Add a row with `reading` and `polly_ja` to `terms.csv`, run `generate`. The displayed text never changes. | `cdk deploy` |
 | Wrong word that is valid English (ABC for AVC) | Add a rule in `app/src/corrections.ts`. | `cdk deploy` |
 | Voice | `"pollyVoice"` in `event.json`. | `cdk deploy` |
-| Speed of the first word vs. quality | `"profile"` in `event.json`: `talk` (fast, LLM), `careful` (longer chunks, Translate). | `cdk deploy` |
-| Translation engine and model | `"translateEngine"` and `"llmModelId"` in `event.json`. | `cdk deploy` |
+| Speed of the first word vs. quality | `"profile"` in `event.json`: `talk` (default: fast, LLM), `careful` (the previous defaults: longer chunks, Amazon Translate). | `cdk deploy` |
+| Translation engine and model | `"translateEngine"` (`llm` default, `translate` = low-cost mode) and `"llmModelId"` (`auto` = the profile of your Region) in `event.json`. | `cdk deploy` |
 | Expected number of listeners | `"expectedListeners"`. Sets the LiveKit instance size (an estimate). | `cdk deploy` |
 
 Your dictionary folder is `dictionaries/local/` (see step 9). Edit `terms.csv`, then run

@@ -11,8 +11,8 @@ Prices change. Check the current price pages before you budget, and see "Update 
 
 | Case | Cost |
 |---|---|
-| Running session, LLM engine (the `talk` profile), 100 listeners | about **$2.4 per hour** ($9.7 for a 4 hour event) |
-| Running session, Amazon Translate engine, 100 listeners | about **$2.0 per hour** ($7.8 for 4 hours) |
+| Running session, default (LLM engine, `talk` profile; Bedrock included), 100 listeners | about **$2.4 per hour** ($9.7 for a 4 hour event) |
+| Running session, low-cost mode (`-c translateEngine=translate`, Amazon Translate only), 100 listeners | about **$2.0 per hour** ($7.8 for 4 hours) |
 | Stack left deployed, nobody speaking (as deployed) | about **$0.20 per hour, $4.9 per day, $147 per 30 days** |
 | After setting the ECS desired count to 0 | about $3.6 per day |
 | Also with the LiveKit instance stopped | about $1.0 per day |
@@ -64,7 +64,7 @@ fewer chunks and characters, a talk with little silence produces more.
 | Transcribe | Streaming transcription with language identification | seconds of audio | $0.0001667 per s (about $0.01 per min) | while audio is sent |
 | Translate | TranslateText (translate engine, and fallback of the llm engine) | characters | $0.000015 per character | per translated chunk |
 | Polly | SynthesizeSpeech, neural voice | characters | $0.000016 per character | per spoken chunk |
-| Bedrock | Claude Haiku 4.5 via the jp. inference profile (llm engine only) | input, output, cache-read and cache-write tokens | $1.1 in, $5.5 out, $0.11 cache read, $1.375 cache write, per million tokens | per chunk |
+| Bedrock | Claude Haiku 4.5 via a geo inference profile (llm engine, the default) | input, output, cache-read and cache-write tokens | $1.1 in, $5.5 out, $0.11 cache read, $1.375 cache write, per million tokens | per chunk |
 | ECR (CDK bootstrap) | App container image | GB-months | $0.1 per GB-month | stays after cdk destroy |
 | Free of charge | Transcribe custom vocabulary, Translate terminology, ECS cluster, VPC, subnets, security groups, IAM, CloudFormation | none | $0 | - |
 
@@ -97,8 +97,8 @@ is small. Browser microphone input: see [security.md](security.md#cost-impact). 
 
 ## Cost per hour of a session
 
-Typical session: 4 hours, 100 listeners, one speaker, the `talk` profile (about 1,130 chunks per hour), Transcribe
-receiving 60 minutes of audio per hour. LLM engine:
+Typical session: 4 hours, 100 listeners, one speaker, the default `talk` profile (about 1,130 chunks per hour), Transcribe
+receiving 60 minutes of audio per hour. Default (LLM engine, Bedrock included):
 
 | Item | USD per hour | Share |
 |---|---|---|
@@ -120,7 +120,7 @@ receiving 60 minutes of audio per hour. LLM engine:
 | Total per hour | $2.41 | 100% |
 | Total for 4 h | $9.65 |  |
 
-Same session with the Amazon Translate engine (`translateEngine=translate`):
+Same session in low-cost mode (`-c translateEngine=translate`, Amazon Translate as the only engine, no Bedrock):
 
 | Item | USD per hour | Share |
 |---|---|---|
@@ -172,9 +172,9 @@ this document, so run a check before the event ([operations](operations.md)).
 
 ## Sensitivity
 
-LLM engine against Translate (same speech, `talk` profile, 1,130 chunks per hour):
+LLM engine (the default) against the low-cost Translate engine (same speech, `talk` profile, 1,130 chunks per hour):
 
-| | Translate engine | LLM engine | Difference |
+| | Translate engine (low-cost) | LLM engine (default) | Difference |
 |---|---|---|---|
 | Per hour | $0.48 Translate | $0.93 Bedrock + $0.005 Translate | about +$0.46 |
 | 4 hours | $1.9 | $3.7 | about +$1.8 |
@@ -202,13 +202,13 @@ Speaker time matters too: a quiet room that is not speaking still bills Transcri
 ## Calculator
 
 ```bash
-node scripts/estimate-cost.mjs --hours 4 --listeners 100 --engine llm
-node scripts/estimate-cost.mjs --hours 8 --listeners 300 --engine translate --idle-days 2
+node scripts/estimate-cost.mjs --hours 4 --listeners 100            # the default engine is llm
+node scripts/estimate-cost.mjs --hours 8 --listeners 300 --engine translate --idle-days 2   # low-cost mode
 node scripts/estimate-cost.mjs --help
 ```
 
 It reads the task size, instance type and log retention from `cdk/cdk.json`, plus `cdk/config/event.json` (profile, engine, `expectedListeners`,
-`advanced`) when you have one. Options: `--hours`, `--listeners`, `--engine translate|llm`, `--chunks-per-hour`, `--idle-days`,
+`advanced`) when you have one. Options: `--hours`, `--listeners`, `--engine translate|llm` (default `llm`, or what `event.json` / the profile sets), `--chunks-per-hour`, `--idle-days`,
 `--polly-chars-per-hour`, `--translate-chars-per-hour`, `--llm-in`, `--llm-cache-read`, `--llm-out`, `--llm-call-share`,
 `--bedrock-price regional|global`, `--opus-kbps`, `--instance-type`, `--markdown`, `--json`. `--channels 2` adds the Japanese to English channel (`--ja-share`, the share of the hour spoken in Japanese, default 0.25;
 `--en-chars-per-chunk`, English characters spoken per Japanese chunk, default 55); both are **assumptions** to be replaced by the
@@ -221,7 +221,7 @@ subscribes to one track). What grows is billed per translated speech: Translate 
 of the English voice, and, with the LLM engine, the second glossary's cache write (once per start) and its keep-warm call every
 four minutes.
 ```bash
-node scripts/estimate-cost.mjs --hours 4 --listeners 100 --engine llm --channels 2 --ja-share 0.25
+node scripts/estimate-cost.mjs --hours 4 --listeners 100 --channels 2 --ja-share 0.25
 ```
 With the defaults and the LLM engine channel 2 adds about $0.49 per hour (*estimate*; list price; the English characters per chunk
 and the Japanese share are assumed). That is above the earlier planning bound of about $0.33, because that bound assumed the
@@ -234,7 +234,7 @@ The LLM engine report measured the Haiku 4.5 calls of three recorded talks in lo
 and priced them at about $2.06 per 4 hours (list price, global profile) and about $2.3 with the `jp.` premium.
 
 ```bash
-node scripts/estimate-cost.mjs --hours 4 --engine llm --listeners 0 --chunks-per-hour 650 \
+node scripts/estimate-cost.mjs --hours 4 --listeners 0 --chunks-per-hour 650 \
   --llm-in 150 --llm-cache-read 5185 --llm-out 25 --llm-call-share 1 --bedrock-price global --json
 ```
 

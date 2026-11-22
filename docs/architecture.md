@@ -16,7 +16,7 @@ draw.io diagram embedded, so GitHub shows it as an image and draw.io opens it fo
 | SRT entry | Network Load Balancer (UDP 9000) with static Elastic IPs, security groups | Accepts SRT from the venue IP only. | `cdk/lib/simul-translation-stack.ts` |
 | App | ECS on Fargate (1 task, ARM64) | Decodes audio, calls the AI services, publishes audio to LiveKit. | `app/src/`, `cdk/lib/` |
 | Speech to text | Amazon Transcribe streaming | Text with partial results and per-result language. | `app/src/pipeline.ts` |
-| Translation | Amazon Translate, or Amazon Bedrock (optional) | English to Japanese per chunk. | `app/src/translate-engine.ts`, `app/src/bedrock-llm.ts` |
+| Translation | Amazon Bedrock (Claude Haiku 4.5, the default), with Amazon Translate as the fallback and as the low-cost engine | English to Japanese per chunk. | `app/src/translate-engine.ts`, `app/src/bedrock-llm.ts` |
 | Text to speech | Amazon Polly | Japanese speech. Readings for product names. | `app/src/chunk-player.ts`, `app/src/polly-readings.ts` |
 | Media server | LiveKit (container) and Caddy (TLS) on one EC2 instance with an Elastic IP | Delivers the audio to browsers over WebRTC. | `cdk/lib/livekit-user-data.ts` |
 | Listener page | CloudFront, private S3 bucket | Static page with the LiveKit client. Plays the audio and shows the captions. | `app/web/` |
@@ -36,7 +36,7 @@ The numbers match the diagram.
 | 3 | The load balancer passes it to the Fargate app. ffmpeg decodes it to 16 kHz PCM. |
 | 4 | The app streams the audio to Transcribe streaming, with language identification. |
 | 5 | Transcribe returns text. The app drops non-English results and cuts chunks. |
-| 6 | Translate (default) or a Bedrock model (optional, dashed) translates each chunk. |
+| 6 | A Bedrock model (the default) translates each chunk. Amazon Translate is the fallback and the low-cost engine (`translateEngine=translate`). The diagram still draws Translate as the main box and Bedrock dashed. |
 | 7 | Polly speaks the Japanese text, with readings for product names. |
 | 8 | The app publishes the audio to LiveKit over WebRTC (Opus), and the caption text as data packets. |
 | 9 | The listener's browser plays the audio and shows the captions from LiveKit (subscribe only). |
@@ -63,7 +63,7 @@ Inside the app (steps 3 to 8), each stage is a small module:
 3. `language-gate.ts` forwards only results identified as the source language. Japanese speech (a moderator, a
    question from the room) is dropped.
 4. `segmenter.ts` turns partial results into chunks of a few words (see "Design choices").
-5. `translate-engine.ts` translates each chunk. With the LLM engine a failed or slow call falls back to Translate.
+5. `translate-engine.ts` translates each chunk. With the LLM engine a failed or slow call falls back to Translate. With `translateEngine=translate` Translate is the only engine.
 6. `chunk-player.ts` asks Polly for speech, picks a speed level, and writes the audio to LiveKit in order. When the
    audio of a chunk starts, it sends the Japanese caption (`caption-publisher.ts`, see "Captions").
 7. If the listener falls too far behind, chunks are dropped (`MAX_BACKLOG_MS`) instead of piling up.
@@ -208,7 +208,7 @@ unstable partials, no duplicates, nothing the segmenter does not commit. A segme
 batch. Errors in the tap are caught, so a caption bug cannot change the chunks. The publisher combines batches of one
 result for up to 250 ms (a sentence end flushes at once), so the English stream is at most about 4 packets per second.
 Measured on the same run: a batch leaves the app a median 1.4 s (p90 1.8 s) after its last word was spoken, while the
-Japanese voice of that text starts a median 7.3 s after the last English word with the Amazon Translate engine
+Japanese voice of that text starts a median 7.3 s after the last English word with the Amazon Translate engine (the low-cost mode)
 (the sample is dense, so the queue grows).
 
 **Retraction.** Transcribe can tag a result as Japanese only in its final, after the gate already forwarded it (late

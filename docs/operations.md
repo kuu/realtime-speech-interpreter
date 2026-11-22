@@ -35,6 +35,19 @@ Commands run from the repository root unless a `cd` is shown. Replace `ap-northe
 4. **Go live.** Only one SRT sender can be connected at a time. Stop any test encoder first.
 5. **Watch the logs** (see below). After the session, check the `[summary]` line.
 
+## Bedrock access (the default engine)
+The default translator is Claude Haiku 4.5 on Amazon Bedrock. Check access days before the event:
+1. `./scripts/doctor.sh` lists the inference profile and reads the model availability. Both are read-only. They cannot prove that an
+   invoke works (a community report says the availability call can show a model as available when it cannot be invoked), so the
+   doctor says so in a WARN.
+2. Manual check, in the Bedrock console of your Region: Model catalog > Claude Haiku 4.5. The first use of an Anthropic model asks for a
+   use-case form. Then send one short prompt in the console playground.
+3. Optional command line check, billed as one tiny request (a few cents at most; the doctor never does this): `aws bedrock-runtime converse
+   --region <region> --model-id <your llmModelId> --messages '[{"role":"user","content":[{"text":"ok"}]}]'`. Use the profile id that
+   `./scripts/doctor.sh` prints (`jp.`, `us.`, `eu.`, `au.` or `in.` prefix).
+If you cannot get access in time, deploy with `-c translateEngine=translate` (or `"translateEngine": "translate"` in `event.json`):
+Amazon Translate only, no Bedrock, lower cost, no context. A Region without a Claude Haiku 4.5 geo inference profile (for example Seoul)
+fails at synth with that same advice.
 ## Two channels (only with `channels` in `event.json`)
 - **One QR code per channel.** The stack prints `ListenerUrl` (the first channel in `channels`, the default) and `ListenerUrlEn`
   (`?ch=en`) for the second one. Print both; a listener who opens an unknown `?ch=` sees "This channel is not available".
@@ -128,7 +141,7 @@ Add `--filter-pattern` with one of these:
 | `PLAYED` | A chunk was spoken. Has `e2eFirstWordMs=`. | Typical 5000 to 7000 with the `talk` profile. |
 | `DROPPED reason=backlog` | The listener was too far behind, a chunk was skipped. | Slow speaker handling? See [configuration](configuration.md) (`maxBacklogMs`). |
 | `FAILED` | A stage failed (`stage=translate`, `synth`, `play`). | One is fine. Many: check IAM, quotas, Region. |
-| `LLM_FALLBACK`, `[llm] BREAKER` | The LLM engine fell back to Amazon Translate. | Quality dips, audio continues. Check Bedrock access and throttling. |
+| `LLM_FALLBACK`, `[llm] BREAKER` | The LLM engine fell back to Amazon Translate (the backup translator). | Quality dips, audio continues. Check Bedrock access and throttling (see Bedrock access below). |
 | `[langfilter] dropped` | Japanese or non-English speech was dropped on purpose. | Many drops while only English is spoken: language filter problem. |
 | `[srt] stream ended` | The encoder disconnected. | Restart the encoder. |
 | `[summary]`, `[llm-summary]` | Totals at the end of a session. | Keep for the report. |

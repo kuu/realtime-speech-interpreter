@@ -79,6 +79,11 @@ export type CutReason =
   | "max_words"
   | "max_time"
   | "pause"
+  // Japanese segmenter (segmenter-ja.ts): stable 、, wait limit, character limit, clause ending.
+  | "clause"
+  | "maxwait"
+  | "maxchars"
+  | "ending"
   | "merge_pause"
   | "merge_hold"
   | "final"
@@ -95,6 +100,7 @@ export interface Chunk {
   audioEnd: number;
   committedAt: number; // wall ms
   merged?: number; // merge on only: number of held (suppressed) boundaries inside this chunk; absent if 0
+  lastToken?: string; // Japanese segmenter only: the last non-punctuation item of the chunk (for the dangling-end report)
 }
 
 // Minimal structural types (compatible with @aws-sdk/client-transcribe-streaming).

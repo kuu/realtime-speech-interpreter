@@ -7,6 +7,7 @@ import {
   LANGID_SETTLE_WORDS_AFTER_JA,
   LANGID_SETTLE_WORDS_DEFAULT,
 } from "./langid-defaults.js";
+import { JA_DEFAULT_CLAUSE_ENDINGS, JA_DEFAULT_DANGLING_TOKENS, jaListOverlap } from "./ja-defaults.js";
 // Centralized configuration. Every venue/account/language-specific value is
 // externalized via environment variables so the app can be reused without code
 // changes. Secrets (SRT passphrase, LiveKit API secret) come from the environment
@@ -165,6 +166,46 @@ export function langidSettleConfig(env: NodeJS.ProcessEnv): LangidSettleConfig {
   };
 }
 
+export interface JaSegmentationConfig {
+  mode: "simple" | "full";
+  maxWaitMs: number;
+  sentenceMinChars: number;
+  clauseMinChars: number;
+  maxChars: number;
+  pauseMs: number;
+  clauseEndings: string[];
+  danglingTokens: string[];
+  danglingMaxChars: number;
+}
+function envList(env: NodeJS.ProcessEnv, name: string, def: readonly string[]): string[] {
+  const v = env[name];
+  if (v === undefined || v.trim() === "") return [...def];
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
+// Japanese segmentation of a ja-JP source lane (see segmenter-ja.ts). JA_SEGMENTATION_MODE=simple (default) uses only
+// JA_MAX_WAIT_MS (and JA_SENTENCE_MIN_CHARS when MERGE_SHORT is on); full is the opt-in experiment. Invalid values fall
+// back to the default with a WARN; two lists that share an entry both fall back to their defaults.
+export function jaSegmentationConfig(env: NodeJS.ProcessEnv): JaSegmentationConfig {
+  let clauseEndings = envList(env, "JA_CLAUSE_ENDINGS", JA_DEFAULT_CLAUSE_ENDINGS);
+  let danglingTokens = envList(env, "JA_DANGLING_TOKENS", JA_DEFAULT_DANGLING_TOKENS);
+  const overlap = jaListOverlap(clauseEndings, danglingTokens);
+  if (overlap.length > 0) {
+    envWarn("JA_CLAUSE_ENDINGS/JA_DANGLING_TOKENS", overlap.join(","), "lists with no shared entry", "the built-in lists");
+    clauseEndings = [...JA_DEFAULT_CLAUSE_ENDINGS];
+    danglingTokens = [...JA_DEFAULT_DANGLING_TOKENS];
+  }
+  return {
+    mode: envOneOf(env, "JA_SEGMENTATION_MODE", "simple", ["simple", "full"] as const),
+    maxWaitMs: envNum(env, "JA_MAX_WAIT_MS", 4000, 0, 60000),
+    sentenceMinChars: envNum(env, "JA_SENTENCE_MIN_CHARS", 6, 1, 200),
+    clauseMinChars: envNum(env, "JA_CLAUSE_MIN_CHARS", 12, 1, 200),
+    maxChars: envNum(env, "JA_MAX_CHARS", 40, 4, 400),
+    pauseMs: envNum(env, "JA_PAUSE_MS", 900, 0, 60000),
+    clauseEndings,
+    danglingTokens,
+    danglingMaxChars: envNum(env, "JA_DANGLING_MAX_CHARS", 10, 0, 100),
+  };
+}
 export interface LangidSettleItemsConfig {
   settleItems: number;
   settleItemsDefault: number;
@@ -392,6 +433,8 @@ export const config = {
   //            identified as SOURCE_LANGUAGE reach the segmenter
   //   off    = revert switch: single-language en-US stream, everything is translated (old behavior)
   languageFilter: languageFilter(),
+  // Japanese segmentation (read only by a ja-JP source lane).
+  jaSegmentation: jaSegmentationConfig(process.env),
 
   // Segmentation of the English transcript into translation chunks (see segmenter.ts).
   //   clause   = mid-sentence chunks (commas, conjunctions, max words/time, pause)

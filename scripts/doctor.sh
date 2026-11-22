@@ -71,6 +71,7 @@ if [[ -d "$CDK_DIR/node_modules" ]] && command -v node >/dev/null 2>&1; then
   RC="$(cd "$CDK_DIR" && node_modules/.bin/ts-node scripts/resolved-config.ts ${CARGS[@]+"${CARGS[@]}"} 2>/dev/null | tail -1)"
 fi
 REGION="" ENGINE="" MODEL="" VOCAB="" TERM="" CIDRS="" DDIR="" DSRC="" INPUT=""
+LANES="" LANE_COUNT=1 POLLY_ENGINE="neural" EXTRA_LANES=false LANE_LLM=""
 if [[ -z "$RC" ]]; then
   fail "could not read the configuration (see the missing tools above)" "cd cdk && npm ci"
 else
@@ -85,6 +86,16 @@ else
     DSRC="$(printf '%s' "$RC" | jget dictionaryDirSource)"
     EVF="$(printf '%s' "$RC" | jget eventFile)"
     INPUT="$(printf '%s' "$RC" | jget inputSource)"
+    LANES="$(printf '%s' "$RC" | jget laneLines)"
+    LANE_COUNT="$(printf '%s' "$RC" | jget laneCount)"; LANE_COUNT="${LANE_COUNT:-1}"
+    POLLY_ENGINE="$(printf '%s' "$RC" | jget pollyEngine)"; POLLY_ENGINE="${POLLY_ENGINE:-neural}"
+    # Per-lane checks only for two lanes or one lane that is not English to Japanese; the default deploy prints today's lines.
+    if [[ "$LANE_COUNT" -gt 1 ]]; then EXTRA_LANES=true; fi
+    for L in $LANES; do
+      IFS='|' read -r L_SRC L_TGT _ _ _ L_ENG <<<"$L"
+      if [[ "$L_SRC" != "en-US" || "$L_TGT" != "ja" ]]; then EXTRA_LANES=true; fi
+      if [[ "$L_ENG" == "llm" ]]; then LANE_LLM=1; fi
+    done
     pass "configuration is valid (profile $(printf '%s' "$RC" | jget profile), region $REGION, engine $ENGINE, event file: ${EVF:-none})"
   else
     ERR="$(printf '%s' "$RC" | jget error)"
@@ -145,6 +156,25 @@ if [[ -n "$DDIR" ]]; then
 else
   warn "dictionary folder not resolved (configuration could not be read)"
 fi
+if $EXTRA_LANES; then
+  echo "== Channels"
+  N=0
+  for L in $LANES; do
+    N=$((N + 1))
+    IFS='|' read -r L_SRC L_TGT L_VOICE L_VOC L_TERM L_ENG <<<"$L"
+    pass "lane $N: $L_SRC to $L_TGT, voice $L_VOICE, engine $L_ENG, vocabulary '${L_VOC:-none}', terminology '${L_TERM:-none}'"
+    if [[ "$L_SRC" == ja-* && -z "$L_VOC" ]]; then
+      if [[ -n "$DDIR" && -f "$DDIR/transcribe-vocabulary-ja.txt" ]]; then
+        warn "lane $N ($L_SRC to $L_TGT) has no Transcribe vocabulary, but $DDIR has transcribe-vocabulary-ja.txt (transcribe_ja rows exist)" "set \"transcribeVocabulary\" on that channel in event.json to the name dictionaries.sh uploads it as (<transcribeVocabulary>-ja, or DICT_NAME_JA)"
+      else
+        warn "lane $N ($L_SRC to $L_TGT) has no Transcribe vocabulary: product names spoken in Japanese may be misrecognised" "add transcribe_ja rows to terms.csv, run node dictionaries/build.mjs generate and cd cdk && ./scripts/dictionaries.sh, then set the channel's transcribeVocabulary"
+      fi
+    fi
+    if [[ "$L_ENG" == "llm" && -z "$L_TERM" ]]; then
+      fail "lane $N ($L_SRC to $L_TGT) uses the llm engine and has no Translate terminology" "set \"translateTerminology\" on that channel (the LLM glossary is loaded from it)"
+    fi
+  done
+fi
 echo "== AWS"
 if $SKIP_AWS; then
   warn "AWS checks skipped (--skip-aws)"
@@ -171,7 +201,7 @@ else
       if [[ "$BS" == CREATE_COMPLETE || "$BS" == UPDATE_COMPLETE ]]; then pass "CDK is bootstrapped in $REGION ($BS)"; else
         fail "CDK is not bootstrapped in $REGION (${BS:-no CDKToolkit stack})" "cd cdk && npx cdk bootstrap aws://$ACCOUNT/$REGION"; fi
       # Bedrock (LLM engine only)
-      if [[ "$ENGINE" == "llm" ]]; then
+      if [[ "$ENGINE" == "llm" || -n "$LANE_LLM" ]]; then
         FOUND=""
         OUT="$(aws bedrock list-inference-profiles --region "$REGION" --type-equals SYSTEM_DEFINED --query "inferenceProfileSummaries[?inferenceProfileId=='$MODEL'].status" --output text 2>&1)"
         if [[ "$OUT" == *"Invalid choice"* || "$OUT" == *"Unknown options"* ]]; then
@@ -207,6 +237,49 @@ else
           fail "Translate terminology '$TERM' not found in $REGION" "$DICT_FIX; or set dictionaries.translateTerminology to \"\" in event.json (not allowed with translateEngine=llm)"; fi
       else
         warn "no Translate terminology configured" "set dictionaries.translateTerminology in event.json"
+      fi
+      # Per-lane checks (two lanes, or one lane that is not English to Japanese). Reads only.
+      if $EXTRA_LANES; then
+        N=0
+        for L in $LANES; do
+          N=$((N + 1))
+          IFS='|' read -r L_SRC L_TGT L_VOICE L_VOC L_TERM L_ENG <<<"$L"
+          L_SRC_LANG="${L_SRC%%-*}"
+          if [[ -n "$L_VOC" ]]; then
+            VQ="$(aws transcribe get-vocabulary --vocabulary-name "$L_VOC" --region "$REGION" --query '[VocabularyState,LanguageCode]' --output text 2>/dev/null)"
+            if [[ -z "$VQ" ]]; then
+              fail "lane $N: Transcribe vocabulary '$L_VOC' not found in $REGION" "$DICT_FIX"
+            else
+              read -r VSTATE VLANG <<<"$VQ"
+              if [[ "$VLANG" != "$L_SRC" ]]; then fail "lane $N: Transcribe vocabulary '$L_VOC' has language $VLANG, the lane's source is $L_SRC" "create it with --language-code $L_SRC (cd cdk && ./scripts/dictionaries.sh uploads <name>-ja as ja-JP)"
+              elif [[ "$VSTATE" == "READY" ]]; then pass "lane $N: Transcribe vocabulary '$L_VOC' is READY ($VLANG)"
+              else warn "lane $N: Transcribe vocabulary '$L_VOC' state is $VSTATE" "wait until READY (aws transcribe get-vocabulary --vocabulary-name $L_VOC --region $REGION)"; fi
+            fi
+          fi
+          if [[ -n "$L_TERM" ]]; then
+            TQ="$(aws translate get-terminology --name "$L_TERM" --terminology-data-format CSV --region "$REGION" --query 'TerminologyProperties.[SourceLanguageCode,TargetLanguageCodes[0],Directionality]' --output text 2>/dev/null)"
+            if [[ -z "$TQ" ]]; then
+              fail "lane $N: Translate terminology '$L_TERM' not found in $REGION" "$DICT_FIX"
+            else
+              read -r TSRC TTGT TDIR <<<"$TQ"
+              if [[ "$TSRC" != "$L_SRC_LANG" || "$TTGT" != "$L_TGT" ]]; then
+                fail "lane $N: Translate terminology '$L_TERM' translates $TSRC to $TTGT, the lane needs $L_SRC_LANG to $L_TGT" "import it with the right first column (ja,en for Japanese to English); cd cdk && ./scripts/dictionaries.sh"
+              elif [[ "$TDIR" != "UNI" ]]; then
+                warn "lane $N: Translate terminology '$L_TERM' is $TDIR-directional; the generated file is uni-directional" "re-import it uni-directional (cd cdk && ./scripts/dictionaries.sh)"
+              else
+                pass "lane $N: Translate terminology '$L_TERM' is $TSRC to $TTGT (UNI)"
+              fi
+            fi
+          fi
+          case "$L_TGT" in ja) PLANG="ja-JP" ;; en) PLANG="en-US" ;; *) PLANG="" ;; esac
+          if [[ -n "$PLANG" ]]; then
+            PV="$(aws polly describe-voices --engine "$POLLY_ENGINE" --language-code "$PLANG" --region "$REGION" --query "Voices[?Id=='$L_VOICE'].Id" --output text 2>/dev/null)"
+            if [[ "$PV" == "$L_VOICE" ]]; then pass "lane $N: Polly voice $L_VOICE exists for $PLANG with the $POLLY_ENGINE engine in $REGION"
+            else fail "lane $N: Polly voice '$L_VOICE' not found for $PLANG with the $POLLY_ENGINE engine in $REGION" "aws polly describe-voices --engine $POLLY_ENGINE --language-code $PLANG --region $REGION --query 'Voices[].Id'; set pollyVoice on that channel"; fi
+          else
+            warn "lane $N: no Polly check for target '$L_TGT' (only ja and en are known)"
+          fi
+        done
       fi
     fi
   fi

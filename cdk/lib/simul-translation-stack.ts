@@ -14,6 +14,7 @@ import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import { DockerImageAsset, Platform } from "aws-cdk-lib/aws-ecr-assets";
 import { loadConfig, laneUsesLlm } from "./config";
+import { destinationRegions, parseProfile } from "./llm-model";
 import { channelsEnv, listenerConfigFields } from "./channels";
 import { readingsHash } from "./dictionary-dir";
 import { buildLiveKitUserData } from "./livekit-user-data";
@@ -214,19 +215,20 @@ export class SimulTranslationStack extends cdk.Stack {
     );
 
     // Optional LLM engine (translateEngine=llm): Bedrock InvokeModel (Converse, non-streaming) on the
-    // Japan inference profile and its two destination foundation models only, plus read access to the
-    // Translate terminology the glossary is loaded from. Nothing is added for the default engine.
+    // geo inference profile of the stack Region and its destination foundation models only (lib/llm-model.ts), plus
+    // read access to the Translate terminology the glossary is loaded from. Nothing is added for translateEngine=translate.
     // No wildcard resources; InvokeModelWithResponseStream is not granted (ConverseStream is not used).
     const llmLanes = cfg.lanes.filter((l) => laneUsesLlm(cfg, l));
     if (llmLanes.length > 0) {
-      const foundationModelId = cfg.llmModelId.replace(/^jp\./, "");
+      // loadConfig has validated the id: a known geo prefix that the stack Region can call.
+      const parsed = parseProfile(cfg.llmModelId) as { prefix: string; foundationModelId: string };
+      const destinations = destinationRegions(parsed.prefix, cfg.region) as string[];
       taskDef.taskRole.addToPrincipalPolicy(
         new iam.PolicyStatement({
           actions: ["bedrock:InvokeModel"],
           resources: [
             `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/${cfg.llmModelId}`,
-            `arn:aws:bedrock:ap-northeast-1::foundation-model/${foundationModelId}`,
-            `arn:aws:bedrock:ap-northeast-3::foundation-model/${foundationModelId}`,
+            ...destinations.map((r) => `arn:aws:bedrock:${r}::foundation-model/${parsed.foundationModelId}`),
           ],
         }),
       );

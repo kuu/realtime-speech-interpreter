@@ -8,13 +8,28 @@ import { join } from "node:path";
 
 const READING_OK = /^[\p{Script=Katakana}\p{Script=Hiragana}ー・0-9 ]+$/u;
 
-/** Model id: --model, else LLM_MODEL_ID, else llmModelId from cdk/cdk.json. */
-export function defaultModelId({ model, env = process.env, root }) {
+const HAIKU = "anthropic.claude-haiku-4-5-20251001-v1:0";
+/** Geo inference profile prefix of Claude Haiku 4.5 for a Region (the same table as cdk/lib/llm-model.ts), or undefined. */
+export function haikuProfilePrefix(region) {
+  if (["ap-northeast-1", "ap-northeast-3"].includes(region)) return "jp";
+  if (["us-east-1", "us-east-2", "us-west-1", "us-west-2", "ca-central-1"].includes(region)) return "us";
+  if (["eu-central-1", "eu-central-2", "eu-north-1", "eu-south-1", "eu-south-2", "eu-west-1", "eu-west-2", "eu-west-3"].includes(region)) return "eu";
+  if (["ap-southeast-2", "ap-southeast-4", "ap-southeast-6"].includes(region)) return "au";
+  if (["ap-south-1", "ap-south-2"].includes(region)) return "in";
+  return undefined;
+}
+/** Model id: --model, else LLM_MODEL_ID, else llmModelId from cdk/cdk.json ("auto" = the Haiku 4.5 profile of the Region). */
+export function defaultModelId({ model, env = process.env, root, region = "ap-northeast-1" }) {
   if (model) return model;
   if (env.LLM_MODEL_ID) return env.LLM_MODEL_ID;
   const f = join(root, "cdk", "cdk.json");
   if (existsSync(f)) {
     const id = JSON.parse(readFileSync(f, "utf8"))?.context?.llmModelId;
+    if (id === "auto") {
+      const prefix = haikuProfilePrefix(region);
+      if (!prefix) throw new Error(`no Claude Haiku 4.5 geo inference profile for ${region}: pass --model or set LLM_MODEL_ID`);
+      return `${prefix}.${HAIKU}`;
+    }
     if (id) return id;
   }
   throw new Error("no model id: pass --model or set LLM_MODEL_ID");

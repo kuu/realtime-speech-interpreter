@@ -1,5 +1,6 @@
 import { Construct } from "constructs";
 import { buildResolver } from "./event-config";
+import { GEO_PROFILES, defaultLlmModelId, destinationRegions, parseProfile, supportedRegions } from "./llm-model";
 import { resolveDictionary } from "./dictionary-dir";
 import { ChannelsError, isDefaultLane, parseChannelsSetting, resolveChannels, type LaneSpec } from "./channels";
 import { existsSync } from "node:fs";
@@ -83,6 +84,8 @@ export interface StackConfig {
   translateTarget: string;
   translateFormality: string;
   translateEngine: string;
+  /** Stack Region (the Region the llmModelId profile is resolved and IAM-scoped for). */
+  region: string;
   llmModelId: string;
   llmTimeoutMs: number;
   llmContextChunks: number;
@@ -151,11 +154,11 @@ const CIDR_RE = /^(\d{1,3}\.){3}\d{1,3}\/(\d|[12]\d|3[0-2])$/;
 //   explicit -c key=value  >  config/event.json  >  profile (-c latencyPreset=<name>)  >  cdk.json.
 // "Explicit" = a -c value that differs from the one in cdk.json. Profiles live in config/profiles/*.json
 // (talk, careful, qa; the old names fast and default still work). Every profile key must be a cdk.json key.
-// "fast" (= talk without the engine switch) is tuned for translateEngine=llm (configuration P3d, measured on
-// recorded talks): the first chunk of a sentence is cut after 5 words or 2.5 s, short sentences are no longer
-// held or joined, pause/dangling holds are shorter, the language-ID settle is dynamic, and the LLM call gets
-// a 1.2 s budget. Speed levels and llmSkipBacklogMs stay at the cdk.json values.
-
+// The shipped default is the "talk" bundle: its values are in cdk.json (LLM engine, fast timing; configuration
+// P3d, measured on recorded talks). The first chunk of a sentence is cut after 5 words or 2.5 s, short sentences
+// are no longer held or joined, pause/dangling holds are shorter, the language-ID settle is dynamic, and the LLM
+// call gets a 1.2 s budget. The "careful" profile holds the previous defaults (Amazon Translate engine, longer
+// chunks). "default" is an alias of the shipped default; "fast" is talk without the engine switch.
 function parseVenueCidrs(raw: unknown): string[] {
   if (raw === undefined || raw === null) throw new Error(VENUE_CIDR_ERROR);
   const list = (Array.isArray(raw) ? raw.map(String) : String(raw).split(","))
@@ -339,6 +342,7 @@ export function loadConfig(scope: Construct): StackConfig {
     translateTarget: ctxStr("translateTarget"),
     translateFormality: ctxStr("translateFormality").trim(),
     translateEngine: ctxStr("translateEngine").trim().toLowerCase(),
+    region: ctx("region") === undefined || ctx("region") === null || String(ctx("region")) === "" ? "ap-northeast-1" : String(ctx("region")).trim(),
     llmModelId: ctxStr("llmModelId").trim(),
     llmTimeoutMs: ctxNum("llmTimeoutMs"),
     llmContextChunks: ctxNum("llmContextChunks"),
@@ -506,11 +510,38 @@ export function loadConfig(scope: Construct): StackConfig {
     throw new Error('translateEngine must be "translate" or "llm"');
   }
   resolveLanes(cfg, resolver, ctx("channels"));
+  // "auto" resolves to the Haiku 4.5 geo profile of the stack Region. Where there is none, the value stays "auto"
+  // when a lane uses the LLM engine (the check below fails with a clear message) and otherwise becomes the
+  // Tokyo profile id, which no resource uses, so that Translate-only synth output does not depend on the Region.
+  if (cfg.llmModelId === "auto") {
+    const resolved = defaultLlmModelId(cfg.region);
+    if (resolved !== undefined) cfg.llmModelId = resolved;
+    else if (!cfg.lanes.some((l) => laneUsesLlm(cfg, l))) cfg.llmModelId = defaultLlmModelId("ap-northeast-1") as string;
+  }
   if (cfg.lanes.some((l) => laneUsesLlm(cfg, l))) {
-    // IAM scoping in the stack is only defined for the Japan cross-Region inference profile (jp.*).
-    if (!/^jp\.[a-z0-9][a-z0-9.-]*(:\d+)?$/.test(cfg.llmModelId)) {
+    // llmModelId "auto" = the Claude Haiku 4.5 geo inference profile of the stack Region. IAM scoping in the
+    // stack is defined for geo profiles only (jp, us, eu, au, in); "global." is not supported (see lib/llm-model.ts).
+    const supported = supportedRegions().join(", ");
+    if (cfg.llmModelId === "auto") {
       throw new Error(
-        `llmModelId must be a Japan inference profile id starting with "jp." (e.g. "jp.anthropic.claude-haiku-4-5-20251001-v1:0") when translateEngine=llm. Got: "${cfg.llmModelId}"`,
+        `No Claude Haiku 4.5 geo inference profile for ${cfg.region}. Set llmModelId, deploy in a supported Region (${supported}), ` +
+          "or use -c translateEngine=translate (Amazon Translate only, no Bedrock).",
+      );
+    }
+    const parsed = parseProfile(cfg.llmModelId);
+    if (parsed === undefined) {
+      throw new Error(
+        `llmModelId must be a geo inference profile id starting with one of ${Object.keys(GEO_PROFILES).map((p) => `"${p}."`).join(", ")} ` +
+          `(e.g. "${defaultLlmModelId("ap-northeast-1")}"), or "auto". "global." profiles are not supported. Got: "${cfg.llmModelId}"`,
+      );
+    }
+    if (destinationRegions(parsed.prefix, cfg.region) === undefined) {
+      const usable = Object.keys(GEO_PROFILES).filter((p) => destinationRegions(p, cfg.region) !== undefined);
+      throw new Error(
+        `llmModelId "${cfg.llmModelId}" cannot be called from ${cfg.region} (the "${parsed.prefix}." profile does not list it as a source Region). ` +
+          (usable.length > 0
+            ? `Use the "${usable.join('." or "')}." profile, or set llmModelId to "auto".`
+            : `${cfg.region} has no geo profile: deploy in a supported Region (${supported}) or use -c translateEngine=translate.`),
       );
     }
     if (cfg.translateEngine === "llm" && cfg.translateTerminologyName.trim().length === 0) {

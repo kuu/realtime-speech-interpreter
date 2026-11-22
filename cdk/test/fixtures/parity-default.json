@@ -322,6 +322,68 @@
             ],
             "Effect": "Allow",
             "Resource": "*"
+          },
+          {
+            "Action": "bedrock:InvokeModel",
+            "Effect": "Allow",
+            "Resource": [
+              "arn:aws:bedrock:ap-northeast-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              "arn:aws:bedrock:ap-northeast-3::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:bedrock:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":inference-profile/jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+                  ]
+                ]
+              }
+            ]
+          },
+          {
+            "Action": "translate:GetTerminology",
+            "Effect": "Allow",
+            "Resource": [
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:translate:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":terminology/simul-translation"
+                  ]
+                ]
+              },
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:translate:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":terminology/simul-translation/*"
+                  ]
+                ]
+              }
+            ]
           }
         ],
         "Version": "2012-10-17"
@@ -398,11 +460,11 @@
         },
         {
           "Name": "LANGID_SETTLE_WORDS",
-          "Value": "5"
+          "Value": "4"
         },
         {
           "Name": "LANGID_SETTLE_MODE",
-          "Value": "fixed"
+          "Value": "dynamic"
         },
         {
           "Name": "LANGID_SETTLE_WORDS_DEFAULT",
@@ -430,7 +492,7 @@
         },
         {
           "Name": "CHUNK_MIN_WORDS",
-          "Value": "8"
+          "Value": "5"
         },
         {
           "Name": "CHUNK_MAX_WORDS",
@@ -438,11 +500,11 @@
         },
         {
           "Name": "CHUNK_MAX_MS",
-          "Value": "0"
+          "Value": "2500"
         },
         {
           "Name": "CHUNK_PAUSE_MS",
-          "Value": "900"
+          "Value": "600"
         },
         {
           "Name": "CHUNK_CONJUNCTIONS",
@@ -450,7 +512,7 @@
         },
         {
           "Name": "MERGE_SHORT",
-          "Value": "on"
+          "Value": "off"
         },
         {
           "Name": "SENTENCE_MIN_WORDS",
@@ -482,7 +544,7 @@
         },
         {
           "Name": "DANGLING_MAX_HOLD_MS",
-          "Value": "500"
+          "Value": "250"
         },
         {
           "Name": "CUT_LOOKAHEAD_MS",
@@ -490,7 +552,7 @@
         },
         {
           "Name": "SHORT_SENTENCE_JOIN",
-          "Value": "on"
+          "Value": "off"
         },
         {
           "Name": "SHORT_SENTENCE_WORDS",
@@ -582,7 +644,7 @@
         },
         {
           "Name": "TRANSLATE_ENGINE",
-          "Value": "translate"
+          "Value": "llm"
         },
         {
           "Name": "LLM_MODEL_ID",
@@ -590,7 +652,7 @@
         },
         {
           "Name": "LLM_TIMEOUT_MS",
-          "Value": "1500"
+          "Value": "1200"
         },
         {
           "Name": "LLM_CONTEXT_CHUNKS",
@@ -634,7 +696,7 @@
         },
         {
           "Name": "LATENCY_PRESET",
-          "Value": "default"
+          "Value": "talk"
         },
         {
           "Name": "POLLY_VOICE",

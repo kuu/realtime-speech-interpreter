@@ -27,7 +27,9 @@ The full reference is [`e2e/README.md`](../e2e/README.md). This page is the shor
 `<clip>` is the path of an audio file. You can also give a number or a name fragment of an `NN_*.m4a` file in the folder
 set in `E2E_RECORDINGS` (default `samples/`).
 Useful options: `--start 00:05:00`, `--duration 5m`, `--label my-test`, and for `run` `--input srt|rtmps`. `local` also takes `--env KEY=VALUE` to
-override one app setting, for example `--env TRANSLATE_ENGINE=llm`.
+override one app setting, for example `--env TRANSLATE_ENGINE=translate`. `local` uses the settings of `cdk/cdk.json`, so with the defaults it calls Amazon Bedrock
+(Claude Haiku 4.5, the Tokyo `jp.` profile) and needs Bedrock access: pass `--env TRANSLATE_ENGINE=translate` to avoid it, and outside the Japan Regions
+pass `--env LLM_MODEL_ID=<geo profile of your Region>`.
 
 `local` and `run` bill the same AWS services as a live event for the length of the clip.
 

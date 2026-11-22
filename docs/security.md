@@ -51,7 +51,7 @@ Anyone who has the listener URL can listen. There is no login. Do not publish th
 
 | Role | Allowed |
 |---|---|
-| App task role | `transcribe:StartStreamTranscription`, `translate:TranslateText`, `polly:SynthesizeSpeech` (these actions have no useful resource scoping). With `translateEngine=llm` also `bedrock:InvokeModel` on the one inference profile and its destination foundation models in `ap-northeast-1` and `ap-northeast-3`, and `translate:GetTerminology` on one terminology. |
+| App task role | `transcribe:StartStreamTranscription`, `translate:TranslateText`, `polly:SynthesizeSpeech` (these actions have no useful resource scoping). With the LLM engine (the default; not with `translateEngine=translate`) also `bedrock:InvokeModel` on the one geo inference profile of the stack Region and the foundation models in that profile's destination Regions (Tokyo: `ap-northeast-1` and `ap-northeast-3`; the table is in `cdk/lib/llm-model.ts`; no wildcard, no `global.` profile), and `translate:GetTerminology` on one terminology. |
 | LiveKit instance role | `AmazonSSMManagedInstanceCore` (shell access through Systems Manager, no SSH), read of the LiveKit secret, write to its log group. IMDSv2 is required. The disk is encrypted. |
 | Token Lambda | Read of the LiveKit secret, write to its log group. |
 | Publisher token Lambda (`inputSource=browser`) | Read of the code secret and the LiveKit secret, `ssm:GetParameter` on the end-time parameter, write to its log group. No wildcard resources. |
@@ -530,7 +530,7 @@ Automated (run in `cdk/test` and `app/test`, no AWS needed). Test names are in `
 | 25 | Lazy session start | With no frames, no Transcribe stream is opened; the first frame opens it (unit test on the browser source and `runPipeline`). |
 | 26 | Pinned `livekit-client` | The SHA-256 of the served copy equals the recorded value. |
 | 27 | Operator script | `--ends-at` accepts only a future UTC `...Z` time; `--dry-run` makes no `aws` call; the code is never in argv, stderr or a file; two runs give two codes (tests use a stub `aws` on `PATH`). |
-| 28 | Off by default | `cdk synth` with no browser setting equals `origin/main`'s synth after sorting keys and normalizing asset hashes (`cdk/scripts/synth-parity.sh`, and the resource-count test in `browser-input.test.ts`). |
+| 28 | Off by default | `cdk synth` with no browser setting has no browser-input resources (`browser-input.test.ts`). The shipped defaults (LLM engine, talk timing) equal `origin/main`'s synth with `-c translateEngine=llm -c latencyPreset=fast`, and `-c latencyPreset=careful` equals `origin/main`'s default, after sorting keys and normalizing asset hashes (`cdk/scripts/synth-parity.sh`). |
 | 29 | Audio settings are configuration | `browserAudioProcessing`, `browserSilenceDb`, `browserSilenceSec` are validated, documented and provisional. |
 
 Manual, before the feature is announced:
@@ -714,8 +714,10 @@ venue audio --SRT--> Fargate app --audio--> Amazon Transcribe  (English text)
 - The app logs the English and Japanese text of every chunk (`COMMIT`, `SYNTH`, `FAILED` lines). Anyone who can read the
   log group can read the transcript. The default retention is 14 days (`logRetentionDays`). Lower it, or restrict
   access to the log group, if the content is confidential.
-- The Bedrock model runs through a `jp.` cross-Region inference profile. Its requests are processed in the Japan Regions
-  (Tokyo and Osaka) listed in the IAM policy.
+- The Bedrock model runs through a geo cross-Region inference profile chosen by the stack Region (`jp.` in Tokyo and Osaka,
+  `us.`, `eu.`, `au.` or `in.` elsewhere). Its requests are processed in the destination Regions of that profile, which are the
+  Regions listed in the IAM policy (Tokyo and Osaka for `jp.`). The `global.` profile is not supported because it routes worldwide.
+  With `translateEngine=translate` nothing is sent to Bedrock.
 - For how each AWS service handles content (storage, use for service improvement, opt-out), read the current AWS
   documentation and terms for Amazon Transcribe, Translate, Polly and Bedrock. They can change, so this repository does not
   copy them. Check them against your data-protection rules before you process confidential talks.

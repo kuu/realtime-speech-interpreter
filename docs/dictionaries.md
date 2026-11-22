@@ -10,8 +10,8 @@ wrong. The project has four tools for this. Each one fixes a different stage.
 | Translation | Translate terminology | A term is translated badly or translated at all. | `translate-terminology.csv` | Translate (uploaded by a script) |
 | Text to speech | Polly readings | Polly says a product name wrongly. | `polly-readings.csv` | In the app image |
 
-The Translate terminology is also the glossary the LLM translator reads when `translateEngine=llm`, so one file
-serves both.
+The Translate terminology is also the glossary the LLM translator reads (the default engine, `translateEngine=llm`), so one file
+serves both. Amazon Translate, the backup translator, applies it itself.
 
 You do not write these three files by hand. You keep **one source file, `terms.csv`**, and a command generates the
 three files from it.
@@ -199,7 +199,7 @@ the Japanese form and the katakana reading of the top `--max-terms` proposed ter
 (`aws bedrock-runtime converse`, or `invoke-model` on an older CLI), so you need AWS credentials that may invoke the
 model.
 
-- Model: `--model`, else `LLM_MODEL_ID`, else `llmModelId` from `cdk/cdk.json` (a `jp.` profile). Region: `--region`,
+- Model: `--model`, else `LLM_MODEL_ID`, else `llmModelId` from `cdk/cdk.json` (`auto` = the Claude Haiku 4.5 geo profile of the Region, for example `jp.` in Tokyo). Region: `--region`,
   else `AWS_REGION`, else `ap-northeast-1`.
 - Every suggestion is marked `UNVERIFIED (bedrock <model>)` in `notes`. The flags stay as they were, so nothing is
   generated from a suggestion until you read it, correct it and set the flags. Have a native speaker check the
@@ -233,7 +233,7 @@ under `dictionaries/local/` is tracked or ever was.
 1. **Start with the vocabulary.** Add product names, acronyms and jargon that the speaker will say. Keep it short.
    A long list lowers accuracy.
 2. **Add a terminology entry** when the translation of a term must be fixed (or the English name must stay as it is).
-   With `translateEngine=llm` the model gets the glossary from this terminology too.
+   The LLM engine (the default) gets its glossary from this terminology too; with `translateEngine=translate` Amazon Translate applies it directly.
 3. **Add a context correction** when a recognition mistake survives the vocabulary. Look at `en=` in the log
    (`COMMIT` lines) to see what Transcribe actually heard.
 4. **Add a reading** when the text is right but the voice pronounces it wrongly. Listen to the output first.

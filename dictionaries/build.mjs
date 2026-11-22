@@ -307,8 +307,8 @@ async function bedrockFill(rows, o, root) {
   const n = Math.max(1, Number(o["max-terms"] ?? 50));
   if (!Number.isInteger(n)) throw new Error("--max-terms must be a whole number");
   const subset = rows.slice(0, n);
-  const modelId = defaultModelId({ model: o.model, root });
   const region = defaultRegion({ region: o.region });
+  const modelId = defaultModelId({ model: o.model, root, region });
   const terms = subset.map(({ row }) => ({ term: row.en }));
   const est = estimateCost(buildRequest(terms), terms.length, modelId, root);
   errOut(

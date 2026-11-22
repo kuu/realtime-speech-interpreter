@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { estimate } from "../estimate-cost.mjs";
+import { estimate, loadSizing } from "../estimate-cost.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, "..", "estimate-cost.mjs");
@@ -58,4 +58,13 @@ test("the CLI rejects --channels 3 and --ja-share above 1, and --help lists the 
   assert.match(help, /--ja-share F/);
   const md = run("--channels", "2", "--markdown", "--hours", "1").stdout;
   assert.match(md, /Channel 2 \(Japanese to English\) included: Japanese share of the hour 0\.25 \(assumed\)/);
+});
+test("with no --engine, no event file and the real cdk.json the engine is llm (the shipped default)", () => {
+  const real = loadSizing();
+  assert.equal(real.ctx.translateEngine, "llm");
+  if (!real.usedEvent) {
+    assert.equal(estimate({}, real, prices).meta.engine, "llm");
+    assert.equal(estimate({ engine: "translate" }, real, prices).meta.engine, "translate");
+  }
+  assert.equal(estimate({}, { ctx: { taskCpu: 1024, taskMemoryMiB: 2048 }, ev: {}, usedEvent: false }, prices).meta.engine, "llm", "no engine anywhere: llm");
 });

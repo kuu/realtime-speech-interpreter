@@ -30,14 +30,15 @@ test("defaults when unset", () => {
     promptVersion: 2,
   });
   assert.equal(warns.length, 0);
-  assert.equal(translateEngine({}), "translate");
+  assert.equal(translateEngine({}), "llm");
+  assert.equal(translateEngine({ TRANSLATE_ENGINE: "translate" }), "translate");
 });
 
 test("engine parsing", () => {
   assert.equal(translateEngine({ TRANSLATE_ENGINE: "llm" }), "llm");
   assert.equal(translateEngine({ TRANSLATE_ENGINE: " LLM " }), "llm");
   const { out, warns } = quiet(() => translateEngine({ TRANSLATE_ENGINE: "foo" }));
-  assert.equal(out, "translate");
+  assert.equal(out, "llm", "an invalid value falls back to the default engine");
   assert.equal(warns.length, 1);
 });
 

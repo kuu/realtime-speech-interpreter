@@ -89,8 +89,8 @@ them are still translated. Settings take effect only after you deploy.
 |---|---|---|---|
 | `languageFilter` | `LANGUAGE_FILTER` | `langid` | `langid` = drop non-English results; `off` = revert switch, the previous single-language en-US request (Japanese is transcribed as English-looking words and translated, as before) |
 | `languageOptions` | `LANGUAGE_OPTIONS` | `en-US,ja-JP` | Languages Transcribe chooses between: 2-5 codes, one per language, must include `sourceLanguage` |
-| `langidSettleWords` | `LANGID_SETTLE_WORDS` | `5` | An English result is committed only once it has this many stable words (the language can flip once near the start of a result); integer 1-50. No effect on mid-sentence chunking with `chunkMinWords` ≥ 5 |
-| `langidSettleMode` | `LANGID_SETTLE_MODE` | `fixed` | `fixed` = every result needs `langidSettleWords` stable words; `dynamic` = `langidSettleWordsDefault` while no Japanese result was seen in the last `langidJaMemoryMs`, `langidSettleWordsAfterJa` after one, and for a result whose partials shrink before it settles (Transcribe rewriting itself, typical for the first Japanese turn after English). Case-insensitive (`-c latencyPreset=fast -c langidSettleMode=Fixed` turns the preset's dynamic mode back off; the lower-case cdk.json value `fixed` cannot override a preset, see Latency presets) |
+| `langidSettleWords` | `LANGID_SETTLE_WORDS` | `4` | An English result is committed only once it has this many stable words (the language can flip once near the start of a result); integer 1-50. No effect on mid-sentence chunking with `chunkMinWords` ≥ 5 |
+| `langidSettleMode` | `LANGID_SETTLE_MODE` | `dynamic` | `fixed` = every result needs `langidSettleWords` stable words; `dynamic` = `langidSettleWordsDefault` while no Japanese result was seen in the last `langidJaMemoryMs`, `langidSettleWordsAfterJa` after one, and for a result whose partials shrink before it settles (Transcribe rewriting itself, typical for the first Japanese turn after English). Case-insensitive (`-c latencyPreset=fast -c langidSettleMode=Fixed` turns the preset's dynamic mode back off; the lower-case cdk.json value `fixed` cannot override a preset, see Latency presets) |
 | `langidSettleWordsDefault` | `LANGID_SETTLE_WORDS_DEFAULT` | `3` | Dynamic mode: stable words when no Japanese result was seen recently; integer 1-50 |
 | `langidSettleWordsAfterJa` | `LANGID_SETTLE_WORDS_AFTER_JA` | `5` | Dynamic mode: stable words within `langidJaMemoryMs` after a Japanese result; integer 1-50 |
 | `langidJaMemoryMs` | `LANGID_JA_MEMORY_MS` | `60000` | Dynamic mode: how long after a Japanese result the longer threshold applies; integer 0-600000 |
@@ -123,12 +123,12 @@ queued chunks (logged `[chunk N] DROPPED reason=backlog`) so listeners stay with
 | Context key | Env var | Default | Meaning |
 |---|---|---|---|
 | `segmentationMode` | `SEGMENTATION_MODE` | `clause` | `clause` = mid-sentence chunks; `sentence` = translate whole sentences (revert switch; use with `maxBacklogMs=0`, otherwise whole sentences are dropped under sustained speech) |
-| `chunkMinWords` | `CHUNK_MIN_WORDS` | `8` | Min words (fillers like "um" excluded) before a comma / conjunction / max-time cut |
+| `chunkMinWords` | `CHUNK_MIN_WORDS` | `5` | Min words (fillers like "um" excluded) before a comma / conjunction / max-time cut |
 | `chunkMaxWords` | `CHUNK_MAX_WORDS` | `22` | Hard word cap per chunk (clause mode) |
-| `chunkMaxMs` | `CHUNK_MAX_MS` | `0` | Flush a chunk open this long once it has ≥ min words (clause mode). `0` disables |
-| `chunkPauseMs` | `CHUNK_PAUSE_MS` | `900` | Flush pending stable words after this long with no new transcript activity. `0` disables (while short text is held, `mergePauseMs` applies instead) |
+| `chunkMaxMs` | `CHUNK_MAX_MS` | `2500` | Flush a chunk open this long once it has ≥ min words (clause mode). `0` disables |
+| `chunkPauseMs` | `CHUNK_PAUSE_MS` | `600` | Flush pending stable words after this long with no new transcript activity. `0` disables (while short text is held, `mergePauseMs` applies instead) |
 | `chunkConjunctions` | `CHUNK_CONJUNCTIONS` | `because,but,although,though,while,which` | Cut before these words once ≥ min words (`""` disables) |
-| `mergeShort` | `MERGE_SHORT` | `on` | Merge short sentences (clause mode only): a sentence end (`.?!`) or Transcribe final that would give a chunk with fewer than `sentenceMinWords` words is held and joined with the next text (internal periods kept; a period followed by a lowercase word is not treated as a sentence end). `off` = previous behaviour exactly |
+| `mergeShort` | `MERGE_SHORT` | `off` | Merge short sentences (clause mode only): a sentence end (`.?!`) or Transcribe final that would give a chunk with fewer than `sentenceMinWords` words is held and joined with the next text (internal periods kept; a period followed by a lowercase word is not treated as a sentence end). `off` = previous behaviour exactly |
 | `sentenceMinWords` | `SENTENCE_MIN_WORDS` | `8` | Min words (fillers excluded) for a sentence/final cut when merging; integer 1-100 |
 | `sentenceCompleteWords` | `SENTENCE_COMPLETE_WORDS` | `5` | Merge on: a `.?!` that ends a sentence of at least this many words (fillers excluded, counted from the previous `.?!`, including words of the same sentence already sent in an earlier chunk) is cut at once even when the chunk is shorter than `sentenceMinWords`, so a complete sentence ("We have about 10 minutes.", "Can I ask you to clarify the entitlement question?") is never held for the next one. Fragments ("OK.", "I see.") still merge. Logged as `reason=sentence`. `0` = previous merge behaviour exactly; values ≥ `sentenceMinWords` have no effect; integer 0-100 |
 | `srtAnalyzeMs` | `SRT_ANALYZE_MS` | `500` | ffmpeg input probing of the SRT stream (`-analyzeduration`, ms). With ffmpeg's default (~5 s for MPEG-TS) the first ~5 s of every SRT connection are held and then released at once; the language-ID Transcribe stream (`languageFilter=langid`) keeps that burst as a permanent lag for the whole session (measured: +5.1 s on every chunk). 500 ms: first PCM after 0.4-0.9 s instead of 4.9-5.4 s, Opus and AAC senders, Homebrew ffmpeg and the image's ffmpeg 5.1. Each stream logs `startBurstMs=` (expected < 1000). `0` = ffmpeg default (revert); integer 0-10000 |
@@ -137,15 +137,15 @@ queued chunks (logged `[chunk N] DROPPED reason=backlog`) so listeners stay with
 | `danglingGuard` | `DANGLING_GUARD` | `on` | Quality v1: never end a chunk on a word that needs a continuation (preposition, article, relative pronoun, "to", "that", ...). Comma/conjunction cuts are skipped after such a word, `max_words` is extended by up to `danglingMaxWords`, and pause/final/merge cuts wait up to `danglingMaxHoldMs` for the next word. `.?!` and end of stream never wait. `off` = revert (previous cutting) |
 | `danglingWords` | `DANGLING_WORDS` | `""` | Comma list of words that dangle (no spaces); `""` = the built-in list |
 | `danglingMaxWords` | `DANGLING_MAX_WORDS` | `2` | Extra words `chunkMaxWords` may grow by to avoid a dangling end; integer 0-20 |
-| `danglingMaxHoldMs` | `DANGLING_MAX_HOLD_MS` | `500` | Longest wait of a pause/final/merge cut that would end on a dangling word; integer 0-10000 |
+| `danglingMaxHoldMs` | `DANGLING_MAX_HOLD_MS` | `250` | Longest wait of a pause/final/merge cut that would end on a dangling word; integer 0-10000 |
 | `cutLookaheadMs` | `CUT_LOOKAHEAD_MS` | `0` | Quality v1: a mid-sentence pause/final cut waits this long for the next word before it is made, so a Transcribe result boundary does not split a sentence. `0` = off (default; 300-500 buys fewer mid-sentence splits at about +0.5 s first-word latency); integer 0-5000 |
-| `shortSentenceJoin` | `SHORT_SENTENCE_JOIN` | `on` | Quality v1: tiny held sentences (at most `shortSentenceWords` words) wait `shortJoinPauseMs` instead of `mergePauseMs` and are sent to Translate comma-joined ("There's small, medium, and large."). The comma join changes only the text sent to Translate, not the exactly-once check. `off` = revert |
+| `shortSentenceJoin` | `SHORT_SENTENCE_JOIN` | `off` | Quality v1: tiny held sentences (at most `shortSentenceWords` words) wait `shortJoinPauseMs` instead of `mergePauseMs` and are sent to Translate comma-joined ("There's small, medium, and large."). The comma join changes only the text sent to Translate, not the exactly-once check. `off` = revert |
 | `shortSentenceWords` | `SHORT_SENTENCE_WORDS` | `3` | Max words of a "tiny" sentence; integer 1-6 |
 | `shortJoinPauseMs` | `SHORT_JOIN_PAUSE_MS` | `1000` | Silence that releases held tiny sentences; `0` = use `mergePauseMs`; integer 0-10000 |
 | `translateFormality` | `TRANSLATE_FORMALITY` | `FORMAL` | Amazon Translate formality for Japanese (keeps です/ます tone, avoids "慣れてるだろ"). `INFORMAL` or `off` (parameter not sent) = revert |
-| `translateEngine` | `TRANSLATE_ENGINE` | `translate` | `translate` = Amazon Translate only (no Bedrock, no extra IAM). `llm` = Claude on Bedrock with Translate as fallback; adds the IAM statements in [LLM translation engine](#llm-translation-engine-optional) |
-| `llmModelId` | `LLM_MODEL_ID` | `jp.anthropic.claude-haiku-4-5-20251001-v1:0` | Japan inference profile id. With `translateEngine=llm` it must start with `jp.` (IAM scoping is defined for that profile only) |
-| `llmTimeoutMs` | `LLM_TIMEOUT_MS` | `1500` | Per-chunk LLM timeout before falling back to Translate; integer 200-10000 |
+| `translateEngine` | `TRANSLATE_ENGINE` | `llm` | `llm` = Claude on Bedrock with Amazon Translate as the per-chunk fallback; adds the IAM statements in [LLM translation engine](#llm-translation-engine). `translate` = low-cost mode, Amazon Translate only (no Bedrock, no extra IAM) |
+| `llmModelId` | `LLM_MODEL_ID` | `auto` | Claude Haiku 4.5 geo inference profile id. `auto` = the profile of the stack Region (`jp.` for Tokyo/Osaka, `us.`, `eu.`, `au.`, `in.`; table in [configuration.md](../docs/configuration.md#llm-model-id)); synth fails for a Region without a profile unless `translateEngine=translate`. An explicit id must be a geo profile that the Region can call (`global.` is not supported; IAM is scoped to the listed Regions) |
+| `llmTimeoutMs` | `LLM_TIMEOUT_MS` | `1200` | Per-chunk LLM timeout before falling back to Translate; integer 200-10000 |
 | `llmContextChunks` | `LLM_CONTEXT_CHUNKS` | `3` | Previous chunks sent as context; integer 0-6 (0 = none) |
 | `llmContextResetMs` | `LLM_CONTEXT_RESET_MS` | `60000` | Source-time gap that clears the context; integer 0-600000 (0 = never) |
 | `llmGlossary` | `LLM_GLOSSARY` | `full` | `full` = whole Translate terminology in the cached system prompt; `off` = no glossary and no prompt cache |
@@ -156,7 +156,7 @@ queued chunks (logged `[chunk N] DROPPED reason=backlog`) so listeners stay with
 | `llmMaxCharsPerWord` | `LLM_MAX_CHARS_PER_WORD` | `15` | Output-length validation limit; integer 4-40 |
 | `llmKeepWarmMs` | `LLM_KEEPWARM_MS` | `240000` | Keep-warm call interval for the prompt cache (5 min TTL); `0` or integer 30000-290000 |
 | `llmPromptVersion` | `LLM_PROMPT_VERSION` | `2` | `2` = the prompt tells the model whether each chunk ended a sentence (`chunk_ends_sentence`), so a chunk cut mid-sentence is translated as an open fragment instead of being closed with です/ます。 `1` = the previous prompt (revert). |
-| `latencyPreset` | `LATENCY_PRESET` (log only) | `default` | `default` = the values in cdk.json. `fast` = bundle for `translateEngine=llm` that starts each sentence's Japanese earlier, see [Latency presets](#latency-presets). Unknown names fail synth |
+| `latencyPreset` | `LATENCY_PRESET` (log only) | `talk` | `talk` = the shipped default: the values in cdk.json (LLM engine, fast timing). `careful` = the previous defaults (Amazon Translate engine, longer chunks). `default` = alias of `talk`. `fast` = `talk` timing without the engine switch. See [Latency presets](#latency-presets). Unknown names fail synth |
 | `speedupSteps` | `SPEEDUP_STEPS` | `3000:115,5000:130,7000:150` | Used only with `speedMode=steps` (the previous behaviour): `backlogMs:rate%`, 115% from 3 s backlog, 130% from 5 s, 150% from 7 s. `off` = no speed-up in steps mode |
 | `fillerFilter` | `FILLER_FILTER` | `on` | Main switch for filler removal (`off` = translate everything as heard) |
 | `fillerWords` | `FILLER_WORDS` | `um,uh,er,ah,hmm,mm,erm,uh-huh` | English filler words, always removed before Translate (whole words) |
@@ -212,43 +212,43 @@ What needs which step:
 - The corrections, segmentation and formality changes ship with the app image, so they need `cdk deploy`. Nothing has been deployed.
 
 ## Latency presets
-`-c latencyPreset=fast` replaces these defaults (everything else stays as in cdk.json), measured on recorded talks (configuration P3d):
-
-| Key | `default` | `fast` |
+The shipped defaults in `cdk.json` are the `talk` bundle (LLM engine plus fast timing), measured on recorded talks (configuration P3d).
+`-c latencyPreset=careful` (or `"profile": "careful"` in `event.json`) restores the previous defaults exactly (`config/profiles/careful.json` lists every changed key):
+| Key | shipped default (`talk`) | `careful` |
 |---|---|---|
-| `chunkMinWords` | 8 | 5 |
-| `chunkMaxMs` | 0 (off) | 2500 |
-| `chunkPauseMs` | 900 | 600 |
-| `mergeShort` | on | off |
-| `shortSentenceJoin` | on | off |
-| `danglingMaxHoldMs` | 500 | 250 |
-| `langidSettleWords` | 5 | 4 (used only if `langidSettleMode` is set back to `fixed`) |
-| `langidSettleMode` | fixed | dynamic |
+| `translateEngine` | llm | translate |
+| `chunkMinWords` | 5 | 8 |
+| `chunkMaxMs` | 2500 | 0 (off) |
+| `chunkPauseMs` | 600 | 900 |
+| `mergeShort` | off | on |
+| `shortSentenceJoin` | off | on |
+| `danglingMaxHoldMs` | 250 | 500 |
+| `langidSettleWords` | 4 (used only if `langidSettleMode` is set to `fixed`) | 5 |
+| `langidSettleMode` | dynamic | fixed |
 | `langidSettleWordsDefault` / `langidSettleWordsAfterJa` / `langidJaMemoryMs` | 3 / 5 / 60000 | 3 / 5 / 60000 |
-| `llmTimeoutMs` | 1500 | 1200 |
-
-An explicit `-c key=value` always wins over the preset (for example `-c latencyPreset=fast -c chunkMinWords=7`). "Explicit" means a value that differs from the one in cdk.json: passing the cdk.json value itself (`-c chunkMinWords=8`) is indistinguishable from not passing it, so the preset still applies; to keep such a value under `fast`, change it in cdk.json. The preset is applied at synth time and the task logs `latencyPreset=fast` at startup. `fast` is tuned for `translateEngine=llm`; with `translate` the chunker values still apply, but the sweep did not measure that. Revert: omit `latencyPreset` or pass `-c latencyPreset=default`. Expected effect (local runs on recorded talks): the median time from the first English word of a sentence to its first Japanese sound drops by about 1.2 / 3.4 / 1.5 s, with about 1.7 times more, shorter chunks. Finer steps (for example `-c chunkMinWords=6 -c chunkMaxMs=3000`) are in the report's fallback ladder.
-
-## LLM translation engine (optional)
-
-`translateEngine=llm` translates each chunk with Claude Haiku 4.5 on Amazon Bedrock (Japan inference profile), using the
-previous chunks as context and the Translate terminology as glossary. Any LLM failure or rejected output falls back to
-Amazon Translate for that chunk. The default (`translateEngine=translate`) adds no IAM and behaves as before.
-
-Enable / revert (nothing has been deployed by this change):
-
+| `llmTimeoutMs` | 1200 | 1500 |
+| `jaClauseMinChars` / `jaMaxChars` / `jaPauseMs` / `jaMaxWaitMs` | 8 / 30 / 600 / 2500 | 12 / 40 / 900 / 4000 |
+Old flags: `-c latencyPreset=default` is an alias of the shipped default (it used to mean the `careful` values). `-c latencyPreset=fast` is the `talk` timing without the engine switch: the engine comes from `cdk.json`, so it is now `llm` (before: Amazon Translate); add `-c translateEngine=translate` for fast timing with Amazon Translate. `-c translateEngine=llm -c latencyPreset=fast` gives the same stack as the plain default (`scripts/synth-parity.sh` checks it).
+An explicit `-c key=value` always wins over the preset (for example `-c latencyPreset=careful -c chunkMinWords=7`). "Explicit" means a value that differs from the one in cdk.json: passing the cdk.json value itself (`-c chunkMinWords=5`) is indistinguishable from not passing it, so a preset still applies. For example, `-c latencyPreset=careful -c translateEngine=llm` keeps Amazon Translate, because `llm` is the `cdk.json` value; to keep LLM under `careful`, set `"translateEngine": "llm"` in `event.json` (it beats the profile). The preset is applied at synth time, so the app image does not change when you switch it. Expected effect against `careful` (local runs on recorded talks): the median time from the first English word of a sentence to its first Japanese sound drops by about 1.2 / 3.4 / 1.5 s, with about 1.7 times more, shorter chunks.
+## LLM translation engine
+`translateEngine=llm` (the default) translates each chunk with Claude Haiku 4.5 on Amazon Bedrock (geo inference profile of the stack
+Region), using the previous chunks as context and the Translate terminology as glossary. Any LLM failure or rejected output falls
+back to Amazon Translate for that chunk. Amazon Translate is the backup translator, and with `translateEngine=translate`
+(low-cost mode, no Bedrock access needed) it is the only engine; that mode adds no Bedrock IAM and sends no context.
+Prerequisite: Amazon Bedrock access to Claude Haiku 4.5 in your Region (the first use of an Anthropic model asks for a use-case form in the
+Bedrock console). `./scripts/doctor.sh` checks it. Synth fails with a clear message for a Region without a geo profile.
+Low-cost mode / back to the LLM (nothing is deployed by these commands alone):
 ```bash
-npx cdk deploy -c venueCidr=<cidr> -c translateEngine=llm
-# revert
-npx cdk deploy -c venueCidr=<cidr> -c translateEngine=translate
+npx cdk deploy -c venueCidr=<cidr> -c translateEngine=translate   # low-cost mode, Amazon Translate only
+npx cdk deploy -c venueCidr=<cidr>                                # the default: LLM with Translate fallback
 ```
-
-Before enabling, make sure the terminology is published (`./scripts/dictionaries.sh`, then `--restart-app` so the task
+Make sure the terminology is published (`./scripts/dictionaries.sh`, then `--restart-app` so the task
 reloads it). The app loads the glossary once at start with `translate:GetTerminology`; without it every chunk uses Translate.
-`translateEngine=llm` also needs a non-empty `translateTerminologyName`; synth fails otherwise.
+The LLM engine also needs a non-empty `translateTerminologyName`; synth fails otherwise.
 
-IAM added to the task role only when `translateEngine=llm` (quoted from the synthesized template, account and region
-come from the stack environment; the example is `ap-northeast-1`, account `123456789012`):
+IAM added to the task role only with the LLM engine (quoted from the synthesized template, account and region
+come from the stack environment; the example is `ap-northeast-1`, account `123456789012`; in another Region the profile prefix
+and the destination Regions follow the table in [configuration.md](../docs/configuration.md#llm-model-id)):
 
 ```json
 {
@@ -449,23 +449,23 @@ aws s3 rb s3://simul-translation-dict-<ACCOUNT_ID>-ap-northeast-1 --force --regi
 Settings: [configuration.md](../docs/configuration.md#browser-microphone-input). Design and security:
 [security.md](../docs/security.md#browser-microphone-input).
 
-**Off by default is checked.** With no browser setting the synthesized template must equal the one of `origin/main`:
-
+**Off by default is checked.** With no browser setting the template has no browser-input resources (`cdk/test/browser-input.test.ts`).
+The defaults themselves are compared with `origin/main`, which still has the previous ones:
 ```bash
 cdk/scripts/synth-parity.sh          # optional argument: another base ref
 ```
-
-It exports the base ref with `git archive` (the repository is not touched), synthesizes both trees, sorts the JSON keys,
-replaces the 64-hex asset hashes with `<hash>` and compares. It prints the hashes that changed so you can see that only
-the app image moved. `cdk/test/browser-input.test.ts` also checks that `inputSource=srt` equals the default template.
-
+It exports the base ref with `git archive` into a temporary folder (no git worktree; removed on exit), synthesizes both trees,
+sorts the JSON keys, replaces the 64-hex asset hashes with `<hash>`, masks the `LATENCY_PRESET` label and compares:
+(a) this tree with no flags equals the base with `-c translateEngine=llm -c latencyPreset=fast`; (b) `-c latencyPreset=careful`
+equals the base default; (c) `-c translateEngine=translate` against the base default is printed for information (the timing
+variables differ by design). It also prints the asset hashes that changed, so you can see that only the app image moved.
 ## RTMPS input (optional, off by default)
 
 `-c inputSource=rtmps` adds a TCP listener on the NLB, the stream key secret and a custom Caddy image built from
 [`caddy-l4/`](caddy-l4/README.md) (pinned Caddy plus the layer4 plugin; you own its rebuilds). With `srt` or `browser`
 Caddy keeps the official `caddyImage`. Settings: [configuration.md](../docs/configuration.md#rtmps-input). Design:
-[alternative-inputs.md](../docs/alternative-inputs.md). `cdk/scripts/synth-parity.sh` checks that the default is
-unchanged; `cdk/scripts/template-diff.sh -c inputSource=rtmps` lists what the setting adds. `cdk/test/rtmps-input.test.ts`
+[alternative-inputs.md](../docs/alternative-inputs.md). `cdk/scripts/synth-parity.sh` checks that the defaults of the
+stack stay as intended; `cdk/scripts/template-diff.sh -c inputSource=rtmps` lists what the setting adds. `cdk/test/rtmps-input.test.ts`
 pins the security groups, the IAM pull grant, the generated Caddyfile and the stream key generator.
 
 ### Operator command

@@ -1,23 +1,5 @@
 {
-  "description": "One speaker or a presentation. Starts each sentence's Japanese about 1-3 s earlier than 'careful' (measured on recorded talks, configuration P3d). Cuts chunks after 5 words or 2.5 s, so more and shorter chunks. Uses the LLM engine (Bedrock): the bundle was tuned and measured with it, and on a judged sample it scored 4.1 of 5 against 3.0 for Amazon Translate for about $1.17 vs $1.06 per 4-hour session plus 0.6 s per chunk.",
+  "description": "The shipped default (the same values as cdk.json). One speaker or a presentation. Starts each sentence's Japanese about 1-3 s earlier than 'careful' (measured on recorded talks, configuration P3d). Cuts chunks after 5 words or 2.5 s. Uses the LLM engine (Amazon Bedrock): the bundle was tuned and measured with it, and on a judged sample it scored 4.1 of 5 against 3.0 for Amazon Translate for about $1.17 vs $1.06 per 4-hour session plus 0.6 s per chunk.",
   "status": "ready",
-  "context": {
-    "translateEngine": "llm",
-    "llmTimeoutMs": 1200,
-    "mergeShort": "off",
-    "shortSentenceJoin": "off",
-    "danglingMaxHoldMs": 250,
-    "chunkPauseMs": 600,
-    "chunkMinWords": 5,
-    "chunkMaxMs": 2500,
-    "langidSettleWords": 4,
-    "langidSettleMode": "dynamic",
-    "langidSettleWordsDefault": 3,
-    "langidSettleWordsAfterJa": 5,
-    "langidJaMemoryMs": 60000,
-    "jaClauseMinChars": 8,
-    "jaMaxChars": 30,
-    "jaPauseMs": 600,
-    "jaMaxWaitMs": 2500
-  }
+  "context": {}
 }

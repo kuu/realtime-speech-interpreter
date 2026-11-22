@@ -1,5 +1,20 @@
 {
-  "description": "PLACEHOLDER for Q&A with several languages and speakers (planned, not implemented). Today it behaves exactly like 'careful'.",
+  "description": "PLACEHOLDER for Q&A with several languages and speakers (planned, not implemented). Today it behaves exactly like 'careful' (Amazon Translate engine, longer chunks).",
   "status": "placeholder",
-  "context": {}
+  "context": {
+    "translateEngine": "translate",
+    "llmTimeoutMs": 1500,
+    "mergeShort": "on",
+    "shortSentenceJoin": "on",
+    "danglingMaxHoldMs": 500,
+    "chunkPauseMs": 900,
+    "chunkMinWords": 8,
+    "chunkMaxMs": 0,
+    "langidSettleWords": 5,
+    "langidSettleMode": "fixed",
+    "jaClauseMinChars": 12,
+    "jaMaxChars": 40,
+    "jaPauseMs": 900,
+    "jaMaxWaitMs": 4000
+  }
 }

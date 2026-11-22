@@ -298,7 +298,7 @@ applies, in this order. "Token" means one Transcribe item, punctuation items exc
 ends in `、` is tested on the word in front of the comma. D is applied by rules 2, 4, 5 and 6 only. Rules 1 and 7 never
 apply it: a stable sentence end and a Transcribe final always cut.
 
-| # | Rule | Cut when | Defaults (careful / `talk`) |
+| # | Rule | Cut when | Defaults (`careful` / `talk`; `talk` is the shipped default) |
 |---|---|---|---|
 | 1 | Sentence end | A stable `。` `？` `！` (also ASCII `?` `!`) is committed. A sentence shorter than `jaSentenceMinChars` goes to merge-short, **only when the existing `mergeShort` key is on** (it is off in `talk`, so in `talk` every sentence end cuts). | min 6 |
 | 2 | Clause end | A stable `、` is committed, the buffer has at least `jaClauseMinChars`, and D is false. | min 12 / 8 |
@@ -359,24 +359,24 @@ keys must be `cdk.json` keys) and an `advanced` key in `event.json`; the docs te
 requires each one to be listed in `configuration.md`. Precedence is the existing one: `-c` flag, `event.json`, profile,
 `cdk.json`. The Japanese defaults follow the profile because low latency is the first priority:
 
-| Key | `cdk.json` default (= `careful`) | `talk` | `fast` | Mirrors today's key |
-|---|---|---|---|---|
-| `jaSegmentationMode` | `simple` | `simple` | `simple` | (new; `simple` or `full`, default `simple`) |
-| `jaSentenceMinChars` | 6 | 6 (idle: `mergeShort` off) | 6 (idle) | `sentenceMinWords` (8) |
-| `jaClauseMinChars` | 12 | 8 | 8 | `chunkMinWords` (8 / 5) |
-| `jaMaxChars` | 40 | 30 | 30 | `chunkMaxWords` (22) |
-| `jaPauseMs` | 900 | 600 | 600 | `chunkPauseMs` (900 / 600) |
-| `jaMaxWaitMs` | 4000 | 2500 | 2500 | `chunkMaxMs` (0 = off in `careful`, 2500 in `talk`) |
-| `jaClauseEndings`, `jaDanglingTokens` | built-in lists | same | same | `danglingWords` / built-in English list |
-| `jaDanglingMaxChars` | 10 | 10 | 10 | `danglingMaxWords` (2) |
-| `jaShortChars`, `jaShortMinConf` | 4, 0.6 | same | same | the English short rule |
+| Key | `cdk.json` default (= `talk`, `fast`, `default`) | `careful` | Mirrors the English key |
+|---|---|---|---|
+| `jaSegmentationMode` | `simple` | `simple` | (new; `simple` or `full`, default `simple`) |
+| `jaSentenceMinChars` | 6 (idle: `mergeShort` off) | 6 | `sentenceMinWords` (8) |
+| `jaClauseMinChars` | 8 | 12 | `chunkMinWords` (5 / 8) |
+| `jaMaxChars` | 30 | 40 | `chunkMaxWords` (22) |
+| `jaPauseMs` | 600 | 900 | `chunkPauseMs` (600 / 900) |
+| `jaMaxWaitMs` | 2500 | 4000 | `chunkMaxMs` (2500 in the default, 0 = off in `careful`) |
+| `jaClauseEndings`, `jaDanglingTokens` | built-in lists | same | `danglingWords` / built-in English list |
+| `jaDanglingMaxChars` | 10 | 10 | `danglingMaxWords` (2) |
+| `jaShortChars`, `jaShortMinConf` | 4, 0.6 | same | the English short rule |
 
 
 In `simple` mode only `jaMaxWaitMs` applies (and `jaSentenceMinChars` only when the existing `mergeShort` key is on); the
-other `ja*` keys, `jaClauseEndings` and `jaDanglingTokens` are read only in `full` mode. `qa` and `default` follow
-`careful`. These are starting values to be tuned by the evaluation, not results; a profile
+other `ja*` keys, `jaClauseEndings` and `jaDanglingTokens` are read only in `full` mode. `qa` follows
+`careful`; `default` is an alias of the shipped default (`talk`). These are starting values to be tuned by the evaluation, not results; a profile
 file gains the `ja*` rows only in the pull request that builds the feature, together with the tuned values.
-(Before building, the 900 and 600 ms values are read off `chunkPauseMs` in `cdk.json` and `talk.json`; the others are
+(Before building, the 900 and 600 ms values are read off `chunkPauseMs` of `careful` and of the shipped default; the others are
 scaled the same way and are to be checked.)
 
 **`channels` is an `event.json` key**, not a `cdk.json` key and not an `advanced` key. A `-c channels='<json>'` flag
@@ -471,8 +471,8 @@ retried. The fallback is counted per lane in the log.
 ### Amazon Translate engine
 
 `TranslateText` with source `ja`, target `en`, the ja-to-en terminology, no formality setting (`translateFormality` is
-a Japanese-target setting and is not sent for an English target). Translate remains the per-chunk fallback of the LLM
-engine, as today.
+a Japanese-target setting and is not sent for an English target). Amazon Translate is the backup translator: it is the
+per-chunk fallback of the LLM engine (the default engine) and the engine of the low-cost mode (`translateEngine=translate`).
 
 ## English voice
 

@@ -137,19 +137,21 @@ test("validation: three lanes, duplicates, same language, unknown key, languageF
   assert.throws(bad([DEFAULT_LANE, EN_LANE], { languageOptions: "en-US,ko-KR" }), /not in languageOptions/);
   assert.throws(() => cfgFor({ channels: "{not json" }), /is not valid JSON/);
 });
-test("a two-lane deploy with the llm engine on lane 2 only needs the jp. model id check", () => {
+test("a two-lane deploy with the llm engine on lane 2 only needs the geo profile model id check", () => {
   const lanes = [DEFAULT_LANE, { ...EN_LANE, translateEngine: "llm", translateTerminology: "t-lane2" }];
-  assert.throws(() => cfgFor({ channels: JSON.stringify(lanes), llmModelId: "anthropic.claude" }), /llmModelId must be a Japan inference profile/);
+  assert.throws(() => cfgFor({ channels: JSON.stringify(lanes), llmModelId: "anthropic.claude" }), /llmModelId must be a geo inference profile/);
   assert.equal(cfgFor({ channels: JSON.stringify(lanes) }).twoLanes, true);
 });
 
 // ---- ja* keys ----
 test("ja keys: defaults, profile talk, and -c precedence", () => {
   const c = cfgFor({});
-  assert.deepEqual([c.jaSegmentationMode, c.jaMaxWaitMs, c.jaClauseMinChars, c.jaMaxChars, c.jaPauseMs], ["simple", 4000, 12, 40, 900]);
+  assert.deepEqual([c.jaSegmentationMode, c.jaMaxWaitMs, c.jaClauseMinChars, c.jaMaxChars, c.jaPauseMs], ["simple", 2500, 8, 30, 600]);
   assert.deepEqual([c.langidSettleItems, c.langidSettleItemsDefault, c.langidSettleItemsAfterEn], [5, 3, 5]);
   const talk = cfgFor({ latencyPreset: "talk" });
   assert.deepEqual([talk.jaMaxWaitMs, talk.jaClauseMinChars, talk.jaMaxChars, talk.jaPauseMs, talk.jaSegmentationMode], [2500, 8, 30, 600, "simple"]);
+  const careful = cfgFor({ latencyPreset: "careful" });
+  assert.deepEqual([careful.jaMaxWaitMs, careful.jaClauseMinChars, careful.jaMaxChars, careful.jaPauseMs], [4000, 12, 40, 900]);
   assert.equal(cfgFor({ latencyPreset: "fast" }).jaMaxWaitMs, 2500);
   assert.equal(cfgFor({ latencyPreset: "talk", jaMaxWaitMs: 1000 }).jaMaxWaitMs, 1000);
   assert.equal(cfgFor({ latencyPreset: "careful" }).jaMaxWaitMs, 4000);

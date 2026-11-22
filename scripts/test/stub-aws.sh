@@ -7,6 +7,13 @@ case "$*" in
   "sts get-caller-identity"*) echo '{"Account":"123456789012","Arn":"arn:aws:sts::123456789012:assumed-role/Test/test"}' ;;
   "cloudformation describe-stacks"*) echo UPDATE_COMPLETE ;;
   "bedrock list-inference-profiles"*) echo ACTIVE ;;
+  "bedrock get-foundation-model-availability"*)
+    case "${STUB_BEDROCK_AVAIL:-ok}" in
+      ok) printf 'AUTHORIZED\tAVAILABLE\tAVAILABLE\n' ;;
+      old-cli) echo "aws: error: argument operation: Invalid choice, valid choices are:" >&2; exit 252 ;;
+      denied) echo "An error occurred (AccessDeniedException) when calling the GetFoundationModelAvailability operation" >&2; exit 254 ;;
+      *) printf '%s\n' "$STUB_BEDROCK_AVAIL" ;;
+    esac ;;
   "transcribe get-vocabulary --vocabulary-name simul-translation "*"LanguageCode"*) echo "READY en-US" ;;
   "transcribe get-vocabulary --vocabulary-name simul-translation "*) echo READY ;;
   "transcribe get-vocabulary --vocabulary-name simul-translation-ja "*) echo "${STUB_VOCAB_JA:-READY ja-JP}" ;;

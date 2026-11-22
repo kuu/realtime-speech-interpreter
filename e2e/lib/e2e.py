@@ -912,6 +912,9 @@ def cdk_env() -> tuple[dict, list[str]]:
             if name in ctx:
                 v = ctx[name]
                 v = ("true" if v else "false") if isinstance(v, bool) else str(v)
+                if key == "LLM_MODEL_ID" and v == "auto":
+                    notes.append("LLM_MODEL_ID: cdk.json has 'auto' (the CDK picks the geo profile of the stack Region); the app default (jp. profile, Tokyo/Osaka) is used locally, pass --env LLM_MODEL_ID=<profile> elsewhere")
+                    continue
                 env[key] = v if v != "" or fallback is None else fallback
             elif fallback is not None:
                 env[key] = fallback

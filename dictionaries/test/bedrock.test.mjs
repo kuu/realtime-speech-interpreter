@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseCsv } from "../lib/csv.mjs";
-import { acceptSuggestions, estimateCost, buildRequest } from "../lib/bedrock.mjs";
+import { acceptSuggestions, estimateCost, buildRequest, defaultModelId } from "../lib/bedrock.mjs";
 import { COLUMNS } from "../lib/terms.mjs";
 import { REPO, build, cleanup, makeDict, stubBin, tmp } from "./helpers.mjs";
 
@@ -113,4 +113,12 @@ test("price is known for Haiku models and unknown for others", () => {
   const req = buildRequest([{ term: "StreamDeck" }]);
   assert.equal(estimateCost(req, 1, MODEL, REPO).priced, true);
   assert.equal(estimateCost(req, 1, "jp.example.other-model", REPO).priced, false);
+});
+test("model id: cdk.json llmModelId auto resolves to the Haiku 4.5 geo profile of the Region; explicit values win", () => {
+  const env = {};
+  assert.equal(defaultModelId({ root: REPO, env }), MODEL, "Tokyo is the default Region");
+  assert.equal(defaultModelId({ root: REPO, env, region: "us-east-1" }), "us.anthropic.claude-haiku-4-5-20251001-v1:0");
+  assert.throws(() => defaultModelId({ root: REPO, env, region: "ap-northeast-2" }), /no Claude Haiku 4\.5 geo inference profile for ap-northeast-2/);
+  assert.equal(defaultModelId({ root: REPO, env: { LLM_MODEL_ID: "x" }, region: "ap-northeast-2" }), "x");
+  assert.equal(defaultModelId({ root: REPO, env, model: "y" }), "y");
 });

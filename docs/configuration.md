@@ -31,7 +31,7 @@ Highest wins:
 
 "Explicit" means a `-c` value that differs from the value in `cdk.json`. A `-c` flag that repeats the `cdk.json` default is indistinguishable from no flag, so `event.json` or the profile still applies. To force such a value, put it in `event.json` under `"advanced"`. To ignore `event.json` for one run, pass `-c eventFile=none`; to use another file, `-c eventFile=path/to/other.json`.
 
-The order is tested in `cdk/test/config.test.ts`. Old flags keep working: every key of `cdk.json` is still read by `cdk/lib/config.ts`, and `-c venueCidr=... -c translateEngine=llm -c latencyPreset=fast` produces the same container environment, IAM policies and security groups as before layered configuration existed (`cdk/test/parity.test.ts`, golden files in `cdk/test/fixtures/`).
+The order is tested in `cdk/test/config.test.ts`. **The defaults are the LLM engine and the fast `talk` timing**, so a plain `cdk deploy` gives what `-c translateEngine=llm -c latencyPreset=fast` gave before. Old flags keep working: every key of `cdk.json` is still read by `cdk/lib/config.ts`. `-c translateEngine=llm -c latencyPreset=fast` produces the same stack as the plain default, and `-c latencyPreset=careful` produces the same stack as the previous defaults (`cdk/test/parity.test.ts`, golden files in `cdk/test/fixtures/`, and `cdk/scripts/synth-parity.sh` against `origin/main`). `-c translateEngine=translate` selects the low-cost mode. Two flags changed meaning, see [Profiles](#profiles). Because `-c translateEngine=llm` now repeats the `cdk.json` value, it no longer overrides a profile that sets the engine (`careful`); put `"translateEngine": "llm"` in `event.json` for that.
 
 ## event.json
 
@@ -41,14 +41,14 @@ Plain JSON. Comments (`//` and `/* */`) are accepted by the loader, so you can a
 |---|---|---|---|---|
 | `venueCidr` | string or list | `["203.0.113.10/32"]` | `venueCidr` | Public egress IP(s) of the venue network, as `/32` or small CIDR. Only these addresses may send SRT and reach the health check. Required. `0.0.0.0/0` is rejected. Find it from the venue network with `curl https://checkip.amazonaws.com`. |
 | `region` | string | `"ap-northeast-1"` | `region` | AWS Region of the whole stack. |
-| `profile` | string | `"talk"` | `latencyPreset` | Latency profile, see [Profiles](#profiles). |
+| `profile` | string | `"talk"` | `latencyPreset` | Latency profile, see [Profiles](#profiles). Default `talk` (LLM engine, fast timing). `careful` = the previous defaults. |
 | `sourceLanguage` | string | `"en-US"` | `sourceLanguage`, `translateSource` | Transcribe code of the speaker's language. Must be in `languageOptions` (advanced, default `en-US,ja-JP`). `translateSource` is its prefix (`en`). |
 | `targetLanguage` | string | `"ja"` | `translateTarget` | Translate code of the listeners' language. The Polly voice must speak it. |
 | `pollyVoice` | string | `"Kazuha"` | `pollyVoice` | Polly voice for the target language. |
 | `channels` | list of 1 or 2 lanes | `[{"source":"en-US","target":"ja","pollyVoice":"Kazuha"},{"source":"ja-JP","target":"en","pollyVoice":"Joanna"}]` | `channels` (event key only; `-c channels='<json>'` overrides it) | Output channels, see [bilingual-channels.md](bilingual-channels.md). Absent = one English-to-Japanese channel from the flat keys (today). Per lane: `source` (Transcribe code, in `languageOptions`), `target` (Translate code and channel id), `pollyVoice` (required), `transcribeVocabulary` (an English-to-Japanese lane defaults to `dictionaries.transcribeVocabulary`, any other lane to `""`), `translateTerminology` (every lane defaults to `dictionaries.translateTerminology`: one multi-directional terminology serves both directions), `translateEngine` (optional). Replaces `sourceLanguage`, `targetLanguage` and `pollyVoice`: combining them with `channels` is rejected. Two lanes need `languageFilter=langid` and add the `CHANNELS` variable, the `ListenerUrl<Id>` output and the channel list in `config.json`; one lane uses the flat variables. |
 | `pollyReadings` | true/false | `true` | `pollyReadings` | `true` = apply the pronunciation readings (SSML `sub` aliases) from the generated `polly-readings.csv` of your dictionary folder (see `dictionaryDir`). The displayed text is never changed. |
-| `translateEngine` | string | `"llm"` | `translateEngine` | `translate` = Amazon Translate. `llm` = Bedrock model per chunk, Translate stays as fallback. |
-| `llmModelId` | string | `"jp.anthropic.claude-haiku-4-5-20251001-v1:0"` | `llmModelId` | Bedrock Japan cross-Region inference profile id (must start with `jp.`). Used only with `translateEngine=llm`. |
+| `translateEngine` | string | `"llm"` | `translateEngine` | `llm` (default) = Bedrock model per chunk, Amazon Translate stays as the fallback. `translate` = low-cost mode, Amazon Translate only. See [Amazon Translate is the backup translator](#amazon-translate-is-the-backup-translator). |
+| `llmModelId` | string | `"auto"` | `llmModelId` | Claude Haiku 4.5 geo inference profile id. `auto` (default) = the profile of the stack Region, see [LLM model id](#llm-model-id). Used only with the LLM engine. |
 | `dictionaries.dir` | string | `"../my-dictionaries"` | `dictionaryDir` | Folder with your dictionary (`terms.csv` and the three generated files). Empty or unset = `dictionaries/local/` if it exists, else `dictionaries/example/`. A relative path is relative to the repository root; absolute paths are recommended. A set but missing folder is an error. Its `polly-readings.csv` is copied into the app image; `dictionaries.sh` uploads the other two. See [dictionaries](dictionaries.md). |
 | `dictionaries.transcribeVocabulary` | string | `"simul-translation"` | `transcribeVocabularyName` | Name of the Transcribe custom vocabulary. `""` = none. |
 | `dictionaries.translateTerminology` | string | `"simul-translation"` | `translateTerminologyName` | Name of the Translate terminology. `""` = none (not allowed with the LLM engine, which reads its glossary from it). |
@@ -81,17 +81,20 @@ Profiles live in `cdk/config/profiles/<name>.json` (`description`, `status`, `co
 
 | Profile | Use for | What it sets |
 |---|---|---|
-| `talk` | One speaker, presentation. | Start of each sentence's Japanese 0.6 to 1.5 s above the measured floor; against `careful` the median start lag fell by 1.2 to 3.4 s on three recorded talks (p90 by 2.6 to 3.5 s). First chunk after 5 words or 2.5 s, no merging of short sentences, shorter pause holds, dynamic language-ID settle, LLM timeout 1.2 s, **`translateEngine=llm`**. About 1.7 times as many, shorter chunks. |
-| `careful` | Quality over speed. | Nothing: the `cdk.json` defaults (Amazon Translate, longer chunks). |
+| `talk` | The shipped default. One speaker, presentation. | Start of each sentence's Japanese 0.6 to 1.5 s above the measured floor; against `careful` the median start lag fell by 1.2 to 3.4 s on three recorded talks (p90 by 2.6 to 3.5 s). First chunk after 5 words or 2.5 s, no merging of short sentences, shorter pause holds, dynamic language-ID settle, LLM timeout 1.2 s, **`translateEngine=llm`**. About 1.7 times as many, shorter chunks. Its values are in `cdk.json`; the profile file is empty. |
+| `careful` | Quality of the chunks over speed; lower cost; no Bedrock needed. | The previous defaults: Amazon Translate, longer chunks (`chunkMinWords` 8, no `chunkMaxMs`), short sentences merged, fixed language-ID settle. `config/profiles/careful.json` lists every key. |
 | `qa` | Q&A with several languages and speakers. | **Placeholder, not implemented.** Behaves like `careful` today. |
-| `fast` | Old name, still accepted. | The `talk` timing settings **without** switching the engine (what `latencyPreset=fast` always did). |
-| `default` | Old name, still accepted. | Same as `careful`. |
-
-Why `talk` switches the LLM engine on: the timing bundle was tuned and measured with it, and on a judged sample of 56 chunks Haiku 4.5 scored about 4.1 of 5 against 3.0 for Amazon Translate. The cost was about $1.17 against $1.06 per 4-hour session at list price, plus about 0.6 s per chunk (both from the project's own benchmark; numbers depend on your speech). The scores come from AI judges, not native listeners; please listen to your own material. If you want `talk` timing with Amazon Translate, use `"translateEngine": "translate"` in `event.json` or the profile `fast`.
-
+| `fast` | Old name, still accepted. | The `talk` timing settings **without** the engine switch: the engine comes from `translateEngine` (default `llm`). **Changed:** `-c latencyPreset=fast` alone used to give Amazon Translate with fast timing, and now gives the LLM. Use `-c latencyPreset=fast -c translateEngine=translate` for the old result. |
+| `default` | Old name, still accepted. | **Changed:** an alias of the shipped default (`talk`). It used to mean the `careful` values. Use `careful` for those. |
+Why `talk` switches the LLM engine on: the timing bundle was tuned and measured with it, and on a judged sample of 56 chunks Haiku 4.5 scored about 4.1 of 5 against 3.0 for Amazon Translate. The cost was about $1.17 against $1.06 per 4-hour session at list price, plus about 0.6 s per chunk (both from the project's own benchmark; numbers depend on your speech). The scores come from AI judges, not native listeners; please listen to your own material. If you want `talk` timing with Amazon Translate, use `"translateEngine": "translate"` in `event.json` or `-c translateEngine=translate`.
+### Amazon Translate is the backup translator
+The LLM is the default translator. Amazon Translate stays in the stack in three roles:
+1. **Fallback.** When the circuit breaker is open, an LLM call fails or times out, the output is rejected, or `llmSkipBacklogMs` skips the LLM because playback is behind, that chunk is translated by Amazon Translate. The speech never stops.
+2. **Terminology store.** The Translate custom terminology (`dictionaries.translateTerminology`) is where the LLM glossary is read from, so one dictionary file serves both engines. Amazon Translate also applies it itself on a fallback chunk.
+3. **Optional low-cost primary engine.** `-c translateEngine=translate` (or `"translateEngine": "translate"` in `event.json`) uses Amazon Translate for every chunk, without context. Use it to reduce cost (about $2.0 instead of about $2.4 per hour, see [cost.md](cost.md)) or when you have no Amazon Bedrock access. No Bedrock IAM statement is created and `doctor` makes no Bedrock call.
 ## Preflight check
 
-`scripts/doctor.sh` (or `npm run doctor` in `cdk/`) checks Node/npm, AWS CLI v2, your identity and Region (never secrets), CDK bootstrap, Docker, ffmpeg with SRT and Opus, the venue CIDR, the Transcribe vocabulary and Translate terminology, and, with `translateEngine=llm`, Bedrock. It prints PASS, WARN or FAIL with the exact fix command and exits 1 on any FAIL. It accepts the same `-c key=value` flags as `cdk`, and `--skip-aws` to run only the local checks. It only reads; it never changes AWS.
+`scripts/doctor.sh` (or `npm run doctor` in `cdk/`) checks Node/npm, AWS CLI v2, your identity and Region (never secrets), CDK bootstrap, Docker, ffmpeg with SRT and Opus, the venue CIDR, the Transcribe vocabulary and Translate terminology, and, with the LLM engine (the default), Bedrock: the inference profile and the model access (read-only; it cannot prove that an invoke works, see [operations.md](operations.md#bedrock-access-the-default-engine)). If access is missing it prints the fix: request access in the Bedrock console (Anthropic first-time use form), or deploy with `-c translateEngine=translate`. It prints PASS, WARN or FAIL with the exact fix command and exits 1 on any FAIL. It accepts the same `-c key=value` flags as `cdk`, and `--skip-aws` to run only the local checks. It only reads; it never changes AWS.
 
 ## Advanced keys
 
@@ -108,9 +111,9 @@ Extra context keys that are not in `cdk.json`:
 
 | Key | Env var in the app | Default | Meaning |
 |---|---|---|---|
-| `region` | `AWS_REGION` | `ap-northeast-1` | AWS Region of the stack. Also read by `bin/simul-translation.ts` (same layers as every key). The LLM engine needs a Region that has the `jp.` inference profile (Tokyo/Osaka). |
+| `region` | `AWS_REGION` | `ap-northeast-1` | AWS Region of the stack. Also read by `bin/simul-translation.ts` (same layers as every key). The LLM engine needs a Region that has a Claude Haiku 4.5 geo inference profile, see [LLM model id](#llm-model-id); otherwise use `translateEngine=translate`. |
 | `appPath` | - | `../app` | Path of the app source (Docker build context, web assets) relative to `cdk/`. Change only if you move the folders. |
-| `latencyPreset` | LATENCY_PRESET (log only) | `default` | Profile / preset name: `talk`, `careful`, `qa` or the old `fast`, `default`. See Profiles. Event key `profile`. |
+| `latencyPreset` | LATENCY_PRESET (log only) | `talk` | Profile / preset name: `talk` (the shipped default), `careful`, `qa` or the old `fast`, `default` (alias of `talk`). See Profiles. Event key `profile`. |
 | `logLevel` | `LOG_LEVEL` | `info` | App log level: `debug`, `info`, `warn`, `error`. |
 | `logRetentionDays` | - | `14` | CloudWatch Logs retention in days (a value CDK accepts, e.g. 7, 14, 30). |
 | `taskCpu` | - | `1024` | Fargate task CPU units (1024 = 1 vCPU). |
@@ -138,8 +141,8 @@ Extra context keys that are not in `cdk.json`:
 | `transcribeVocabularyName` | `TRANSCRIBE_VOCABULARY` | `simul-translation` | Name of the Transcribe custom vocabulary. `""` disables it. Created by `cdk/scripts/dictionaries.sh`. Event key `dictionaries.transcribeVocabulary`. |
 | `languageFilter` | `LANGUAGE_FILTER` | `langid` | `langid` = drop non-English results; `off` = revert switch, the previous single-language en-US request (Japanese is transcribed as English-looking words and translated, as before) |
 | `languageOptions` | `LANGUAGE_OPTIONS` | `en-US,ja-JP` | Languages Transcribe chooses between: 2-5 codes, one per language, must include `sourceLanguage` |
-| `langidSettleWords` | `LANGID_SETTLE_WORDS` | `5` | An English result is committed only once it has this many stable words (the language can flip once near the start of a result); integer 1-50. No effect on mid-sentence chunking with `chunkMinWords` ≥ 5 |
-| `langidSettleMode` | `LANGID_SETTLE_MODE` | `fixed` | `fixed` = every result needs `langidSettleWords` stable words; `dynamic` = `langidSettleWordsDefault` while no Japanese result was seen in the last `langidJaMemoryMs`, `langidSettleWordsAfterJa` after one, and for a result whose partials shrink before it settles (Transcribe rewriting itself, typical for the first Japanese turn after English). Case-insensitive (`-c latencyPreset=fast -c langidSettleMode=Fixed` turns the preset's dynamic mode back off; the lower-case cdk.json value `fixed` cannot override a preset, see Latency presets) |
+| `langidSettleWords` | `LANGID_SETTLE_WORDS` | `4` | An English result is committed only once it has this many stable words (the language can flip once near the start of a result); integer 1-50. No effect on mid-sentence chunking with `chunkMinWords` ≥ 5 |
+| `langidSettleMode` | `LANGID_SETTLE_MODE` | `dynamic` | `fixed` = every result needs `langidSettleWords` stable words; `dynamic` = `langidSettleWordsDefault` while no Japanese result was seen in the last `langidJaMemoryMs`, `langidSettleWordsAfterJa` after one, and for a result whose partials shrink before it settles (Transcribe rewriting itself, typical for the first Japanese turn after English). Case-insensitive (`-c latencyPreset=fast -c langidSettleMode=Fixed` turns the preset's dynamic mode back off; the lower-case cdk.json value `fixed` cannot override a preset, see Latency presets) |
 | `langidSettleWordsDefault` | `LANGID_SETTLE_WORDS_DEFAULT` | `3` | Dynamic mode: stable words when no Japanese result was seen recently; integer 1-50 |
 | `langidSettleWordsAfterJa` | `LANGID_SETTLE_WORDS_AFTER_JA` | `5` | Dynamic mode: stable words within `langidJaMemoryMs` after a Japanese result; integer 1-50 |
 | `langidJaMemoryMs` | `LANGID_JA_MEMORY_MS` | `60000` | Dynamic mode: how long after a Japanese result the longer threshold applies; integer 0-600000 |
@@ -155,10 +158,10 @@ Read only when a lane has a Japanese source (`ja-JP`); see [bilingual-channels.m
 |---|---|---|---|
 | `jaSegmentationMode` | `JA_SEGMENTATION_MODE` | `simple` | `simple` cuts at a stable `。？！`, at every stable `、`, after `jaMaxWaitMs` and on the final. `full` is the opt-in experiment with the dangling test, clause endings, minimum lengths, pause and maximum characters; it can be compared with `simple` in one e2e run. |
 | `jaSentenceMinChars` | `JA_SENTENCE_MIN_CHARS` | `6` | A sentence shorter than this is held and joined with the next one, only when `mergeShort` is on; integer 1-200 |
-| `jaClauseMinChars` | `JA_CLAUSE_MIN_CHARS` | `12` | `full` only: characters before a `、` cut; integer 1-200 |
-| `jaMaxChars` | `JA_MAX_CHARS` | `40` | `full` only: the buffer is cut when it reaches this many characters; integer 4-400 |
-| `jaPauseMs` | `JA_PAUSE_MS` | `900` | `full` only: quiet time that cuts the buffer unless it ends on a dangling token; 0 disables |
-| `jaMaxWaitMs` | `JA_MAX_WAIT_MS` | `4000` | Both modes: the oldest uncut stable text is cut after this long; 0 disables |
+| `jaClauseMinChars` | `JA_CLAUSE_MIN_CHARS` | `8` | `full` only: characters before a `、` cut; integer 1-200 |
+| `jaMaxChars` | `JA_MAX_CHARS` | `30` | `full` only: the buffer is cut when it reaches this many characters; integer 4-400 |
+| `jaPauseMs` | `JA_PAUSE_MS` | `600` | `full` only: quiet time that cuts the buffer unless it ends on a dangling token; 0 disables |
+| `jaMaxWaitMs` | `JA_MAX_WAIT_MS` | `2500` | Both modes: the oldest uncut stable text is cut after this long; 0 disables |
 | `jaClauseEndings` | `JA_CLAUSE_ENDINGS` | `""` | `full` only: comma list of clause-closing endings; `""` = the built-in list. Must share no entry with `jaDanglingTokens` |
 | `jaDanglingTokens` | `JA_DANGLING_TOKENS` | `""` | `full` only: comma list of tokens a chunk must not end on; `""` = the built-in list |
 | `jaDanglingMaxChars` | `JA_DANGLING_MAX_CHARS` | `10` | `full` only: how far back a cut may move to avoid a dangling token; integer 0-100 |
@@ -169,12 +172,12 @@ Read only when a lane has a Japanese source (`ja-JP`); see [bilingual-channels.m
 | Key | Env var in the app | Default | Meaning |
 |---|---|---|---|
 | `segmentationMode` | `SEGMENTATION_MODE` | `clause` | `clause` = mid-sentence chunks; `sentence` = translate whole sentences (revert switch; use with `maxBacklogMs=0`, otherwise whole sentences are dropped under sustained speech) |
-| `chunkMinWords` | `CHUNK_MIN_WORDS` | `8` | Min words (fillers like "um" excluded) before a comma / conjunction / max-time cut |
+| `chunkMinWords` | `CHUNK_MIN_WORDS` | `5` | Min words (fillers like "um" excluded) before a comma / conjunction / max-time cut |
 | `chunkMaxWords` | `CHUNK_MAX_WORDS` | `22` | Hard word cap per chunk (clause mode) |
-| `chunkMaxMs` | `CHUNK_MAX_MS` | `0` | Flush a chunk open this long once it has ≥ min words (clause mode). `0` disables |
-| `chunkPauseMs` | `CHUNK_PAUSE_MS` | `900` | Flush pending stable words after this long with no new transcript activity. `0` disables (while short text is held, `mergePauseMs` applies instead) |
+| `chunkMaxMs` | `CHUNK_MAX_MS` | `2500` | Flush a chunk open this long once it has ≥ min words (clause mode). `0` disables |
+| `chunkPauseMs` | `CHUNK_PAUSE_MS` | `600` | Flush pending stable words after this long with no new transcript activity. `0` disables (while short text is held, `mergePauseMs` applies instead) |
 | `chunkConjunctions` | `CHUNK_CONJUNCTIONS` | `because,but,although,though,while,which` | Cut before these words once ≥ min words (`""` disables) |
-| `mergeShort` | `MERGE_SHORT` | `on` | Merge short sentences (clause mode only): a sentence end (`.?!`) or Transcribe final that would give a chunk with fewer than `sentenceMinWords` words is held and joined with the next text (internal periods kept; a period followed by a lowercase word is not treated as a sentence end). `off` = previous behaviour exactly |
+| `mergeShort` | `MERGE_SHORT` | `off` | Merge short sentences (clause mode only): a sentence end (`.?!`) or Transcribe final that would give a chunk with fewer than `sentenceMinWords` words is held and joined with the next text (internal periods kept; a period followed by a lowercase word is not treated as a sentence end). `off` = previous behaviour exactly |
 | `sentenceMinWords` | `SENTENCE_MIN_WORDS` | `8` | Min words (fillers excluded) for a sentence/final cut when merging; integer 1-100 |
 | `sentenceCompleteWords` | `SENTENCE_COMPLETE_WORDS` | `5` | Merge on: a `.?!` that ends a sentence of at least this many words (fillers excluded, counted from the previous `.?!`, including words of the same sentence already sent in an earlier chunk) is cut at once even when the chunk is shorter than `sentenceMinWords`, so a complete sentence ("We have about 10 minutes.", "Can I ask you to clarify the entitlement question?") is never held for the next one. Fragments ("OK.", "I see.") still merge. Logged as `reason=sentence`. `0` = previous merge behaviour exactly; values ≥ `sentenceMinWords` have no effect; integer 0-100 |
 | `mergePauseMs` | `MERGE_PAUSE_MS` | `1500` | Commit held text after this long with no new transcript activity (`reason=merge_pause`). `0` disables; integer 0-60000 |
@@ -182,9 +185,9 @@ Read only when a lane has a Japanese source (`ja-JP`); see [bilingual-channels.m
 | `danglingGuard` | `DANGLING_GUARD` | `on` | Quality v1: never end a chunk on a word that needs a continuation (preposition, article, relative pronoun, "to", "that", ...). Comma/conjunction cuts are skipped after such a word, `max_words` is extended by up to `danglingMaxWords`, and pause/final/merge cuts wait up to `danglingMaxHoldMs` for the next word. `.?!` and end of stream never wait. `off` = revert (previous cutting) |
 | `danglingWords` | `DANGLING_WORDS` | `""` | Comma list of words that dangle (no spaces); `""` = the built-in list |
 | `danglingMaxWords` | `DANGLING_MAX_WORDS` | `2` | Extra words `chunkMaxWords` may grow by to avoid a dangling end; integer 0-20 |
-| `danglingMaxHoldMs` | `DANGLING_MAX_HOLD_MS` | `500` | Longest wait of a pause/final/merge cut that would end on a dangling word; integer 0-10000 |
+| `danglingMaxHoldMs` | `DANGLING_MAX_HOLD_MS` | `250` | Longest wait of a pause/final/merge cut that would end on a dangling word; integer 0-10000 |
 | `cutLookaheadMs` | `CUT_LOOKAHEAD_MS` | `0` | Quality v1: a mid-sentence pause/final cut waits this long for the next word before it is made, so a Transcribe result boundary does not split a sentence. `0` = off (default; 300-500 buys fewer mid-sentence splits at about +0.5 s first-word latency); integer 0-5000 |
-| `shortSentenceJoin` | `SHORT_SENTENCE_JOIN` | `on` | Quality v1: tiny held sentences (at most `shortSentenceWords` words) wait `shortJoinPauseMs` instead of `mergePauseMs` and are sent to Translate comma-joined ("There's small, medium, and large."). The comma join changes only the text sent to Translate, not the exactly-once check. `off` = revert |
+| `shortSentenceJoin` | `SHORT_SENTENCE_JOIN` | `off` | Quality v1: tiny held sentences (at most `shortSentenceWords` words) wait `shortJoinPauseMs` instead of `mergePauseMs` and are sent to Translate comma-joined ("There's small, medium, and large."). The comma join changes only the text sent to Translate, not the exactly-once check. `off` = revert |
 | `shortSentenceWords` | `SHORT_SENTENCE_WORDS` | `3` | Max words of a "tiny" sentence; integer 1-6 |
 | `shortJoinPauseMs` | `SHORT_JOIN_PAUSE_MS` | `1000` | Silence that releases held tiny sentences; `0` = use `mergePauseMs`; integer 0-10000 |
 
@@ -222,14 +225,14 @@ Read only when a lane has a Japanese source (`ja-JP`); see [bilingual-channels.m
 | `translateTarget` | `TRANSLATE_TARGET` | `ja` | Amazon Translate target language code, e.g. `ja`. Event key `targetLanguage` sets it. The Polly voice must speak this language. |
 | `translateFormality` | `TRANSLATE_FORMALITY` | `FORMAL` | Amazon Translate formality for Japanese (keeps です/ます tone, avoids "慣れてるだろ"). `INFORMAL` or `off` (parameter not sent) = revert |
 | `translateTerminologyName` | `TRANSLATE_TERMINOLOGY` | `simul-translation` | Name of the Translate custom terminology (also the glossary of the LLM engine, so it must not be empty with `translateEngine=llm`). `""` disables it. Event key `dictionaries.translateTerminology`. |
-| `translateEngine` | `TRANSLATE_ENGINE` | `translate` | `translate` = Amazon Translate only (no Bedrock, no extra IAM). `llm` = Claude on Bedrock with Translate as fallback; adds the IAM statements in [LLM translation engine](#llm-translation-engine-optional) |
+| `translateEngine` | `TRANSLATE_ENGINE` | `llm` | `llm` = Claude on Bedrock with Amazon Translate as fallback; adds the IAM statements described in `cdk/README.md` ("LLM translation engine"). `translate` = low-cost mode, Amazon Translate only (no Bedrock, no extra IAM) |
 
-### LLM engine (only with translateEngine=llm)
+### LLM engine (not used with translateEngine=translate)
 
 | Key | Env var in the app | Default | Meaning |
 |---|---|---|---|
-| `llmModelId` | `LLM_MODEL_ID` | `jp.anthropic.claude-haiku-4-5-20251001-v1:0` | Japan inference profile id. With `translateEngine=llm` it must start with `jp.` (IAM scoping is defined for that profile only) |
-| `llmTimeoutMs` | `LLM_TIMEOUT_MS` | `1500` | Per-chunk LLM timeout before falling back to Translate; integer 200-10000 |
+| `llmModelId` | `LLM_MODEL_ID` | `auto` | Claude Haiku 4.5 geo inference profile id; `auto` = the profile of the stack Region, see [LLM model id](#llm-model-id) |
+| `llmTimeoutMs` | `LLM_TIMEOUT_MS` | `1200` | Per-chunk LLM timeout before falling back to Translate; integer 200-10000 |
 | `llmContextChunks` | `LLM_CONTEXT_CHUNKS` | `3` | Previous chunks sent as context; integer 0-6 (0 = none) |
 | `llmContextResetMs` | `LLM_CONTEXT_RESET_MS` | `60000` | Source-time gap that clears the context; integer 0-600000 (0 = never) |
 | `llmGlossary` | `LLM_GLOSSARY` | `full` | `full` = whole Translate terminology in the cached system prompt; `off` = no glossary and no prompt cache |
@@ -241,6 +244,23 @@ Read only when a lane has a Japanese source (`ja-JP`); see [bilingual-channels.m
 | `llmKeepWarmMs` | `LLM_KEEPWARM_MS` | `240000` | Keep-warm call interval for the prompt cache (5 min TTL); `0` or integer 30000-290000 |
 | `llmPromptVersion` | `LLM_PROMPT_VERSION` | `2` | `2` = the prompt tells the model whether each chunk ended a sentence (`chunk_ends_sentence`), so a chunk cut mid-sentence is translated as an open fragment instead of being closed with です/ます。 `1` = the previous prompt (revert). |
 
+### LLM model id
+The Bedrock endpoint needs a geo or global inference profile for Claude Haiku 4.5 (the bare model id is not supported). With
+`llmModelId` = `auto` (the default) the stack picks the geo profile that the stack Region can call. The IAM policy then lists the profile and the foundation model in that profile's destination Regions only (no wildcard).
+Table read from the [Claude Haiku 4.5 model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html) on 2026-11-23; AWS changes it, so check the page, and `cdk/lib/llm-model.ts` holds the copy that the stack uses:
+| Profile prefix | Stack Regions (source) | Destination Regions |
+|---|---|---|
+| jp. prefix | ap-northeast-1 (Tokyo), ap-northeast-3 (Osaka) | ap-northeast-1, ap-northeast-3 |
+| us. prefix | us-east-1, us-east-2, us-west-2 | us-east-1, us-east-2, us-west-2 |
+| us. prefix | us-west-1 | us-east-1, us-east-2, us-west-1, us-west-2 |
+| us. prefix | ca-central-1 | ca-central-1, us-east-1, us-east-2, us-west-2 |
+| eu. prefix | eu-central-1, eu-north-1, eu-south-1, eu-south-2, eu-west-1, eu-west-3 | eu-central-1, eu-north-1, eu-south-1, eu-south-2, eu-west-1, eu-west-3 |
+| eu. prefix | eu-central-2 | the six above plus eu-central-2 |
+| eu. prefix | eu-west-2 | the six above plus eu-west-2 |
+| au. prefix | ap-southeast-2, ap-southeast-4 | ap-southeast-2, ap-southeast-4 |
+| au. prefix | ap-southeast-6 | ap-southeast-2, ap-southeast-4, ap-southeast-6 |
+| in. prefix | ap-south-1, ap-south-2 | ap-south-1, ap-south-2 |
+There is no `apac.` profile for this model. A `global.` profile exists, but it routes requests worldwide, so the IAM policy would need a wildcard Region list and the data stays in no fixed geography: it is deliberately not supported, and synth rejects it. Other Regions (for example ap-northeast-2, Seoul) have only the global profile: synth fails with a message that says to set `llmModelId`, deploy in a supported Region, or use `-c translateEngine=translate`. An explicit `llmModelId` must be a geo profile id (`<prefix>.anthropic.claude-haiku-4-5-20251001-v1:0`, or another model with the same shape) whose prefix the stack Region can call; the IAM policy follows it. For another model, check its own profile table first.
 ### Speech output (Polly)
 
 | Key | Env var in the app | Default | Meaning |

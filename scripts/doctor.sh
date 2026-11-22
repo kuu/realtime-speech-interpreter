@@ -200,9 +200,11 @@ else
       BS="$(aws cloudformation describe-stacks --stack-name CDKToolkit --region "$REGION" --query 'Stacks[0].StackStatus' --output text 2>/dev/null)"
       if [[ "$BS" == CREATE_COMPLETE || "$BS" == UPDATE_COMPLETE ]]; then pass "CDK is bootstrapped in $REGION ($BS)"; else
         fail "CDK is not bootstrapped in $REGION (${BS:-no CDKToolkit stack})" "cd cdk && npx cdk bootstrap aws://$ACCOUNT/$REGION"; fi
-      # Bedrock (LLM engine only)
+      # Bedrock (LLM engine, the default; skipped with -c translateEngine=translate). Reads only: never converse or invoke-model.
       if [[ "$ENGINE" == "llm" || -n "$LANE_LLM" ]]; then
         FOUND=""
+        BR_ALT="or deploy with -c translateEngine=translate (Amazon Translate only, no Bedrock)"
+        BR_REQ="Bedrock console > Model catalog > Claude Haiku 4.5: request access (Anthropic first-time use form), $BR_ALT"
         OUT="$(aws bedrock list-inference-profiles --region "$REGION" --type-equals SYSTEM_DEFINED --query "inferenceProfileSummaries[?inferenceProfileId=='$MODEL'].status" --output text 2>&1)"
         if [[ "$OUT" == *"Invalid choice"* || "$OUT" == *"Unknown options"* ]]; then
           BASE="${MODEL#*.}"; BASE="${BASE%%:*}"
@@ -210,15 +212,28 @@ else
           if [[ -n "$FM" ]]; then
             warn "AWS CLI $AWS_V cannot list inference profiles; the base model ${FM%%[[:space:]]*} is offered in $REGION but profile $MODEL was not checked" "upgrade AWS CLI v2, then rerun"
           else
-            fail "Bedrock model for $MODEL not found in $REGION" "check llmModelId and region (the jp. profiles need Tokyo or Osaka); upgrade AWS CLI v2 to list profiles"
+            fail "Bedrock model for $MODEL not found in $REGION" "check llmModelId and region (Claude Haiku 4.5 geo profiles exist in the Regions listed in docs/configuration.md); upgrade AWS CLI v2 to list profiles; $BR_ALT"
           fi
         elif [[ "$OUT" == *"AccessDenied"* || "$OUT" == *"UnauthorizedOperation"* ]]; then
-          warn "not allowed to list Bedrock inference profiles (bedrock:ListInferenceProfiles); cannot check $MODEL" "add bedrock:ListInferenceProfiles to your identity, or ignore if the model already works for you"
+          warn "not allowed to list Bedrock inference profiles (bedrock:ListInferenceProfiles); cannot check $MODEL" "add bedrock:ListInferenceProfiles to your identity, or ignore if the model already works for you; $BR_ALT"
         elif [[ "$OUT" == ACTIVE* ]]; then
           pass "Bedrock inference profile $MODEL is ACTIVE in $REGION"
-          warn "Listing does not prove invoke permission: Anthropic models can still need a first-use form in the Bedrock console" "Bedrock console > Model catalog > open the model once; the deployed task role is scoped by the stack"
+          warn "Listing does not prove invoke permission: Anthropic models can still need a first-use form in the Bedrock console" "Bedrock console > Model catalog > open the model once; the deployed task role is scoped by the stack; $BR_ALT"
         else
-          fail "Bedrock inference profile $MODEL not found in $REGION" "check llmModelId (a jp. profile id) and region; list: aws bedrock list-inference-profiles --region $REGION --type-equals SYSTEM_DEFINED"
+          fail "Bedrock inference profile $MODEL not found in $REGION" "check llmModelId (a geo profile id valid for $REGION) and region; list: aws bedrock list-inference-profiles --region $REGION --type-equals SYSTEM_DEFINED; $BR_ALT"
+        fi
+        # Model access (first-use form, entitlement, agreement). get-foundation-model-availability is read-only.
+        AV="$(aws bedrock get-foundation-model-availability --model-id "${MODEL#*.}" --region "$REGION" --query '[authorizationStatus,entitlementAvailability,agreementAvailability.status]' --output text 2>&1)"
+        if [[ "$AV" == *"Invalid choice"* || "$AV" == *"Unknown options"* || "$AV" == *"invalid choice"* ]]; then
+          warn "AWS CLI $AWS_V cannot check Bedrock model access (get-foundation-model-availability)" "upgrade AWS CLI v2, or check in the Bedrock console > Model catalog > Claude Haiku 4.5; $BR_ALT"
+        elif [[ "$AV" == *"AccessDenied"* || "$AV" == *"UnauthorizedOperation"* ]]; then
+          warn "not allowed to check Bedrock model access (bedrock:GetFoundationModelAvailability)" "add it to your identity, or check in the Bedrock console > Model catalog > Claude Haiku 4.5; $BR_ALT"
+        elif [[ "$AV" == AUTHORIZED*AVAILABLE*AVAILABLE* ]]; then
+          pass "Bedrock model access for ${MODEL#*.} in $REGION is listed as authorized, entitled, agreement in place (this does not prove an invoke; manual check: docs/operations.md, Bedrock access)"
+        elif [[ -z "$AV" || "$AV" == *"error"* || "$AV" == *"Could not"* ]]; then
+          warn "could not read Bedrock model access for ${MODEL#*.} in $REGION" "check in the Bedrock console > Model catalog > Claude Haiku 4.5; $BR_ALT"
+        else
+          warn "Bedrock model access for ${MODEL#*.} in $REGION is not complete (authorization, entitlement, agreement: $AV)" "$BR_REQ"
         fi
       fi
       # Dictionaries

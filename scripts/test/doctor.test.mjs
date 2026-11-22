@@ -49,6 +49,40 @@ test("the default deploy prints exactly today's lines (stored from the previous 
   assert.doesNotMatch(r.out, /== Channels/);
   assert.doesNotMatch(r.calls, /polly|get-terminology/);
 });
+test("the default (LLM engine) checks Bedrock with read-only calls only, and never converse or invoke-model", () => {
+  const r = doctor(EX);
+  assert.match(r.calls, /bedrock list-inference-profiles/);
+  assert.match(r.calls, /bedrock get-foundation-model-availability --model-id anthropic\.claude-haiku-4-5-20251001-v1:0 --region ap-northeast-1/);
+  assert.doesNotMatch(r.calls, /converse|invoke-model/);
+  assert.ok(readOnly(r.calls), `a write call was recorded:\n${r.calls}`);
+});
+test("-c translateEngine=translate makes no Bedrock call and prints no Bedrock line", () => {
+  const r = doctor([...EX, "-c", "translateEngine=translate"]);
+  assert.equal(r.status, 0, r.out);
+  assert.doesNotMatch(r.calls, /bedrock/);
+  assert.doesNotMatch(r.out, /Bedrock/);
+});
+test("model access not granted: a WARN with both fixes (console request, translateEngine=translate)", () => {
+  const r = doctor(EX, { STUB_BEDROCK_AVAIL: "NOT_AUTHORIZED\tNOT_AVAILABLE\tERROR" });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /WARN  Bedrock model access for anthropic\.claude-haiku-4-5-20251001-v1:0 in ap-northeast-1 is not complete/);
+  assert.match(r.out, /fix: Bedrock console > Model catalog > Claude Haiku 4\.5: request access \(Anthropic first-time use form\), or deploy with -c translateEngine=translate/);
+});
+test("an AWS CLI without get-foundation-model-availability gives a WARN, not a failure", () => {
+  const r = doctor(EX, { STUB_BEDROCK_AVAIL: "old-cli" });
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /WARN  AWS CLI .* cannot check Bedrock model access/);
+  const d = doctor(EX, { STUB_BEDROCK_AVAIL: "denied" });
+  assert.match(d.out, /WARN  not allowed to check Bedrock model access/);
+});
+test("a Region without a Claude Haiku 4.5 geo profile fails the configuration check and names the alternative", () => {
+  const r = doctor([...EX, "-c", "region=ap-northeast-2"]);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /No Claude Haiku 4\.5 geo inference profile for ap-northeast-2/);
+  assert.match(r.out, /translateEngine=translate/);
+  const t = doctor([...EX, "-c", "region=ap-northeast-2", "-c", "translateEngine=translate"]);
+  assert.doesNotMatch(t.out, /No Claude Haiku/);
+});
 test("a one-lane default deploy given as `channels` prints the same lines", () => {
   const r = doctor([...EX, "-c", `channels=${JSON.stringify([{ source: "en-US", target: "ja", pollyVoice: "Kazuha" }])}`]);
   assert.equal(r.fromConfig, EXPECTED);
@@ -63,8 +97,8 @@ test("two lanes with everything in place: per-lane pass lines for vocabulary, te
   const r = doctor([...EX, "-c", `channels=${lanes()}`]);
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /== Channels/);
-  assert.match(r.out, /PASS  lane 1: en-US to ja, voice Kazuha, engine translate, vocabulary 'simul-translation', terminology 'simul-translation'/);
-  assert.match(r.out, /PASS  lane 2: ja-JP to en, voice Joanna, engine translate, vocabulary 'simul-translation-ja', terminology 'simul-translation'/);
+  assert.match(r.out, /PASS  lane 1: en-US to ja, voice Kazuha, engine llm, vocabulary 'simul-translation', terminology 'simul-translation'/);
+  assert.match(r.out, /PASS  lane 2: ja-JP to en, voice Joanna, engine llm, vocabulary 'simul-translation-ja', terminology 'simul-translation'/);
   assert.match(r.out, /PASS  lane 2: Transcribe vocabulary 'simul-translation-ja' is READY \(ja-JP\)/);
   assert.match(r.out, /PASS  lane 2: Translate terminology 'simul-translation' is multi-directional \(usable for ja to en\)/);
   assert.match(r.out, /PASS  lane 2: Polly voice Joanna exists for en-US with the neural engine in ap-northeast-1/);
@@ -109,7 +143,7 @@ test("a Japanese lane without a vocabulary warns; with a generated Japanese voca
 test("a single ja-JP to en lane gets the per-lane checks too", () => {
   const one = JSON.stringify([{ source: "ja-JP", target: "en", pollyVoice: "Joanna" }]);
   const r = doctor([...EX, "-c", `channels=${one}`]);
-  assert.match(r.out, /PASS  lane 1: ja-JP to en, voice Joanna, engine translate, vocabulary 'none', terminology 'simul-translation'/);
+  assert.match(r.out, /PASS  lane 1: ja-JP to en, voice Joanna, engine llm, vocabulary 'none', terminology 'simul-translation'/);
   assert.match(r.out, /WARN  lane 1 \(ja-JP to en\) has no Transcribe vocabulary/);
   assert.match(r.out, /PASS  lane 1: Polly voice Joanna exists for en-US/);
 });

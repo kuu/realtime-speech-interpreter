@@ -13,10 +13,14 @@ export const DEFAULT_EVENT_FILE = join(CONFIG_DIR, "event.json");
 
 export type Layer = Record<string, unknown>;
 
-/** Old preset names that keep working. "fast" is the talk timing bundle WITHOUT the engine switch. */
+/**
+ * Old preset names that keep working. The shipped default is the "talk" bundle (cdk.json holds its values).
+ * "default" is an alias of the shipped default. "fast" is the talk timing bundle WITHOUT the engine switch, so the
+ * engine comes from cdk.json (llm) or from -c translateEngine. The previous defaults are the "careful" profile.
+ */
 export const PROFILE_ALIASES: Record<string, { profile: string; omit?: string[] }> = {
   fast: { profile: "talk", omit: ["translateEngine"] },
-  default: { profile: "careful" },
+  default: { profile: "talk" },
 };
 
 /** Top-level keys of event.json (everything else belongs in "advanced"). */
@@ -224,7 +228,7 @@ export function buildResolver(getCtx: (key: string) => unknown): Resolver {
   };
   const { layer: event, path } = loadEventLayer(getCtx("eventFile"));
   const presetRaw = explicit("latencyPreset") ? getCtx("latencyPreset") : (event.latencyPreset ?? getCtx("latencyPreset"));
-  const profile = presetRaw === undefined || presetRaw === null ? "default" : String(presetRaw).trim().toLowerCase();
+  const profile = presetRaw === undefined || presetRaw === null ? "talk" : String(presetRaw).trim().toLowerCase();
   const prof = loadProfile(profile);
   const source = (k: string): "cli" | "event" | "profile" | "cdk.json" | "unset" => {
     if (explicit(k)) return "cli";

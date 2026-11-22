@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as cdk from "aws-cdk-lib";
@@ -26,49 +26,85 @@ function cfgFor(overrides: Record<string, unknown>) {
   return loadConfig(app);
 }
 
-test("no event file, no profile: cdk.json defaults", () => {
+// The previous shipped defaults (Amazon Translate engine, longer chunks), pinned from origin/main's cdk.json.
+const OLD_DEFAULTS: Record<string, unknown> = {
+  translateEngine: "translate",
+  llmTimeoutMs: 1500,
+  mergeShort: "on",
+  shortSentenceJoin: "on",
+  danglingMaxHoldMs: 500,
+  chunkPauseMs: 900,
+  chunkMinWords: 8,
+  chunkMaxMs: 0,
+  langidSettleWords: 5,
+  langidSettleMode: "fixed",
+  jaClauseMinChars: 12,
+  jaMaxChars: 40,
+  jaPauseMs: 900,
+  jaMaxWaitMs: 4000,
+};
+test("no event file, no profile: the shipped default is the talk bundle with the LLM engine", () => {
   const c = cfgFor({});
-  assert.equal(c.latencyPreset, "default");
-  assert.equal(c.chunkMinWords, 8);
-  assert.equal(c.translateEngine, "translate");
+  assert.equal(c.latencyPreset, "talk");
+  assert.equal(c.chunkMinWords, 5);
+  assert.equal(c.chunkMaxMs, 2500);
+  assert.equal(c.translateEngine, "llm");
+  assert.equal(c.region, "ap-northeast-1");
+  assert.equal(c.llmModelId, "jp.anthropic.claude-haiku-4-5-20251001-v1:0");
 });
-
-test("legacy preset fast: timing bundle, engine untouched", () => {
+test("legacy preset fast: the shipped default timing, engine from cdk.json (llm) or -c", () => {
   const c = cfgFor({ latencyPreset: "fast" });
   assert.equal(c.latencyPreset, "fast");
   assert.equal(c.chunkMinWords, 5);
   assert.equal(c.chunkMaxMs, 2500);
   assert.equal(c.llmTimeoutMs, 1200);
   assert.equal(c.langidSettleMode, "dynamic");
-  assert.equal(c.translateEngine, "translate");
+  assert.equal(c.translateEngine, "llm");
+  const t = cfgFor({ latencyPreset: "fast", translateEngine: "translate" });
+  assert.equal(t.translateEngine, "translate");
+  assert.equal(t.chunkMinWords, 5, "fast timing with Amazon Translate, as before");
 });
-
-test("profile talk = fast bundle + LLM engine; careful and default = cdk.json; qa = careful", () => {
-  const talk = cfgFor({ latencyPreset: "talk" });
-  assert.equal(talk.chunkMinWords, 5);
-  assert.equal(talk.translateEngine, "llm");
-  for (const name of ["careful", "default", "qa"]) {
+test("profile talk and preset default = the shipped default; careful and qa = the previous defaults", () => {
+  const dflt = cfgFor({});
+  for (const name of ["talk", "default"]) {
     const c = cfgFor({ latencyPreset: name });
-    assert.equal(c.chunkMinWords, 8, name);
-    assert.equal(c.translateEngine, "translate", name);
+    assert.equal(c.chunkMinWords, 5, name);
+    assert.equal(c.translateEngine, "llm", name);
+    assert.equal(c.chunkPauseMs, dflt.chunkPauseMs, name);
+  }
+  for (const name of ["careful", "qa"]) {
+    const c = cfgFor({ latencyPreset: name }) as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(OLD_DEFAULTS)) assert.equal(c[k], v, `${name}.${k}`);
   }
 });
-
+test("careful reproduces every key the old cdk.json had (a profile key per changed value)", () => {
+  const prof = JSON.parse(readFileSync(join(__dirname, "..", "config", "profiles", "careful.json"), "utf8")) as { context: Record<string, unknown> };
+  assert.deepEqual(prof.context, OLD_DEFAULTS);
+});
+test("-c translateEngine=translate under the default gives Amazon Translate; careful + -c translateEngine=llm keeps the profile (documented quirk)", () => {
+  assert.equal(cfgFor({ translateEngine: "translate" }).translateEngine, "translate");
+  assert.equal(cfgFor({ translateEngine: "translate" }).chunkMinWords, 5);
+  assert.equal(cfgFor({ latencyPreset: "careful", translateEngine: "llm" }).translateEngine, "translate");
+  withEvent(JSON.stringify({ profile: "careful", translateEngine: "llm" }), (path) => {
+    assert.equal(cfgFor({ eventFile: path }).translateEngine, "llm", "event.json beats the profile");
+    assert.equal(cfgFor({ eventFile: path }).chunkMinWords, 8);
+  });
+});
 test("unknown profile fails with the list of names", () => {
   assert.throws(() => cfgFor({ latencyPreset: "bogus" }), /must be one of: .*talk/);
 });
 
 test("precedence: -c > event.json > profile > cdk.json", () => {
-  // cdk.json chunkMinWords=8; profile talk=5; event=6; -c=7
-  withEvent(JSON.stringify({ profile: "talk", advanced: { chunkMinWords: 6, chunkMaxWords: 20 } }), (path) => {
+  // cdk.json chunkMinWords=5; profile careful=8; event=6; -c=7
+  withEvent(JSON.stringify({ profile: "careful", advanced: { chunkMinWords: 6, chunkMaxWords: 20 } }), (path) => {
     const base = { eventFile: path };
     assert.equal(cfgFor({ ...base }).chunkMinWords, 6, "event beats profile");
-    assert.equal(cfgFor({ ...base }).chunkMaxMs, 2500, "profile beats cdk.json where the event is silent");
-    assert.equal(cfgFor({ ...base }).chunkPauseMs, 600, "profile applies via event.profile");
+    assert.equal(cfgFor({ ...base }).chunkMaxMs, 0, "profile beats cdk.json where the event is silent");
+    assert.equal(cfgFor({ ...base }).chunkPauseMs, 900, "profile applies via event.profile");
     assert.equal(cfgFor({ ...base }).chunkMaxWords, 20, "event beats cdk.json");
     assert.equal(cfgFor({ ...base, chunkMinWords: 7 }).chunkMinWords, 7, "-c beats event");
-    assert.equal(cfgFor({ ...base, latencyPreset: "careful" }).chunkPauseMs, 900, "-c latencyPreset beats event.profile");
-    assert.equal(cfgFor({ ...base, latencyPreset: "careful" }).chunkMinWords, 6, "event still beats the -c profile");
+    assert.equal(cfgFor({ ...base, latencyPreset: "fast" }).chunkPauseMs, 600, "-c latencyPreset beats event.profile");
+    assert.equal(cfgFor({ ...base, latencyPreset: "fast" }).chunkMinWords, 6, "event still beats the -c profile");
   });
 });
 
@@ -83,7 +119,7 @@ test("event.json friendly keys map onto context keys", () => {
       "pollyVoice": "Tomoko",
       "pollyReadings": false,
       "translateEngine": "llm",
-      "llmModelId": "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "llmModelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       "dictionaries": { "transcribeVocabulary": "my-vocab", "translateTerminology": "my-terms" },
       "expectedListeners": 800
     }`,

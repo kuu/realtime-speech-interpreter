@@ -89,10 +89,10 @@ test("IAM: the terminology statement lists exactly the llm lanes' terminologies 
   assert.ok(both.some((r) => r.includes("terminology/t-lane2")));
   assert.ok(both.some((r) => r.includes("terminology/simul-translation")));
   const onlyLane2 = JSON.stringify([DEFAULT_LANE, { ...EN_LANE, translateTerminology: "t-lane2", translateEngine: "llm" }]);
-  const l2 = terminologyResources({ channels: onlyLane2, llmModelId: model });
+  const l2 = terminologyResources({ channels: onlyLane2, llmModelId: model, translateEngine: "translate" });
   assert.equal(l2.length, 2, "only the llm lane's terminology");
   assert.ok(l2.every((r) => r.includes("t-lane2")));
-  assert.deepEqual(terminologyResources({ channels: two }), [], "no llm lane: no statement");
+  assert.deepEqual(terminologyResources({ channels: two, translateEngine: "translate" }), [], "no llm lane: no statement");
 });
 test("IAM: two llm lanes with the default (shared) terminology list one pair, not two", () => {
   const model = "jp.anthropic.claude-haiku-4-5-20251001-v1:0";

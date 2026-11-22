@@ -1,5 +1,20 @@
 {
-  "description": "The cdk.json defaults, unchanged: longer chunks, short sentences are merged, Amazon Translate engine. Higher start delay, fewer fragments. Use it when sentence quality matters more than speed.",
+  "description": "The previous shipped defaults: Amazon Translate engine, longer chunks, short sentences are merged. Higher start delay, fewer fragments, lower cost, no Bedrock needed. Use it when sentence quality of the timing matters more than speed.",
   "status": "ready",
-  "context": {}
+  "context": {
+    "translateEngine": "translate",
+    "llmTimeoutMs": 1500,
+    "mergeShort": "on",
+    "shortSentenceJoin": "on",
+    "danglingMaxHoldMs": 500,
+    "chunkPauseMs": 900,
+    "chunkMinWords": 8,
+    "chunkMaxMs": 0,
+    "langidSettleWords": 5,
+    "langidSettleMode": "fixed",
+    "jaClauseMinChars": 12,
+    "jaMaxChars": 40,
+    "jaPauseMs": 900,
+    "jaMaxWaitMs": 4000
+  }
 }

@@ -1,0 +1,1183 @@
+{
+  "CustomVpcRestrictDefaultSGCustomResourceProviderRole26592FE0": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            }
+          }
+        ]
+      },
+      "ManagedPolicyArns": [
+        {
+          "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        }
+      ],
+      "Policies": [
+        {
+          "PolicyName": "Inline",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:AuthorizeSecurityGroupIngress",
+                  "ec2:AuthorizeSecurityGroupEgress",
+                  "ec2:RevokeSecurityGroupIngress",
+                  "ec2:RevokeSecurityGroupEgress"
+                ],
+                "Resource": [
+                  {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:",
+                        {
+                          "Ref": "AWS::Partition"
+                        },
+                        ":ec2:",
+                        {
+                          "Ref": "AWS::Region"
+                        },
+                        ":",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":security-group/",
+                        {
+                          "Fn::GetAtt": [
+                            "Vpc8378EB38",
+                            "DefaultSecurityGroup"
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "LiveKitSg725ABC44": {
+    "Type": "AWS::EC2::SecurityGroup",
+    "Properties": {
+      "GroupDescription": "LiveKit SFU: WSS 443 (Caddy), ICE/TCP, WebRTC UDP range",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "Allow all outbound traffic by default",
+          "IpProtocol": "-1"
+        }
+      ],
+      "SecurityGroupIngress": [
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "WSS signaling via Caddy + ACME TLS-ALPN (public)",
+          "FromPort": 443,
+          "IpProtocol": "tcp",
+          "ToPort": 443
+        },
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "WebRTC ICE/TCP fallback (public)",
+          "FromPort": 7881,
+          "IpProtocol": "tcp",
+          "ToPort": 7881
+        },
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "WebRTC media UDP (public)",
+          "FromPort": 50000,
+          "IpProtocol": "udp",
+          "ToPort": 60000
+        }
+      ],
+      "VpcId": {
+        "Ref": "Vpc8378EB38"
+      }
+    }
+  },
+  "LiveKitInstanceRole024FE31C": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "ec2.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "ManagedPolicyArns": [
+        {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":iam::aws:policy/AmazonSSMManagedInstanceCore"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "LiveKitInstanceRoleDefaultPolicy925C3367": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": [
+              "secretsmanager:DescribeSecret",
+              "secretsmanager:GetSecretValue"
+            ],
+            "Effect": "Allow",
+            "Resource": {
+              "Ref": "LiveKitApiSecret99FDFFD0"
+            }
+          },
+          {
+            "Action": [
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::GetAtt": [
+                "LiveKitLogGroup36FB661D",
+                "Arn"
+              ]
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "LiveKitInstanceRoleDefaultPolicy925C3367",
+      "Roles": [
+        {
+          "Ref": "LiveKitInstanceRole024FE31C"
+        }
+      ]
+    }
+  },
+  "LiveKitInstanceF48113A9583db718bc3d8122": {
+    "Type": "AWS::EC2::Instance",
+    "Properties": {
+      "AvailabilityZone": {
+        "Fn::Select": [
+          0,
+          {
+            "Fn::GetAZs": ""
+          }
+        ]
+      },
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "Encrypted": true,
+            "VolumeSize": 20,
+            "VolumeType": "gp3"
+          }
+        }
+      ],
+      "IamInstanceProfile": {
+        "Ref": "LiveKitInstanceInstanceProfileC5EA796B"
+      },
+      "ImageId": {
+        "Ref": "SsmParameterValueawsserviceamiamazonlinuxlatestal2023amikernel61x8664C96584B6F00A464EAD1953AFF4B05118Parameter"
+      },
+      "InstanceType": "c6i.large",
+      "LaunchTemplate": {
+        "LaunchTemplateName": "SimulTranslationLiveKitInstanceLaunchTemplate97AA4B69",
+        "Version": {
+          "Fn::GetAtt": [
+            "LiveKitInstanceLaunchTemplateF3895EBF",
+            "LatestVersionNumber"
+          ]
+        }
+      },
+      "NetworkInterfaces": [
+        {
+          "AssociatePublicIpAddress": true,
+          "DeviceIndex": "0",
+          "GroupSet": [
+            {
+              "Fn::GetAtt": [
+                "LiveKitSg725ABC44",
+                "GroupId"
+              ]
+            }
+          ],
+          "SubnetId": {
+            "Ref": "VpcpublicSubnet1Subnet2BB74ED7"
+          }
+        }
+      ],
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "simul-translation-livekit"
+        }
+      ],
+      "UserData": {
+        "Fn::Base64": {
+          "Fn::Join": [
+            "",
+            [
+              "#!/bin/bash\nset -euxo pipefail\ndnf install -y docker\nsystemctl enable --now docker\nset +x\nSECRET_JSON=$(aws secretsmanager get-secret-value --region ",
+              {
+                "Ref": "AWS::Region"
+              },
+              " --secret-id '",
+              {
+                "Ref": "LiveKitApiSecret99FDFFD0"
+              },
+              "' --query SecretString --output text)\nAPI_KEY=$(printf '%s' \"$SECRET_JSON\" | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"apiKey\"])')\nAPI_SECRET=$(printf '%s' \"$SECRET_JSON\" | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"apiSecret\"])')\nunset SECRET_JSON\nmkdir -p /etc/livekit /etc/caddy\numask 077\ncat > /etc/livekit/livekit.yaml <<EOF\nport: 7880\nbind_addresses: [\"127.0.0.1\"]\nrtc:\n  tcp_port: 7881\n  port_range_start: 50000\n  port_range_end: 60000\n  use_external_ip: false\n  node_ip: ",
+              {
+                "Ref": "LiveKitEip"
+              },
+              "\nkeys:\n  $API_KEY: $API_SECRET\nlogging:\n  level: info\nEOF\nunset API_KEY API_SECRET\nset -x\numask 022\ncat > /etc/caddy/Caddyfile <<'EOF'\n{\n  auto_https disable_redirects\n}\n",
+              {
+                "Ref": "LiveKitEip"
+              },
+              ".sslip.io:443 {\n  tls {\n    issuer acme {\n      disable_http_challenge\n    }\n  }\n  reverse_proxy 127.0.0.1:7880\n}\nEOF\ndocker run -d --name livekit --restart unless-stopped --network host --log-driver awslogs --log-opt awslogs-region=",
+              {
+                "Ref": "AWS::Region"
+              },
+              " --log-opt awslogs-group=",
+              {
+                "Ref": "LiveKitLogGroup36FB661D"
+              },
+              " --log-opt awslogs-stream=livekit -v /etc/livekit/livekit.yaml:/etc/livekit.yaml:ro livekit/livekit-server:v1.13.11 --config /etc/livekit.yaml\ndocker run -d --name caddy --restart unless-stopped --network host --log-driver awslogs --log-opt awslogs-region=",
+              {
+                "Ref": "AWS::Region"
+              },
+              " --log-opt awslogs-group=",
+              {
+                "Ref": "LiveKitLogGroup36FB661D"
+              },
+              " --log-opt awslogs-stream=caddy -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro -v caddy_data:/data -v caddy_config:/config caddy:2.11.7"
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "LiveKitInstanceLaunchTemplateF3895EBF": {
+    "Type": "AWS::EC2::LaunchTemplate",
+    "Properties": {
+      "LaunchTemplateData": {
+        "MetadataOptions": {
+          "HttpTokens": "required"
+        }
+      },
+      "LaunchTemplateName": "SimulTranslationLiveKitInstanceLaunchTemplate97AA4B69"
+    }
+  },
+  "AppTaskTaskRole6D8E3660": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "ecs-tasks.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      }
+    }
+  },
+  "AppTaskTaskRoleDefaultPolicy11EC590B": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": [
+              "polly:SynthesizeSpeech",
+              "transcribe:StartStreamTranscription",
+              "translate:TranslateText"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "AppTaskTaskRoleDefaultPolicy11EC590B",
+      "Roles": [
+        {
+          "Ref": "AppTaskTaskRole6D8E3660"
+        }
+      ]
+    }
+  },
+  "AppTask3BD371F9": [
+    {
+      "Name": "app",
+      "Environment": [
+        {
+          "Name": "AWS_REGION",
+          "Value": {
+            "Ref": "AWS::Region"
+          }
+        },
+        {
+          "Name": "LOG_LEVEL",
+          "Value": "info"
+        },
+        {
+          "Name": "SRT_HOST",
+          "Value": "0.0.0.0"
+        },
+        {
+          "Name": "SRT_PORT",
+          "Value": "9000"
+        },
+        {
+          "Name": "SRT_LATENCY_MS",
+          "Value": "120"
+        },
+        {
+          "Name": "SRT_LISTEN_TIMEOUT_SEC",
+          "Value": "86400"
+        },
+        {
+          "Name": "SRT_ANALYZE_MS",
+          "Value": "500"
+        },
+        {
+          "Name": "SAMPLE_RATE",
+          "Value": "16000"
+        },
+        {
+          "Name": "FRAME_BYTES",
+          "Value": "3200"
+        },
+        {
+          "Name": "SOURCE_LANGUAGE",
+          "Value": "en-US"
+        },
+        {
+          "Name": "TRANSCRIBE_VOCABULARY",
+          "Value": "simul-translation"
+        },
+        {
+          "Name": "PARTIAL_STABILITY",
+          "Value": "high"
+        },
+        {
+          "Name": "LANGUAGE_FILTER",
+          "Value": "langid"
+        },
+        {
+          "Name": "LANGUAGE_OPTIONS",
+          "Value": "en-US,ja-JP"
+        },
+        {
+          "Name": "LANGID_SETTLE_WORDS",
+          "Value": "5"
+        },
+        {
+          "Name": "LANGID_SETTLE_MODE",
+          "Value": "fixed"
+        },
+        {
+          "Name": "LANGID_SETTLE_WORDS_DEFAULT",
+          "Value": "3"
+        },
+        {
+          "Name": "LANGID_SETTLE_WORDS_AFTER_JA",
+          "Value": "5"
+        },
+        {
+          "Name": "LANGID_JA_MEMORY_MS",
+          "Value": "60000"
+        },
+        {
+          "Name": "LANGID_SHORT_WORDS",
+          "Value": "4"
+        },
+        {
+          "Name": "LANGID_SHORT_MIN_CONF",
+          "Value": "0.6"
+        },
+        {
+          "Name": "SEGMENTATION_MODE",
+          "Value": "clause"
+        },
+        {
+          "Name": "CHUNK_MIN_WORDS",
+          "Value": "8"
+        },
+        {
+          "Name": "CHUNK_MAX_WORDS",
+          "Value": "22"
+        },
+        {
+          "Name": "CHUNK_MAX_MS",
+          "Value": "0"
+        },
+        {
+          "Name": "CHUNK_PAUSE_MS",
+          "Value": "900"
+        },
+        {
+          "Name": "CHUNK_CONJUNCTIONS",
+          "Value": "because,but,although,though,while,which"
+        },
+        {
+          "Name": "MERGE_SHORT",
+          "Value": "on"
+        },
+        {
+          "Name": "SENTENCE_MIN_WORDS",
+          "Value": "8"
+        },
+        {
+          "Name": "SENTENCE_COMPLETE_WORDS",
+          "Value": "5"
+        },
+        {
+          "Name": "MERGE_PAUSE_MS",
+          "Value": "1500"
+        },
+        {
+          "Name": "MERGE_MAX_HOLD_MS",
+          "Value": "6000"
+        },
+        {
+          "Name": "DANGLING_GUARD",
+          "Value": "on"
+        },
+        {
+          "Name": "DANGLING_WORDS",
+          "Value": ""
+        },
+        {
+          "Name": "DANGLING_MAX_WORDS",
+          "Value": "2"
+        },
+        {
+          "Name": "DANGLING_MAX_HOLD_MS",
+          "Value": "500"
+        },
+        {
+          "Name": "CUT_LOOKAHEAD_MS",
+          "Value": "0"
+        },
+        {
+          "Name": "SHORT_SENTENCE_JOIN",
+          "Value": "on"
+        },
+        {
+          "Name": "SHORT_SENTENCE_WORDS",
+          "Value": "3"
+        },
+        {
+          "Name": "SHORT_JOIN_PAUSE_MS",
+          "Value": "1000"
+        },
+        {
+          "Name": "SPEEDUP_STEPS",
+          "Value": "3000:115,5000:130,7000:150"
+        },
+        {
+          "Name": "MAX_BACKLOG_MS",
+          "Value": "15000"
+        },
+        {
+          "Name": "SPEED_MODE",
+          "Value": "levels"
+        },
+        {
+          "Name": "SPEED_LEVELS",
+          "Value": "100,110,120,130,145"
+        },
+        {
+          "Name": "SPEED_THRESHOLDS_MS",
+          "Value": "3000,4500,6000,7500"
+        },
+        {
+          "Name": "SPEED_HYSTERESIS_MS",
+          "Value": "1500"
+        },
+        {
+          "Name": "SPEED_HOLD_MS",
+          "Value": "8000"
+        },
+        {
+          "Name": "SPEED_URGENT_MS",
+          "Value": "10000"
+        },
+        {
+          "Name": "SPEED_LOOKAHEAD",
+          "Value": "1"
+        },
+        {
+          "Name": "SPEED_MS_PER_CHAR",
+          "Value": "165"
+        },
+        {
+          "Name": "SPEED_RESET_GAP_MS",
+          "Value": "3000"
+        },
+        {
+          "Name": "FILLER_FILTER",
+          "Value": "on"
+        },
+        {
+          "Name": "FILLER_WORDS",
+          "Value": "um,uh,er,ah,hmm,mm,erm,uh-huh"
+        },
+        {
+          "Name": "FILLER_PHRASES",
+          "Value": "you know,I mean,well,like,sort of,kind of,you see,okay so,so yeah"
+        },
+        {
+          "Name": "JA_FILLER_PATTERNS",
+          "Value": "ええと,えーと,えっと,えー,あの,あのー,まあ,ご存知のとおり,ご存知のように,ご存じのとおり,ご存じのように,ほら,つまり、"
+        },
+        {
+          "Name": "ENABLE_CORRECTION",
+          "Value": "true"
+        },
+        {
+          "Name": "TRANSLATE_SOURCE",
+          "Value": "en"
+        },
+        {
+          "Name": "TRANSLATE_TARGET",
+          "Value": "ja"
+        },
+        {
+          "Name": "TRANSLATE_FORMALITY",
+          "Value": "FORMAL"
+        },
+        {
+          "Name": "TRANSLATE_TERMINOLOGY",
+          "Value": "simul-translation"
+        },
+        {
+          "Name": "TRANSLATE_ENGINE",
+          "Value": "translate"
+        },
+        {
+          "Name": "LLM_MODEL_ID",
+          "Value": "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
+        },
+        {
+          "Name": "LLM_TIMEOUT_MS",
+          "Value": "1500"
+        },
+        {
+          "Name": "LLM_CONTEXT_CHUNKS",
+          "Value": "3"
+        },
+        {
+          "Name": "LLM_CONTEXT_RESET_MS",
+          "Value": "60000"
+        },
+        {
+          "Name": "LLM_GLOSSARY",
+          "Value": "full"
+        },
+        {
+          "Name": "LLM_MAX_TOKENS",
+          "Value": "400"
+        },
+        {
+          "Name": "LLM_BREAKER_MS",
+          "Value": "30000"
+        },
+        {
+          "Name": "LLM_SKIP_BACKLOG_MS",
+          "Value": "0"
+        },
+        {
+          "Name": "LLM_PARALLEL_FALLBACK",
+          "Value": "off"
+        },
+        {
+          "Name": "LLM_MAX_CHARS_PER_WORD",
+          "Value": "15"
+        },
+        {
+          "Name": "LLM_KEEPWARM_MS",
+          "Value": "240000"
+        },
+        {
+          "Name": "LLM_PROMPT_VERSION",
+          "Value": "2"
+        },
+        {
+          "Name": "LATENCY_PRESET",
+          "Value": "careful"
+        },
+        {
+          "Name": "POLLY_VOICE",
+          "Value": "Kazuha"
+        },
+        {
+          "Name": "POLLY_ENGINE",
+          "Value": "neural"
+        },
+        {
+          "Name": "POLLY_SAMPLE_RATE",
+          "Value": "16000"
+        },
+        {
+          "Name": "POLLY_READINGS",
+          "Value": "on"
+        },
+        {
+          "Name": "CAPTIONS",
+          "Value": "on"
+        },
+        {
+          "Name": "CAPTIONS_JA_SPEECH",
+          "Value": "on"
+        },
+        {
+          "Name": "LIVEKIT_URL",
+          "Value": {
+            "Fn::Join": [
+              "",
+              [
+                "wss://",
+                {
+                  "Ref": "LiveKitEip"
+                },
+                ".sslip.io"
+              ]
+            ]
+          }
+        },
+        {
+          "Name": "LIVEKIT_ROOM",
+          "Value": "translation"
+        },
+        {
+          "Name": "LIVEKIT_TOKEN_TTL",
+          "Value": "6h"
+        },
+        {
+          "Name": "HEALTH_PORT",
+          "Value": "8080"
+        },
+        {
+          "Name": "HEALTH_HOST",
+          "Value": "0.0.0.0"
+        }
+      ],
+      "Secrets": [
+        {
+          "Name": "SRT_PASSPHRASE",
+          "ValueFrom": {
+            "Ref": "SrtPassphraseSecret132D2F2B"
+          }
+        },
+        {
+          "Name": "LIVEKIT_API_KEY",
+          "ValueFrom": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "LiveKitApiSecret99FDFFD0"
+                },
+                ":apiKey::"
+              ]
+            ]
+          }
+        },
+        {
+          "Name": "LIVEKIT_API_SECRET",
+          "ValueFrom": {
+            "Fn::Join": [
+              "",
+              [
+                {
+                  "Ref": "LiveKitApiSecret99FDFFD0"
+                },
+                ":apiSecret::"
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "AppTaskExecutionRoleE2BC84DF": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "ecs-tasks.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      }
+    }
+  },
+  "AppTaskExecutionRoleDefaultPolicy14384982": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": [
+              "ecr:BatchCheckLayerAvailability",
+              "ecr:BatchGetImage",
+              "ecr:GetDownloadUrlForLayer"
+            ],
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::Join": [
+                "",
+                [
+                  "arn:",
+                  {
+                    "Ref": "AWS::Partition"
+                  },
+                  ":ecr:",
+                  {
+                    "Ref": "AWS::Region"
+                  },
+                  ":",
+                  {
+                    "Ref": "AWS::AccountId"
+                  },
+                  ":repository/",
+                  {
+                    "Fn::Sub": "cdk-hnb659fds-container-assets-${AWS::AccountId}-${AWS::Region}"
+                  }
+                ]
+              ]
+            }
+          },
+          {
+            "Action": "ecr:GetAuthorizationToken",
+            "Effect": "Allow",
+            "Resource": "*"
+          },
+          {
+            "Action": [
+              "logs:CreateLogStream",
+              "logs:PutLogEvents"
+            ],
+            "Effect": "Allow",
+            "Resource": {
+              "Fn::GetAtt": [
+                "AppLogGroup7D8CD952",
+                "Arn"
+              ]
+            }
+          },
+          {
+            "Action": [
+              "secretsmanager:DescribeSecret",
+              "secretsmanager:GetSecretValue"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+              {
+                "Ref": "LiveKitApiSecret99FDFFD0"
+              },
+              {
+                "Ref": "SrtPassphraseSecret132D2F2B"
+              }
+            ]
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "AppTaskExecutionRoleDefaultPolicy14384982",
+      "Roles": [
+        {
+          "Ref": "AppTaskExecutionRoleE2BC84DF"
+        }
+      ]
+    }
+  },
+  "AppSg898BCA4E": {
+    "Type": "AWS::EC2::SecurityGroup",
+    "Properties": {
+      "GroupDescription": "Fargate app: SRT from venue via NLB, health check from NLB",
+      "SecurityGroupEgress": [
+        {
+          "CidrIp": "0.0.0.0/0",
+          "Description": "Allow all outbound traffic by default",
+          "IpProtocol": "-1"
+        }
+      ],
+      "SecurityGroupIngress": [
+        {
+          "CidrIp": "203.0.113.10/32",
+          "Description": "SRT from venue 203.0.113.10/32 (client IP preserved)",
+          "FromPort": 9000,
+          "IpProtocol": "udp",
+          "ToPort": 9000
+        },
+        {
+          "CidrIp": "198.51.100.7/32",
+          "Description": "SRT from venue 198.51.100.7/32 (client IP preserved)",
+          "FromPort": 9000,
+          "IpProtocol": "udp",
+          "ToPort": 9000
+        }
+      ],
+      "VpcId": {
+        "Ref": "Vpc8378EB38"
+      }
+    }
+  },
+  "AppSgfromSimulTranslationNlbSg5F3BC5AFUDP9000BB70C66C": {
+    "Type": "AWS::EC2::SecurityGroupIngress",
+    "Properties": {
+      "Description": "SRT forwarded by NLB",
+      "FromPort": 9000,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "AppSg898BCA4E",
+          "GroupId"
+        ]
+      },
+      "IpProtocol": "udp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "NlbSg5B79CBEA",
+          "GroupId"
+        ]
+      },
+      "ToPort": 9000
+    }
+  },
+  "AppSgfromSimulTranslationNlbSg5F3BC5AF80803E7DC658": {
+    "Type": "AWS::EC2::SecurityGroupIngress",
+    "Properties": {
+      "Description": "NLB TCP health check",
+      "FromPort": 8080,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "AppSg898BCA4E",
+          "GroupId"
+        ]
+      },
+      "IpProtocol": "tcp",
+      "SourceSecurityGroupId": {
+        "Fn::GetAtt": [
+          "NlbSg5B79CBEA",
+          "GroupId"
+        ]
+      },
+      "ToPort": 8080
+    }
+  },
+  "NlbSg5B79CBEA": {
+    "Type": "AWS::EC2::SecurityGroup",
+    "Properties": {
+      "GroupDescription": "SRT ingest NLB: UDP from venue CIDR(s) only",
+      "SecurityGroupIngress": [
+        {
+          "CidrIp": "203.0.113.10/32",
+          "Description": "SRT from venue 203.0.113.10/32",
+          "FromPort": 9000,
+          "IpProtocol": "udp",
+          "ToPort": 9000
+        },
+        {
+          "CidrIp": "198.51.100.7/32",
+          "Description": "SRT from venue 198.51.100.7/32",
+          "FromPort": 9000,
+          "IpProtocol": "udp",
+          "ToPort": 9000
+        }
+      ],
+      "VpcId": {
+        "Ref": "Vpc8378EB38"
+      }
+    }
+  },
+  "NlbSgtoSimulTranslationAppSgF81A69F1UDP9000ACB8CBE3": {
+    "Type": "AWS::EC2::SecurityGroupEgress",
+    "Properties": {
+      "Description": "SRT forwarded by NLB",
+      "DestinationSecurityGroupId": {
+        "Fn::GetAtt": [
+          "AppSg898BCA4E",
+          "GroupId"
+        ]
+      },
+      "FromPort": 9000,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "NlbSg5B79CBEA",
+          "GroupId"
+        ]
+      },
+      "IpProtocol": "udp",
+      "ToPort": 9000
+    }
+  },
+  "NlbSgtoSimulTranslationAppSgF81A69F18080B3E5178B": {
+    "Type": "AWS::EC2::SecurityGroupEgress",
+    "Properties": {
+      "Description": "NLB TCP health check",
+      "DestinationSecurityGroupId": {
+        "Fn::GetAtt": [
+          "AppSg898BCA4E",
+          "GroupId"
+        ]
+      },
+      "FromPort": 8080,
+      "GroupId": {
+        "Fn::GetAtt": [
+          "NlbSg5B79CBEA",
+          "GroupId"
+        ]
+      },
+      "IpProtocol": "tcp",
+      "ToPort": 8080
+    }
+  },
+  "TokenFunctionServiceRoleB4F21062": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "ManagedPolicyArns": [
+        {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "TokenFunctionServiceRoleDefaultPolicy57BCF948": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": [
+              "secretsmanager:DescribeSecret",
+              "secretsmanager:GetSecretValue"
+            ],
+            "Effect": "Allow",
+            "Resource": {
+              "Ref": "LiveKitApiSecret99FDFFD0"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "TokenFunctionServiceRoleDefaultPolicy57BCF948",
+      "Roles": [
+        {
+          "Ref": "TokenFunctionServiceRoleB4F21062"
+        }
+      ]
+    }
+  },
+  "CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            }
+          }
+        ]
+      },
+      "ManagedPolicyArns": [
+        {
+          "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+        }
+      ]
+    }
+  },
+  "CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265": {
+    "Type": "AWS::IAM::Role",
+    "Properties": {
+      "AssumeRolePolicyDocument": {
+        "Statement": [
+          {
+            "Action": "sts:AssumeRole",
+            "Effect": "Allow",
+            "Principal": {
+              "Service": "lambda.amazonaws.com"
+            }
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "ManagedPolicyArns": [
+        {
+          "Fn::Join": [
+            "",
+            [
+              "arn:",
+              {
+                "Ref": "AWS::Partition"
+              },
+              ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRoleDefaultPolicy88902FDF": {
+    "Type": "AWS::IAM::Policy",
+    "Properties": {
+      "PolicyDocument": {
+        "Statement": [
+          {
+            "Action": [
+              "s3:GetBucket*",
+              "s3:GetObject*",
+              "s3:List*"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":s3:::",
+                    {
+                      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}"
+                    },
+                    "/*"
+                  ]
+                ]
+              },
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":s3:::",
+                    {
+                      "Fn::Sub": "cdk-hnb659fds-assets-${AWS::AccountId}-${AWS::Region}"
+                    }
+                  ]
+                ]
+              }
+            ]
+          },
+          {
+            "Action": [
+              "s3:Abort*",
+              "s3:DeleteObject*",
+              "s3:GetBucket*",
+              "s3:GetObject*",
+              "s3:List*",
+              "s3:PutObject",
+              "s3:PutObjectLegalHold",
+              "s3:PutObjectRetention",
+              "s3:PutObjectTagging",
+              "s3:PutObjectVersionTagging"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+              {
+                "Fn::GetAtt": [
+                  "SiteBucket397A1860",
+                  "Arn"
+                ]
+              },
+              {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::GetAtt": [
+                        "SiteBucket397A1860",
+                        "Arn"
+                      ]
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            ]
+          },
+          {
+            "Action": [
+              "cloudfront:CreateInvalidation",
+              "cloudfront:GetInvalidation"
+            ],
+            "Effect": "Allow",
+            "Resource": "*"
+          }
+        ],
+        "Version": "2012-10-17"
+      },
+      "PolicyName": "CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRoleDefaultPolicy88902FDF",
+      "Roles": [
+        {
+          "Ref": "CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265"
+        }
+      ]
+    }
+  }
+}

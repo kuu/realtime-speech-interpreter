@@ -4,11 +4,14 @@
 
 import { GetTerminologyCommand } from "@aws-sdk/client-translate";
 
+// [source, target] of the lane's direction: [en, ja] for the English-to-Japanese lane (today), [ja, en] for the reverse.
 export type GlossaryEntry = [en: string, ja: string];
+export type GlossaryDirection = "en-ja" | "ja-en";
 
 // Parse CSV text: optional BOM, CRLF or LF, quoted fields ("" escapes a quote, quoted commas),
 // header row `en,ja`, blank lines ignored. A duplicate English key keeps the first entry.
-export function parseTerminologyCsv(csv: string): GlossaryEntry[] {
+// Direction ja-en: header `ja,en`, entries are [ja, en] and the duplicate key is the NFKC-normalised Japanese column.
+export function parseTerminologyCsv(csv: string, direction: GlossaryDirection = "en-ja"): GlossaryEntry[] {
   const text = csv.replace(/^\uFEFF/, "");
   const rows: string[][] = [];
   let row: string[] = [];
@@ -46,6 +49,14 @@ export function parseTerminologyCsv(csv: string): GlossaryEntry[] {
     const en = r[0].trim();
     const ja = r[1].trim();
     if (!en || !ja) continue;
+    if (direction === "ja-en") {
+      if (en.toLowerCase() === "ja" && ja.toLowerCase() === "en") continue;
+      const jaKey = en.normalize("NFKC").toLowerCase();
+      if (seen.has(jaKey)) continue;
+      seen.add(jaKey);
+      out.push([en, ja]);
+      continue;
+    }
     if (en.toLowerCase() === "en" && ja.toLowerCase() === "ja") continue;
     const key = en.toLowerCase();
     if (seen.has(key)) continue;
@@ -55,7 +66,7 @@ export function parseTerminologyCsv(csv: string): GlossaryEntry[] {
   return out;
 }
 
-// One `English = 日本語` line per entry, in terminology order.
+// One `English = 日本語` line per entry (`日本語 = English` for ja-en), in terminology order.
 export function glossaryLines(entries: readonly GlossaryEntry[]): string {
   return entries.map(([en, ja]) => `${en} = ${ja}`).join("\n");
 }
@@ -76,6 +87,7 @@ export async function loadDeployedGlossary(
   name: string,
   fetchFn: FetchFn,
   timeoutMs: number,
+  direction: GlossaryDirection = "en-ja",
 ): Promise<GlossaryEntry[]> {
   if (!name) throw new Error("no terminology name configured (TRANSLATE_TERMINOLOGY is empty)");
   const ac = new AbortController();
@@ -86,7 +98,7 @@ export async function loadDeployedGlossary(
     if (!url) throw new Error("GetTerminology returned no download location");
     const r = await fetchFn(url, { signal: ac.signal });
     if (!r.ok) throw new Error(`terminology download failed: HTTP ${r.status}`);
-    const entries = parseTerminologyCsv(await r.text());
+    const entries = parseTerminologyCsv(await r.text(), direction);
     if (entries.length === 0) throw new Error("terminology CSV has no entries");
     return entries;
   } catch (err) {

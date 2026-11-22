@@ -9,7 +9,7 @@ This is a personal, unofficial open-source project. It is not an AWS product, it
 supported by Amazon Web Services, and AWS Support will not help with it. AWS, Amazon Transcribe, Amazon Translate,
 Amazon Polly, Amazon Bedrock and AWS Fargate are trademarks of Amazon.com, Inc. or its affiliates.
 
-![Architecture: venue, SRT, Fargate app, Transcribe, Translate or Bedrock, Polly, LiveKit, listener browsers](docs/architecture.drawio.svg)
+![Architecture: venue, SRT, Fargate app with two lanes, Transcribe, Translate or Bedrock, Polly, LiveKit with two audio tracks, listener browsers](docs/architecture.drawio.svg)
 
 Details of the diagram: [docs/architecture.md](docs/architecture.md).
 

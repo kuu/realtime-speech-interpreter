@@ -1062,7 +1062,7 @@ architecture diagram shows the two output channels while its input side stays SR
 - Changes to the dictionary builder's suggestion heuristics beyond direction support ([#7](https://github.com/kuu/realtime-speech-interpreter/issues/7)).
 - Accessible caption presentation beyond the `lang` and `aria-live` rules above ([#12](https://github.com/kuu/realtime-speech-interpreter/issues/12)).
 - Browser, RTMPS and Caddy inputs in the architecture diagram. The diagram and the step table in
-  [architecture.md](architecture.md) are updated in the pull request that builds the feature to show the two output
+  [architecture.md](architecture.md) were updated with the feature to show the two output
   channels (owner decision). The input side of the diagram stays SRT only: the browser and RTMPS inputs remain described in
   [alternative-inputs.md](alternative-inputs.md), not in the diagram.
 - Any deploy, `dictionaries.sh` run or other AWS change.

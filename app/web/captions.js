@@ -49,7 +49,8 @@ export function parseEvent(data) {
   }
   if (o.type === "speech") {
     // Only Japanese speech shown as said is understood; anything else (another language, a later variant) is ignored.
-    if (o.asSaid !== true || channel !== "ja") return null;
+    // English speech as said exists only on the English channel, whose events carry the additive `ch` field.
+    if (o.asSaid !== true || !(channel === "ja" || (channel === "en" && typeof o.ch === "string"))) return null;
     if (typeof o.resultId !== "string" || o.resultId === "") return null;
     if (o.op === "retract") return { kind: "speech", op: "retract", resultId: o.resultId };
     if (o.op === "append") {
@@ -161,7 +162,7 @@ class Lines {
     const head = text.slice(0, max + 1);
     let i = -1;
     for (let k = max - 1; k > 0; k--) {
-      if (",;:".includes(head[k])) {
+      if (",;:、".includes(head[k])) {
         i = k + 1;
         break;
       }
@@ -207,6 +208,7 @@ class Lines {
 }
 
 const JA_SENTENCE_END = /[。？！?!]["')」』”]*$/;
+const EN_SENTENCE_END = /[?!.]["')”]*$/;
 // An as-said line waits at most this long (ms) for the translated sentence it would interrupt.
 export const SAID_QUEUE_MS = 3000;
 const JA_DEFAULTS = { maxLines: 3, maxLineChars: 60, lineGapMs: 6000, lineTtlMs: 12000, fadeMs: 600 };
@@ -222,9 +224,14 @@ const EN_DEFAULTS = { maxLines: 3, maxLineChars: EN_MAX_LINE_CHARS, lineGapMs: 1
  * the same store also holds Japanese speech shown as said; a change between translated and as-said text always
  * starts a new line, and a retract removes the words of that result.
  */
-export function createAssembler(opts = {}, showSpeech = true) {
+export function createAssembler(opts = {}, showSpeech = true, lang = "ja") {
   const { queueMs = SAID_QUEUE_MS, ...rest } = opts;
-  const store = new Lines({ ...JA_DEFAULTS, ...rest }, "ja", false, JA_SENTENCE_END);
+  // lang "en" (the English channel's translation): English preset, words joined with a space, English sentence end.
+  const sentenceEnd = lang === "en" ? EN_SENTENCE_END : JA_SENTENCE_END;
+  const store =
+    lang === "en"
+      ? new Lines({ ...EN_DEFAULTS, ...rest }, "en", true, sentenceEnd, true)
+      : new Lines({ ...JA_DEFAULTS, ...rest }, "ja", false, sentenceEnd);
   let key = "";
   let transAt = -Infinity; // time of the newest translation text
   let queue = []; // as-said events waiting for an open translated sentence to end: { ev, at }
@@ -232,7 +239,7 @@ export function createAssembler(opts = {}, showSpeech = true) {
   const translationOpen = () => {
     for (let i = store.lines.length - 1; i >= 0; i--) {
       const l = store.lines[i];
-      if (l.kind === "") return !JA_SENTENCE_END.test(l.text);
+      if (l.kind === "") return !sentenceEnd.test(l.text);
     }
     return false;
   };
@@ -246,7 +253,7 @@ export function createAssembler(opts = {}, showSpeech = true) {
     // early (it had no end within the hold time) joins the as-said line it continues: same result, line not ended.
     const last = store.lines[store.lines.length - 1];
     if (last && last.closed && !last.closedByLength && last.kind === "said" && last.segs.length > 0 &&
-        last.segs[last.segs.length - 1].resultId === ev.resultId && !JA_SENTENCE_END.test(last.text)) last.closed = false;
+        last.segs[last.segs.length - 1].resultId === ev.resultId && !sentenceEnd.test(last.text)) last.closed = false;
     store.add(ev.text, ev.resultId, now, ev.boundary, "said");
   };
   const release = (n, now) => {
@@ -257,6 +264,8 @@ export function createAssembler(opts = {}, showSpeech = true) {
     push(ev, now) {
       if (ev && ev.kind === "speech") {
         if (!showSpeech) return false;
+        // Only speech in this assembler's language (a retract carries no language: it removes by result id).
+        if (ev.op === "append" && ev.channel !== lang && ev.channel !== "") return false;
         if (ev.op === "retract") {
           queue = queue.filter((q) => q.ev.resultId !== ev.resultId);
           store.retract(ev.resultId);
@@ -271,7 +280,7 @@ export function createAssembler(opts = {}, showSpeech = true) {
         placeSaid(ev, now);
         return true;
       }
-      if (!ev || ev.kind !== "caption" || (ev.channel !== "ja" && ev.channel !== "")) return false;
+      if (!ev || ev.kind !== "caption" || (ev.channel !== lang && ev.channel !== "")) return false;
       const k = `${ev.channel}|${ev.speaker === null ? "" : JSON.stringify(ev.speaker)}`;
       if (key !== "" && k !== key) {
         const l = store.lines[store.lines.length - 1];
@@ -302,8 +311,12 @@ export function createAssembler(opts = {}, showSpeech = true) {
  * English source assembler: appends word batches, closes lines at sentence ends, and removes all words of a
  * result when it is retracted. A retract for an unknown resultId is a no-op.
  */
-export function createSourceAssembler(opts = {}) {
-  const store = new Lines({ ...EN_DEFAULTS, ...opts }, "en", true, /[?!.]["')”]*$/, true);
+export function createSourceAssembler(opts = {}, lang = "en") {
+  // lang "ja" (the English channel's source line): Japanese preset, words joined as written, Japanese sentence end.
+  const store =
+    lang === "ja"
+      ? new Lines({ ...JA_DEFAULTS, ...opts }, "ja", false, JA_SENTENCE_END, true)
+      : new Lines({ ...EN_DEFAULTS, ...opts }, "en", true, /[?!.]["')”]*$/, true);
   return {
     /** @param {ParsedEvent | null} ev */
     push(ev, now) {
@@ -312,9 +325,9 @@ export function createSourceAssembler(opts = {}) {
         store.retract(ev.resultId);
         return true;
       }
-      if (ev.channel !== "en" && ev.channel !== "") return false;
+      if (ev.channel !== lang && ev.channel !== "") return false;
       // A batch may contain several sentences: close the line at each sentence end inside it.
-      const pieces = ev.text.split(/(?<=[.?!])\s+/).filter((p) => p !== "");
+      const pieces = (lang === "ja" ? ev.text.split(/(?<=[。？！?!])/) : ev.text.split(/(?<=[.?!])\s+/)).filter((p) => p !== "");
       // `boundary` only says that a sentence ends somewhere in the batch; the pieces already close at each of those.
       for (const p of pieces) store.add(p, ev.resultId, now, false);
       return true;

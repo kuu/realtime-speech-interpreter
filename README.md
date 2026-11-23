@@ -249,6 +249,7 @@ Details and a suggested notice: [docs/security.md](docs/security.md). Report vul
 | Page | Content |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, latency budget, design choices |
+| [docs/decisions.md](docs/decisions.md) | Architecture decisions: managed services versus self-managed, NLB, Bedrock and Translate, LiveKit, sync versus streaming, where TLS ends |
 | [docs/alternative-inputs.md](docs/alternative-inputs.md) | Browser microphone and RTMPS inputs: when to use them, how they work |
 | [docs/bilingual-channels.md](docs/bilingual-channels.md) | Two channels, English to Japanese and Japanese to English: design, settings and measurement steps (built, live tests pending) |
 | [docs/configuration.md](docs/configuration.md) | All settings |

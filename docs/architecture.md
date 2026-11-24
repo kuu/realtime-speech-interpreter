@@ -87,6 +87,8 @@ The numbers come from the project's own test runs. They depend on the speaker's 
 
 ## Design choices
 
+The reasons behind the main choices (managed services, the load balancer, Bedrock and Translate, LiveKit, synchronous calls and streams, where TLS ends) are in [decisions.md](decisions.md). The notes below are the smaller ones.
+
 **LiveKit, not Amazon IVS.** IVS Real-Time accepts WHIP publishing, but it requires an H.264 video track, even
 for audio only. LiveKit publishes audio-only from a server SDK and plays it in the browser. It is open source
 (Apache-2.0) and runs on one EC2 instance. The Chime SDK has no clean path to publish audio from a headless server.
